@@ -40,7 +40,7 @@ export function runBots(spec: RunSpec): RunResult {
   const holder: { sim: GameSim | null } = { sim: null };
   const session = createSession({
     factory: (init) => {
-      const sim = createGameSim(init) as GameSim;
+      const sim = createGameSim(init);
       holder.sim = sim;
       return sim;
     },

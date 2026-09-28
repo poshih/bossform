@@ -1,4 +1,4 @@
-import type { SimFactory, SimInit, Simulation, TickInput } from '@metronome/engine';
+import type { SimInit, Simulation, TickInput } from '@metronome/engine';
 import { updateBullets } from './bullets.ts';
 import { collideBodies, collideBullets, collideShots } from './collisions.ts';
 import { updateOrbs } from './combat.ts';
@@ -39,4 +39,6 @@ export class GameSim implements Simulation<GameInput> {
   }
 }
 
-export const createGameSim: SimFactory<GameInput> = (init) => new GameSim(init);
+export function createGameSim(init: SimInit): GameSim {
+  return new GameSim(init);
+}
