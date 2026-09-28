@@ -1,0 +1,21 @@
+{
+  "name": "bossform-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "BOSSFORM (arena shmup) built on METRONOME (standalone deterministic lockstep engine).",
+  "workspaces": ["engine", "game"],
+  "scripts": {
+    "dev": "npm run dev -w @bossform/game",
+    "build": "npm run typecheck && npm run build -w @bossform/game",
+    "typecheck": "tsc -p engine/tsconfig.json && tsc -p game/tsconfig.json && tsc -p tools/tsconfig.json",
+    "verify": "node tools/verify/run-all.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "ws": "^8.18.0"
+  }
+}

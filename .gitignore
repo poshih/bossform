@@ -1,0 +1,6 @@
+node_modules
+dist
+engine/dist
+game/dist
+tools/verify/shots/
+*.log
