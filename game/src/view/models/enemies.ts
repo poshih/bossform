@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { EnemyType } from '../../sim/constants.ts';
+import { EnemyType } from '../../sim/index.ts';
 import { disposeObject, gearGeometry, glowMaterial, profileGeometry, toonMaterial, type GlowMaterial, type ToonMaterial } from '../../render/meshkit.ts';
 import type { EnemyModel, EnemyPose } from './types.ts';
 
@@ -18,6 +18,24 @@ const SERAPH_GLOW = 0x8ff4ff;
 const OVERLORD_GLOW = 0xff455d;
 const OVERLORD_VIOLET = 0x8d5cff;
 const OVERLORD_GOLD = 0xd9a347;
+
+/**
+ * Against the dark arena floor the faction's near-black armour vanished, leaving only its glow lines. Every armour
+ * colour is lifted here (one owner, in linear light so the display curve halves the effect) so plates read as solid
+ * silhouettes while keeping their violet-gunmetal hue.
+ */
+const ARMOUR_LIFT = 6;
+const SHADE_LIFT = 4.5;
+const SHADE_FLOOR = 0x2c2c4c;
+
+function liftValue(hex: number, factor: number = ARMOUR_LIFT): number {
+  const lifted = new THREE.Color(hex);
+  const floor = new THREE.Color(SHADE_FLOOR);
+  lifted.r = Math.min(1, Math.max(lifted.r * factor, factor === SHADE_LIFT ? floor.r : 0));
+  lifted.g = Math.min(1, Math.max(lifted.g * factor, factor === SHADE_LIFT ? floor.g : 0));
+  lifted.b = Math.min(1, Math.max(lifted.b * factor, factor === SHADE_LIFT ? floor.b : 0));
+  return lifted.getHex();
+}
 
 const ENEMY_RADII = [7, 9, 8, 11, 15, 34, 30, 38] as const;
 
@@ -62,7 +80,12 @@ class ModelRig {
   }
 
   toon(options: Parameters<typeof toonMaterial>[0]): ToonMaterial {
-    const mat = toonMaterial(options);
+    const mat = toonMaterial({
+      ...options,
+      color: liftValue(options.color),
+      shade: options.shade === undefined ? undefined : liftValue(options.shade, SHADE_LIFT),
+      light: options.light === undefined ? undefined : liftValue(options.light),
+    });
     this.materials.add(mat);
     this.toons.push(mat);
     return mat;

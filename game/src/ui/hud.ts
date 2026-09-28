@@ -96,7 +96,7 @@ export class Hud {
       if (world.seats > 1) this.drawPlayer(ctx, world, 1, right, input.time, input.padPrompts);
       else this.drawInfoPanel(ctx, world, right, input);
       if (world.seats > 1) this.drawStageLine(ctx, world, pf.x + pf.w / 2, pf.y + 4);
-      else this.drawStageLine(ctx, world, right.x + right.w / 2, right.y + right.h - 14);
+      else this.drawStageLine(ctx, world, right.x + right.w / 2, right.y + right.h - 30);
     } else {
       const half = pf.w / 2;
       this.drawPlayer(ctx, world, 0, { x: pf.x + 3, y: pf.y + 3, w: (world.seats > 1 ? half : pf.w) - 6, h: 60 }, input.time, input.padPrompts);

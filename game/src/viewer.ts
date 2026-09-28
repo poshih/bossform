@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Renderer } from './render/renderer.ts';
+import { ArenaBackground } from './view/background.ts';
 import { createEnemyModel } from './view/models/enemies.ts';
 import { createPlayerMech } from './view/models/mechs.ts';
 import type { EnemyModel, EnemyPose, MechModel, MechPose } from './view/models/types.ts';
@@ -35,6 +36,10 @@ const resize = () => {
 };
 resize();
 new ResizeObserver(resize).observe(container);
+
+// The real arena floor, so contrast is judged against what the game actually draws.
+const floor = new ArenaBackground(renderer);
+renderer.background = floor.material;
 
 let shown: Shown[] = [];
 let frozenTime: number | null = null;
@@ -91,6 +96,7 @@ const start = performance.now();
 const loop = () => {
   const time = frozenTime ?? (performance.now() - start) / 1000;
   apply(time);
+  floor.update(time * 22, 0, 0);
   renderer.ui.clearRect(0, 0, renderer.uiCanvas.width, renderer.uiCanvas.height);
   renderer.markUiDirty();
   renderer.render(time);

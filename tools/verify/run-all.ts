@@ -1,10 +1,10 @@
-/** Runs every headless eval script in order and summarises. (Browser E2E lives in e2e.ts and is run separately.) */
+/** Runs every headless eval script in order and summarises. (Browser checks: `npm run verify:browsers`.) */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPTS = ['boundary.ts', 'engine-numerics.ts', 'engine-lockstep.ts', 'engine-hostile.ts', 'game-eval.ts'];
+const SCRIPTS = ['boundary.ts', 'engine-numerics.ts', 'engine-lockstep.ts', 'engine-hostile.ts', 'engine-standalone.ts', 'game-eval.ts'];
 
 let failed = 0;
 for (const script of SCRIPTS) {
