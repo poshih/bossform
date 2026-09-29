@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Ev, SHOT_DEFS, type World } from '../sim/index.ts';
 import { NEUTRAL_COLORS, TEAM_COLORS } from '../config.ts';
+import { DrawLayer } from '../render/layers.ts';
 import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
 import { clamp01, colorIntoLinear, easeOutBack, easeOutExpo, lerp, lerpBinaryAngle, toWorld } from './shared.ts';
@@ -361,6 +362,7 @@ export class ProjectilesView implements StageView {
     this.bulletMaterial = new THREE.ShaderMaterial({ vertexShader: BULLET_VERTEX, fragmentShader: BULLET_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.NormalBlending });
     this.bulletMesh = new THREE.Mesh(this.bulletGeometry, this.bulletMaterial);
     this.bulletMesh.frustumCulled = false;
+    this.bulletMesh.renderOrder = DrawLayer.Projectiles;
 
     this.trailGeometry = this.makeGeometry();
     this.trailCenters = new Float32Array(max * 3);
@@ -378,6 +380,7 @@ export class ProjectilesView implements StageView {
     this.trailMaterial = new THREE.ShaderMaterial({ vertexShader: TRAIL_VERTEX, fragmentShader: TRAIL_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.trailMesh = new THREE.Mesh(this.trailGeometry, this.trailMaterial);
     this.trailMesh.frustumCulled = false;
+    this.trailMesh.renderOrder = DrawLayer.Projectiles;
 
     this.endGeometry = this.makeGeometry();
     this.endCenters = new Float32Array(END_FX_CAPACITY * 3);
@@ -397,6 +400,7 @@ export class ProjectilesView implements StageView {
     this.endMaterial = new THREE.ShaderMaterial({ vertexShader: END_VERTEX, fragmentShader: END_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.endMesh = new THREE.Mesh(this.endGeometry, this.endMaterial);
     this.endMesh.frustumCulled = false;
+    this.endMesh.renderOrder = DrawLayer.Projectiles;
 
     this.root.add(this.trailMesh, this.endMesh, this.bulletMesh);
     this.teamColors = TEAM_COLORS.map((hex) => colorIntoLinear(new THREE.Color(), hex));

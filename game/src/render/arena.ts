@@ -4,6 +4,7 @@ import type { FrameContext, StageView } from '../view/frame.ts';
 import type { WorldSnapshot } from '../view/snapshot.ts';
 import { clamp01, toWorld } from '../view/shared.ts';
 import { DemoBackdrop } from './backdrop.ts';
+import { DrawLayer } from './layers.ts';
 
 const FLOOR_EXTENT = 12000;
 const MAX_RIPPLES = 12;
@@ -238,6 +239,7 @@ export class ArenaFloor implements StageView {
     this.mesh = new THREE.Mesh(geometry, this.material);
     this.mesh.position.z = -2;
     this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = DrawLayer.Floor;
     this.group.add(this.mesh);
 
     this.stormMaterial = new THREE.ShaderMaterial({
@@ -256,6 +258,7 @@ export class ArenaFloor implements StageView {
     });
     this.storm = new THREE.Points(createStormGeometry(), this.stormMaterial);
     this.storm.frustumCulled = false;
+    this.storm.renderOrder = DrawLayer.Storm;
     this.group.add(this.storm);
     this.setSafeRadius(world.m.world[W.SafeR]);
   }

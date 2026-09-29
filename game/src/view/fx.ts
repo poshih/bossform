@@ -11,6 +11,7 @@ import {
   type World,
 } from '../sim/index.ts';
 import { NEUTRAL_COLORS, TEAM_COLORS } from '../config.ts';
+import { DrawLayer } from '../render/layers.ts';
 import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
 import { clamp01, colorIntoLinear, toWorld } from './shared.ts';
@@ -198,6 +199,7 @@ export class FxView implements StageView {
     this.material = new THREE.ShaderMaterial({ vertexShader: VERTEX, fragmentShader: FRAGMENT, transparent: true, depthWrite: false, blending: THREE.NormalBlending });
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = DrawLayer.Fx;
     this.root.add(this.mesh);
   }
 

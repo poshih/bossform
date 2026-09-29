@@ -9,8 +9,9 @@ import {
   type World,
 } from '../sim/index.ts';
 import { TEAM_COLORS } from '../config.ts';
+import { DrawLayer, setDrawLayer } from '../render/layers.ts';
 import type { FrameContext, StageView } from './frame.ts';
-import type { WorldSnapshot } from './snapshot.ts';
+import { drawnSeatPoint, seatBlend, type WorldSnapshot } from './snapshot.ts';
 import { binaryAngleToRadians, clamp01, colorIntoLinear, easeOutCubic, expStep, lerp, smoothstep, toWorld } from './shared.ts';
 
 const BUBBLE_SEGMENTS = 72;
@@ -204,6 +205,7 @@ export class ShieldsBoostView implements StageView {
   private readonly colorAttr: THREE.InstancedBufferAttribute;
   private readonly phaseAttr: THREE.InstancedBufferAttribute;
   private readonly pool = makeMotionPool();
+  private readonly point = { x: 0, y: 0 };
   private next = 0;
 
   constructor(seats: number) {
@@ -226,6 +228,7 @@ export class ShieldsBoostView implements StageView {
       const facets = new THREE.LineSegments(facetGeometry.clone(), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false }));
       const broken = new THREE.Mesh(brokenGeometry.clone(), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false }));
       group.add(fill, outer, inner, facets, broken);
+      setDrawLayer(group, DrawLayer.Shields);
       this.root.add(group);
       this.bubbles.push({ group, fill, outer, inner, facets, broken });
     }
@@ -259,6 +262,7 @@ export class ShieldsBoostView implements StageView {
     this.material = new THREE.ShaderMaterial({ vertexShader: VERTEX, fragmentShader: FRAGMENT, transparent: true, depthWrite: false });
     const mesh = new THREE.Mesh(this.geometry, this.material);
     mesh.frustumCulled = false;
+    mesh.renderOrder = DrawLayer.ShipEffects;
     this.root.add(mesh);
   }
 
@@ -299,7 +303,7 @@ export class ShieldsBoostView implements StageView {
   }
 
   update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
-    let count = this.appendPersistentInstances(current, frame);
+    let count = this.appendPersistentInstances(previous, current, frame);
     for (let i = 0; i < BOOST_INSTANCE_CAPACITY; i++) {
       if (this.pool.alive[i] !== 1) continue;
       this.pool.time[i] += frame.dt;
@@ -351,10 +355,8 @@ export class ShieldsBoostView implements StageView {
     const visible = amount > 0.015 || broken;
     bubble.group.visible = visible;
     if (!visible) return;
-    const jumped = previous.plEpoch[seat] !== current.plEpoch[seat] || previous.plAlive[seat] !== current.plAlive[seat];
-    const t = jumped ? 1 : frame.alpha;
-    const x = lerp(toWorld(previous.plX[seat]), toWorld(current.plX[seat]), t);
-    const y = lerp(toWorld(previous.plY[seat]), toWorld(current.plY[seat]), t);
+    drawnSeatPoint(previous, current, seat, frame.alpha, this.point);
+    const { x, y } = this.point;
     const radius = toWorld(FRAME_STATS[current.plFrame[seat]].grazeR);
     const energy = clamp01(current.plEnergy[seat] / ENERGY_MAX);
     const low = smoothstep(BUBBLE_LOW_ENERGY, 0, energy);
@@ -379,18 +381,20 @@ export class ShieldsBoostView implements StageView {
     bubble.broken.scale.setScalar(0.96 + 0.035 * Math.sin(frame.time * 22 + seat));
   }
 
-  private appendPersistentInstances(current: WorldSnapshot, frame: FrameContext): number {
+  /** The wake of every running boost, drawn where the robot is drawn (interpolated), and the brake ring when one ends. */
+  private appendPersistentInstances(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): number {
     let count = 0;
     for (let seat = 0; seat < current.seats; seat++) {
       const boost = current.plBoost[seat];
       const frameId = current.plFrame[seat];
       const stats = FRAME_STATS[frameId].boost;
       const active = current.plActive[seat] === 1 && current.plAlive[seat] === 1 && current.plForm[seat] === Form.Normal;
+      drawnSeatPoint(previous, current, seat, frame.alpha, this.point);
+      const { x, y } = this.point;
       if (active && boost > 0) {
-        const x = toWorld(current.plX[seat]);
-        const y = toWorld(current.plY[seat]);
-        const vx = toWorld(current.plVX[seat]);
-        const vy = toWorld(current.plVY[seat]);
+        const blend = seatBlend(previous, current, seat, frame.alpha);
+        const vx = lerp(toWorld(previous.plVX[seat]), toWorld(current.plVX[seat]), blend);
+        const vy = lerp(toWorld(previous.plVY[seat]), toWorld(current.plVY[seat]), blend);
         const moving = Math.abs(vx) + Math.abs(vy) > 0.0001;
         const angle = moving ? Math.atan2(vy, vx) : binaryAngleToRadians(current.plAim[seat]);
         const speed = moving ? Math.hypot(vx, vy) : toWorld(stats.speed);
@@ -408,7 +412,7 @@ export class ShieldsBoostView implements StageView {
           count = this.appendInstance(count, KIND_STREAK, x - Math.sin(angle) * offset - Math.cos(angle) * 11, y + Math.cos(angle) * offset - Math.sin(angle) * 11, BOOST_WAKE_Z - 0.15, angle, BOOST_STREAK_LENGTH, BOOST_STREAK_WIDTH, team.r * gain, team.g * gain, team.b * gain, dodge ? 0.42 : 0.28);
         }
       } else if (this.previousBoost[seat] > 0) {
-        this.spawn(KIND_RING, toWorld(current.plX[seat]), toWorld(current.plY[seat]), BOOST_WAKE_Z, 0, 0, 0, 0, BOOST_BRAKE_RADIUS, BOOST_BRAKE_RADIUS, BOOST_BRAKE_LIFE, this.teamColor(current.plTeam[seat]), BOOST_LOW_ALPHA);
+        this.spawn(KIND_RING, x, y, BOOST_WAKE_Z, 0, 0, 0, 0, BOOST_BRAKE_RADIUS, BOOST_BRAKE_RADIUS, BOOST_BRAKE_LIFE, this.teamColor(current.plTeam[seat]), BOOST_LOW_ALPHA);
       }
       this.previousBoost[seat] = boost;
     }

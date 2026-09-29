@@ -70,6 +70,14 @@ This file is what is easy to get wrong.
   the whole screen (the arena goes black). Clamp before `pow` (negative base = NaN on real GPUs), never `normalize` a
   vector that can be zero (a mesh scaled flat on one axis has a singular normal matrix), no `atan(0, 0)`. SwiftShader
   never shows these; the `bosses` E2E fails on any blackout when run with `BOSSFORM_GL=gl-egl`.
+- Draw order is `render/layers.ts` (`DrawLayer`), never scene-graph order or depth: every material is transparent and
+  none writes depth, and three sorts by `renderOrder` before depth (a batch's depth is the world origin's, the floor's
+  its centre's, so depth-sorting them against ships made robots vanish under the floor near the arena centre). Every
+  renderable a view creates gets a layer (`renderOrder = DrawLayer.X`, or `setDrawLayer` for a subtree); models stay on
+  `Bodies` (0, the default) and stack their own parts by height. Never put a `renderOrder` on a `Group`: it becomes the
+  first sort key for its whole subtree and the next nested Group resets it.
+- A pilot is drawn where `view/snapshot.ts` `drawnSeatPoint` says (interpolated; a respawn or death is not slid across);
+  anything attached to a pilot uses it, never the raw current position.
 - Canvas backing stores go through `config.backingScale()` (device pixel ratio capped by `MAX_DPR` and a 4K pixel budget).
 - Camera: aim and floor picks use the steady camera, never the drawn one; no aim lead, no roll; only a colossus destroyed
   near the camera shakes it (`view/shake.ts`). The Stage's views own their reactions to events (`view/frame.ts`).

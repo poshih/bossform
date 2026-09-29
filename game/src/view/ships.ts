@@ -20,12 +20,13 @@ import {
 } from '../sim/index.ts';
 import type { World } from '../sim/index.ts';
 import { TEAM_COLORS } from '../config.ts';
+import { DrawLayer, setDrawLayer } from '../render/layers.ts';
 import { createVectorMaterial, vectorMesh } from '../render/vector.ts';
 import type { VectorMaterial } from '../render/vector.ts';
 import { createColossus, createRobot } from './models/index.ts';
 import type { ColossusPose, PartPose, RobotPose } from './models/index.ts';
 import type { FrameContext, StageView } from './frame.ts';
-import type { WorldSnapshot } from './snapshot.ts';
+import { seatBlend, seatJumped, type WorldSnapshot } from './snapshot.ts';
 import { binaryAngleToRadians, clamp01, colorIntoLinear, easeOutCubic, expStep, lerp, lerpRadiansBinary, smoothstep, toWorld } from './shared.ts';
 
 interface ShipRenderSample {
@@ -190,6 +191,7 @@ export class ShipsView implements StageView {
       const bulwarkMaterial = createVectorMaterial({ fillAlpha: BULWARK_FILL_ALPHA, edgeWidth: BULWARK_EDGE_WIDTH, glow: BULWARK_GLOW });
       const bulwark = vectorMesh(bulwarkGeometry.clone(), bulwarkMaterial, BULWARK_CREASE_DEGREES);
       bulwark.position.z = 2.4;
+      bulwark.renderOrder = DrawLayer.ShipOverlay;
       bulwark.visible = false;
       this.root.add(bulwark);
       this.bulwarks.push(bulwark);
@@ -203,6 +205,7 @@ export class ShipsView implements StageView {
       const markerMaterial = createVectorMaterial({ edge: 0xffffff, fill: 0x03060c, fillAlpha: 0.0, edgeWidth: 1.25, glow: 1.45 });
       const marker = vectorMesh(markerGeometry.clone(), markerMaterial, 12);
       marker.position.z = 2;
+      marker.renderOrder = DrawLayer.ShipOverlay;
       marker.visible = false;
       this.root.add(marker);
       this.markers.push(marker);
@@ -211,6 +214,7 @@ export class ShipsView implements StageView {
       const energyArcBackMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: 0, depthWrite: false });
       const energyArcBack = new THREE.Mesh(energyArcBackGeometry.clone(), energyArcBackMaterial);
       energyArcBack.position.z = ENERGY_ARC_Z - 0.02;
+      energyArcBack.renderOrder = DrawLayer.ShipOverlay;
       energyArcBack.visible = false;
       this.root.add(energyArcBack);
       this.energyArcBacks.push(energyArcBack);
@@ -219,6 +223,7 @@ export class ShipsView implements StageView {
       const energyArcMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: 0, depthWrite: false });
       const energyArc = new THREE.Mesh(createEnergyArcGeometry(), energyArcMaterial);
       energyArc.position.z = ENERGY_ARC_Z;
+      energyArc.renderOrder = DrawLayer.ShipOverlay;
       energyArc.visible = false;
       this.root.add(energyArc);
       this.energyArcs.push(energyArc);
@@ -227,6 +232,7 @@ export class ShipsView implements StageView {
       const backplateMaterial = new THREE.MeshBasicMaterial({ color: 0x00040a, transparent: true, opacity: 0, depthWrite: false });
       const backplate = new THREE.Mesh(glowGeometry.clone(), backplateMaterial);
       backplate.position.z = -0.42;
+      backplate.renderOrder = DrawLayer.ShipUnderlay;
       backplate.visible = false;
       this.root.add(backplate);
       this.backplates.push(backplate);
@@ -235,6 +241,7 @@ export class ShipsView implements StageView {
       const glowMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: 0.08, depthWrite: false });
       const glow = new THREE.Mesh(glowGeometry.clone(), glowMaterial);
       glow.position.z = -0.35;
+      glow.renderOrder = DrawLayer.ShipUnderlay;
       glow.visible = false;
       this.root.add(glow);
       this.glows.push(glow);
@@ -243,7 +250,7 @@ export class ShipsView implements StageView {
       const coreDotMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: CORE_DOT_NORMAL_OPACITY, depthWrite: false, depthTest: false });
       const coreDot = new THREE.Mesh(coreDotGeometry.clone(), coreDotMaterial);
       coreDot.position.z = 3.2;
-      coreDot.renderOrder = 40;
+      coreDot.renderOrder = DrawLayer.CoreDot;
       coreDot.visible = false;
       this.root.add(coreDot);
       this.coreDots.push(coreDot);
@@ -252,7 +259,7 @@ export class ShipsView implements StageView {
       const coreRingMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: 0.9, depthWrite: false, depthTest: false });
       const coreRing = new THREE.Mesh(coreRingGeometry.clone(), coreRingMaterial);
       coreRing.position.z = 3.1;
-      coreRing.renderOrder = 39;
+      coreRing.renderOrder = DrawLayer.CoreRing;
       coreRing.visible = false;
       this.root.add(coreRing);
       this.coreRings.push(coreRing);
@@ -269,6 +276,7 @@ export class ShipsView implements StageView {
         mesh.rotation.z = angle + Math.PI * 0.5;
         readyAura.add(mesh);
       }
+      setDrawLayer(readyAura, DrawLayer.ShipOverlay);
       readyAura.visible = false;
       this.root.add(readyAura);
       this.readyAuras.push(readyAura);
@@ -477,8 +485,8 @@ export class ShipsView implements StageView {
   }
 
   private sample(previous: WorldSnapshot, current: WorldSnapshot, seat: number, alpha: number): ShipRenderSample {
-    const epochChanged = previous.plEpoch[seat] !== current.plEpoch[seat] || previous.plAlive[seat] !== current.plAlive[seat];
-    const snap = epochChanged ? 1 : alpha;
+    const epochChanged = seatJumped(previous, current, seat);
+    const snap = seatBlend(previous, current, seat, alpha);
     const x = lerp(toWorld(previous.plX[seat]), toWorld(current.plX[seat]), snap);
     const y = lerp(toWorld(previous.plY[seat]), toWorld(current.plY[seat]), snap);
     const vx = lerp(toWorld(previous.plVX[seat]), toWorld(current.plVX[seat]), snap);

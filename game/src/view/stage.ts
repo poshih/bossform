@@ -9,11 +9,11 @@ import { FxView } from './fx.ts';
 import { NeutralsView } from './neutrals.ts';
 import { OrbsView } from './orbs.ts';
 import { ProjectilesView } from './projectiles.ts';
-import { WorldSnapshot } from './snapshot.ts';
+import { WorldSnapshot, drawnSeatPoint } from './snapshot.ts';
 import { COLOSSUS_DEATH_SHAKE, shakeFalloff } from './shake.ts';
 import { ShieldsBoostView } from './shields.ts';
 import { ShipsView } from './ships.ts';
-import { lerp, toWorld } from './shared.ts';
+import { toWorld } from './shared.ts';
 
 export class Stage {
   private readonly pipeline: Pipeline;
@@ -21,7 +21,7 @@ export class Stage {
   private readonly camera = new FollowCamera();
   private readonly arena: ArenaFloor;
   private readonly fx: FxView;
-  /** Drawn in this order (the scene graph order): floor, pickups, bullets, units, pilots, effects. */
+  /** Updated in this order; drawn by layer (render/layers.ts), whatever their order here. */
   private readonly views: readonly StageView[];
   private worldRef: World;
   private previous: WorldSnapshot;
@@ -115,10 +115,7 @@ export class Stage {
 
   /** Where a pilot is drawn this frame (interpolated like the ships), in world units. */
   seatPoint(seat: number, out: { x: number; y: number }): void {
-    const jumped = this.previous.plEpoch[seat] !== this.current.plEpoch[seat] || this.previous.plAlive[seat] !== this.current.plAlive[seat];
-    const t = jumped ? 1 : this.alpha;
-    out.x = lerp(toWorld(this.previous.plX[seat]), toWorld(this.current.plX[seat]), t);
-    out.y = lerp(toWorld(this.previous.plY[seat]), toWorld(this.current.plY[seat]), t);
+    drawnSeatPoint(this.previous, this.current, seat, this.alpha, out);
   }
 
   /** Where a pilot is drawn this frame, in CSS pixels (overlays such as name tags stay glued to the ship). */

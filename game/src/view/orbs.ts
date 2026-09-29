@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '../sim/index.ts';
+import { DrawLayer } from '../render/layers.ts';
 import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
 import { clamp01, easeOutBack, lerp, toWorld } from './shared.ts';
@@ -138,6 +139,7 @@ export class OrbsView implements StageView {
     this.orbMaterial = new THREE.ShaderMaterial({ vertexShader: ORB_VERTEX, fragmentShader: ORB_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.orbMesh = new THREE.Mesh(this.orbGeometry, this.orbMaterial);
     this.orbMesh.frustumCulled = false;
+    this.orbMesh.renderOrder = DrawLayer.Orbs;
 
     this.trailGeometry = this.makeGeometry();
     this.trailCenters = new Float32Array(max * 3);
@@ -153,6 +155,7 @@ export class OrbsView implements StageView {
     this.trailMaterial = new THREE.ShaderMaterial({ vertexShader: TRAIL_VERTEX, fragmentShader: TRAIL_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.trailMesh = new THREE.Mesh(this.trailGeometry, this.trailMaterial);
     this.trailMesh.frustumCulled = false;
+    this.trailMesh.renderOrder = DrawLayer.Orbs;
     this.root.add(this.trailMesh, this.orbMesh);
   }
 

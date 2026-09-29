@@ -1,4 +1,5 @@
 import { W, type World } from '../sim/index.ts';
+import { lerp, toWorld } from './shared.ts';
 
 export class WorldSnapshot {
   readonly seats: number;
@@ -221,4 +222,24 @@ export class WorldSnapshot {
     this.oAge.set(m.oAge);
     this.oVal.set(m.oVal);
   }
+}
+
+/**
+ * A pilot that died, respawned or was moved without travelling (its epoch changed) between the two snapshots: it is drawn
+ * where it is now, never slid across the arena from where it was.
+ */
+export function seatJumped(previous: WorldSnapshot, current: WorldSnapshot, seat: number): boolean {
+  return previous.plEpoch[seat] !== current.plEpoch[seat] || previous.plAlive[seat] !== current.plAlive[seat];
+}
+
+/** How far to blend a pilot from the previous snapshot toward the current one this frame (see seatJumped). */
+export function seatBlend(previous: WorldSnapshot, current: WorldSnapshot, seat: number, alpha: number): number {
+  return seatJumped(previous, current, seat) ? 1 : alpha;
+}
+
+/** Where a pilot is drawn this frame, in world units: every view that draws at a pilot's position uses this one. */
+export function drawnSeatPoint(previous: WorldSnapshot, current: WorldSnapshot, seat: number, alpha: number, out: { x: number; y: number }): void {
+  const t = seatBlend(previous, current, seat, alpha);
+  out.x = lerp(toWorld(previous.plX[seat]), toWorld(current.plX[seat]), t);
+  out.y = lerp(toWorld(previous.plY[seat]), toWorld(current.plY[seat]), t);
 }

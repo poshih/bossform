@@ -70,9 +70,14 @@ class Stage {
 ```
 
 The Stage draws a list of views (`view/frame.ts`: `StageView` with `handleEvents`, `update(previous, current, frame)` and a
-`root` group), in order: arena floor, orbs, projectiles, neutral units, ships, effects. Each view owns its reactions to
-events; `FrameContext` carries the interpolation alpha, frame time, focus seat and team, and the music's `Beat`
-(`beat.ts`: the App's `BeatClock` follows `AudioEngine.musicPosition()`, so visuals pulse in time with the music).
+`root` group): arena floor, orbs, projectiles, neutral units, ships, shields and boosts, effects. Their order in the list is
+only their update order: what is drawn above what is `render/layers.ts` (`DrawLayer`, bottom to top: backdrop, floor,
+storm, orbs, ship underlays, bodies, shields, ship overlays, ship effects, explosions, bullets, hurtbox cores), set as each
+renderable's `renderOrder`, because every material is transparent and nothing writes depth. Models stay on `Bodies` and
+stack their own parts by height. Anything drawn at a pilot uses `drawnSeatPoint` (`view/snapshot.ts`), the same
+interpolation as the ship. Each view owns its reactions to events; `FrameContext` carries the interpolation alpha, frame
+time, focus seat and team, and the music's `Beat` (`beat.ts`: the App's `BeatClock` follows `AudioEngine.musicPosition()`,
+so visuals pulse in time with the music).
 
 ### Hud (`ui/hud.ts`)
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { DrawLayer, setDrawLayer } from './layers.ts';
 import type { Beat } from '../beat.ts';
 
 const STAR_COUNT = 720;
@@ -100,7 +101,6 @@ export class DemoBackdrop {
 
   constructor() {
     this.root.position.z = BACKDROP_BASE_Z;
-    this.root.renderOrder = -50;
 
     this.starMaterial = new THREE.PointsMaterial({
       size: 5.2,
@@ -143,6 +143,7 @@ export class DemoBackdrop {
 
     this.structures.frustumCulled = false;
     this.root.add(this.structures);
+    setDrawLayer(this.root, DrawLayer.Backdrop);
   }
 
   strike(strength: number): void {
