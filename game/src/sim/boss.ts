@@ -155,43 +155,70 @@ function shooter(w: World, seat: number, attack: number, part: number): Shooter 
   return { owner: seat, team: w.m.plTeam[seat], attack, part };
 }
 
-/** The ultima: live pods spiral shots outward while the core pulses rings; the machine cannot move. */
+/** The attack is over (or has nothing left to fire with): recovery begins, and an ultima starts its cooldown. */
+function toRecovery(w: World, seat: number, form: FormDef, attack: number): void {
+  const { m } = w;
+  m.plAtkPhase[seat] = AttackPhase.Recovery;
+  m.plAtkTimer[seat] = timingOf(form, attack).recovery;
+  if (attack === Attack.Ultima) m.plUltCd[seat] = form.ultima.cooldown;
+}
+
+/**
+ * The ultima: every live ultima pod spirals shots outward and, every `ringEvery` ticks, fires a ring from its own muzzle;
+ * the machine cannot move. Each pod keeps a fixed share of the ring's directions (its ordinal among the form's ultima pods),
+ * so the pods interleave into one dense ring, and a destroyed pod leaves its gaps. When no ultima pod is left, it stops.
+ */
 function barrage(w: World, seat: number, form: FormDef): void {
   const { m } = w;
   const ultima = form.ultima;
   const base = w.partBase(seat);
+  if (!hasPod(w, seat, form, Role.Ultima)) {
+    toRecovery(w, seat, form, Attack.Ultima);
+    return;
+  }
   const seq = m.plAtkSeq[seat];
-  if (seq % ultima.interval === 0) {
-    const spiral = Math.floor(seq / ultima.interval) * ultima.step;
-    const at: Vec = { x: 0, y: 0 };
-    form.parts.forEach((part, k) => {
-      if (part.kind !== PartKind.Pod || (part.roles & Role.Ultima) === 0 || m.ptHp[base + k] <= 0) return;
-      podMuzzle(w, seat, k, at);
-      const who = shooter(w, seat, Attack.Ultima, k);
-      for (let arm = 0; arm < ultima.arms; arm++) {
-        launch(w, who, ultima.shot, at.x, at.y, m.ptAng[base + k] + spiral + Math.floor((fx.ANGLE_FULL * arm) / ultima.arms));
-      }
-    });
-  }
-  if (seq % ultima.ringEvery === 0) {
-    const interleave = Math.floor(seq / ultima.ringEvery) % 2 === 0 ? 0 : Math.floor(fx.ANGLE_FULL / (2 * ultima.ringCount));
-    ring(w, shooter(w, seat, Attack.Ultima, -1), ultima.ringShot, m.plX[seat], m.plY[seat], ultima.ringCount, interleave);
-  }
+  const spiral = seq % ultima.interval === 0;
+  const ringTick = seq % ultima.ringEvery === 0;
+  const pods = form.ultimaPods;
+  const directions = ultima.ringPerPod * pods.length;
+  const ringAlternate = Math.floor(seq / ultima.ringEvery) % 2 === 0 ? 0 : Math.floor(fx.ANGLE_FULL / (2 * directions));
+  const at: Vec = { x: 0, y: 0 };
+  pods.forEach((k, ordinal) => {
+    if (m.ptHp[base + k] <= 0) return;
+    const who = shooter(w, seat, Attack.Ultima, k);
+    const facing = m.ptAng[base + k];
+    podMuzzle(w, seat, k, at);
+    if (spiral) {
+      const turn = Math.floor(seq / ultima.interval) * ultima.step;
+      for (let arm = 0; arm < ultima.arms; arm++) launch(w, who, ultima.shot, at.x, at.y, facing + turn + Math.floor((fx.ANGLE_FULL * arm) / ultima.arms));
+    }
+    if (ringTick) {
+      const share = Math.floor((fx.ANGLE_FULL * ordinal) / directions);
+      ring(w, who, ultima.ringShot, at.x, at.y, ultima.ringPerPod, facing + share + ringAlternate);
+      w.emit(Ev.PodFire, at.x, at.y, seat, k);
+    }
+  });
   m.plAtkSeq[seat] = seq + 1;
   if (--m.plAtkTimer[seat] > 0) return;
-  m.plAtkPhase[seat] = AttackPhase.Recovery;
-  m.plAtkTimer[seat] = ultima.recovery;
-  m.plUltCd[seat] = ultima.cooldown;
-  form.parts.forEach((part, k) => {
-    if (part.kind === PartKind.Pod && (part.roles & Role.Ultima) !== 0) m.ptHeat[base + k] = ultima.recovery;
+  toRecovery(w, seat, form, Attack.Ultima);
+  pods.forEach((k) => {
+    if (m.ptHp[base + k] > 0) m.ptHeat[base + k] = ultima.recovery;
   });
 }
 
-/** The wind-up is over: every live pod of the attack fires along its own current facing. */
+/**
+ * The wind-up is over: every live pod of the attack fires along its own current facing. If every pod it needed was destroyed
+ * during the wind-up, nothing is released (the energy stays spent) and the machine goes straight into its recovery.
+ */
 function release(w: World, seat: number, form: FormDef): void {
   const { m } = w;
   const attack = m.plAtk[seat];
   const base = w.partBase(seat);
+  const role = roleOf(attack);
+  if (!hasPod(w, seat, form, role)) {
+    toRecovery(w, seat, form, attack);
+    return;
+  }
   w.emit(Ev.Release, m.plX[seat], m.plY[seat], seat, attack);
   if (attack === Attack.Ultima) {
     m.plAtkPhase[seat] = AttackPhase.Release;
@@ -201,7 +228,6 @@ function release(w: World, seat: number, form: FormDef): void {
     return;
   }
   const volley = attack === Attack.Salvo ? form.salvo : form.siege;
-  const role = attack === Attack.Salvo ? Role.Salvo : Role.Siege;
   const at: Vec = { x: 0, y: 0 };
   form.parts.forEach((part, k) => {
     if (part.kind !== PartKind.Pod || (part.roles & role) === 0 || m.ptHp[base + k] <= 0) return;
@@ -215,8 +241,7 @@ function release(w: World, seat: number, form: FormDef): void {
       m.plVY[seat] -= fx.mul(fx.sin(facing), form.siege.recoil);
     }
   });
-  m.plAtkPhase[seat] = AttackPhase.Recovery;
-  m.plAtkTimer[seat] = volley.recovery;
+  toRecovery(w, seat, form, attack);
 }
 
 function runAttack(w: World, seat: number, form: FormDef, buttons: number, fuel: number): void {

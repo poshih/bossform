@@ -215,6 +215,72 @@ for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
   }
 }
 
+section('the ultima fires only through live ultima pods: each pod its own spiral and its own share of the rings');
+for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
+  const form = FORMS[frame];
+  const pods = form.ultimaPods;
+  const name = FORM_NAMES[frame];
+  const hold = presses(Button.Ultima);
+
+  const none = colossus(frame);
+  for (const k of pods) none.m.ptHp[k] = 0;
+  const refusedAhead = !canStartAttack(none.w, PILOT, Attack.Ultima);
+  none.step(3, hold);
+  check(`${name}: with every ultima pod destroyed the ultima cannot start`, refusedAhead && none.events(Ev.Windup).length === 0);
+
+  const cut = colossus(frame);
+  cut.step(1, hold);
+  cut.step(Math.floor(form.ultima.windup / 2), hold);
+  for (const k of pods) cut.m.ptHp[k] = 0;
+  let cutShots = 0;
+  for (let i = 0; i < form.ultima.windup; i++) {
+    cut.step(1, hold);
+    cutShots += cut.newBossShots().length;
+  }
+  check(`${name}: destroying every ultima pod during the wind-up cancels it: no release, no shot, recovery and cooldown begin`,
+    cutShots === 0 && cut.events(Ev.Release).length === 0 && cut.m.plAtkPhase[PILOT] === AttackPhase.Recovery && cut.m.plUltCd[PILOT] > 0,
+    `${cutShots} shots, ${cut.events(Ev.Release).length} releases, phase ${cut.m.plAtkPhase[PILOT]}`);
+
+  const one = colossus(frame);
+  const victim = pods[0];
+  one.m.ptHp[victim] = 0;
+  const shots: number[] = [];
+  let lastShotTick = -1;
+  for (let i = 0; i < form.ultima.windup + form.ultima.duration + 2; i++) {
+    one.step(1, hold);
+    const fresh = one.newBossShots();
+    if (fresh.length > 0) lastShotTick = one.tick;
+    shots.push(...fresh);
+  }
+  const at: Vec = { x: 0, y: 0 };
+  const origins = shots.every((p) => {
+    const k = one.m.pPart[p] - 1;
+    return k >= 0 && k !== victim && pods.includes(k);
+  });
+  const rings = one.events(Ev.PodFire);
+  const ringsFromMuzzles = rings.every((e) => {
+    podMuzzle(one.w, PILOT, e.b, at);
+    return e.b !== victim && pods.includes(e.b);
+  });
+  check(`${name}: with one ultima pod destroyed the others still fire, every shot and ring from a live pod`,
+    shots.length > 0 && origins && rings.length > 0 && ringsFromMuzzles, `${shots.length} shots, ${rings.length} pod rings`);
+
+  const last = colossus(frame);
+  for (const k of pods.slice(1)) last.m.ptHp[k] = 0;
+  last.step(1, hold);
+  while (last.m.plAtkPhase[PILOT] === AttackPhase.Windup) last.step(1, hold);
+  last.step(20, hold);
+  last.m.ptHp[pods[0]] = 0;
+  let after = 0;
+  for (let i = 0; i < 30; i++) {
+    last.step(1, hold);
+    after += last.newBossShots().length;
+  }
+  check(`${name}: when the last ultima pod falls during the barrage it stops at once and recovery begins`,
+    after === 0 && last.m.plAtkPhase[PILOT] !== AttackPhase.Release && last.m.plUltCd[PILOT] > 0, `${after} shots after, phase ${last.m.plAtkPhase[PILOT]}`);
+  info(`${name}: ${pods.length} ultima pods x ${form.ultima.ringPerPod} ring shots; last shot at tick ${lastShotTick}`);
+}
+
 section('an attack needs its cost plus all the fuel its wind-up, barrage and recovery burn: the tell never lies');
 for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
   const form = FORMS[frame];

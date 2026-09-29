@@ -233,7 +233,7 @@ class Watch {
     if (m.plForm[seat] !== Form.Boss || m.plAlive[seat] === 0) return;
     const limit = fx.fromInt(8);
     if (part < 0) {
-      if (Math.hypot(m.pX[p] - m.plX[seat], m.pY[p] - m.plY[seat]) > limit) this.fail(`tick ${tick}: a ring shot did not start at the core`);
+      this.fail(`tick ${tick}: a boss shot with no pod (every boss projectile must leave a live pod's muzzle)`);
       return;
     }
     if (form.parts[part].kind !== PartKind.Pod) {

@@ -64,8 +64,9 @@ export interface UltimaDef extends AttackTiming {
   /** Spiral rotation per emission. */
   readonly step: number;
   readonly shot: ShotDef;
+  /** Every `ringEvery` ticks each live ultima pod fires a ring of `ringPerPod` shots from its own muzzle. */
   readonly ringEvery: number;
-  readonly ringCount: number;
+  readonly ringPerPod: number;
   readonly ringShot: ShotDef;
 }
 
@@ -83,6 +84,8 @@ export interface FormDef {
   readonly parts: readonly PartDef[];
   /** Farthest any part's edge reaches from the core (broad phase for collisions). */
   readonly reach: number;
+  /** Indices of the pods that take part in the ultima, in part order (each owns a fixed share of the ultima's rings). */
+  readonly ultimaPods: readonly number[];
   readonly salvo: SalvoDef;
   readonly siege: SiegeDef;
   readonly ultima: UltimaDef;
@@ -110,7 +113,7 @@ const pod = (s: PodSpec): PartDef => ({ ...s, x: big(s.x), y: big(s.y), rad: big
 
 export type { PartSpec };
 
-function defineForm(def: Omit<FormDef, 'reach'>): FormDef {
+function defineForm(def: Omit<FormDef, 'reach' | 'ultimaPods'>): FormDef {
   const fail = (why: string): never => {
     throw new RangeError(`boss form ${def.name}: ${why}`);
   };
@@ -134,7 +137,8 @@ function defineForm(def: Omit<FormDef, 'reach'>): FormDef {
       fail(`attack ${id} must be heavier than attack ${id - 1}: longer wind-up, longer recovery, higher cost`);
     }
   }
-  return Object.freeze({ ...def, reach });
+  const ultimaPods = def.parts.flatMap((part, k) => (part.kind === PartKind.Pod && (part.roles & Role.Ultima) !== 0 ? [k] : []));
+  return Object.freeze({ ...def, reach, ultimaPods: Object.freeze(ultimaPods) });
 }
 
 const core = (radius: number): number => fx.mulDiv(radius, CORE_SCALE_PCT, 100);
@@ -174,7 +178,7 @@ const PALADIN = defineForm({
   ultima: {
     windup: 96, recovery: 130, cost: 30000, duration: 240, cooldown: 600, interval: 6, arms: 4, step: fx.deg(9),
     shot: shot({ kind: Proj.Orb, spd: fx.lit(1.9), rad: fx.fromInt(4), dmg: 9, life: 300 }),
-    ringEvery: 60, ringCount: 24,
+    ringEvery: 60, ringPerPod: 12,
     ringShot: shot({ kind: Proj.Orb, spd: fx.lit(1.5), rad: fx.fromInt(5), dmg: 10, life: 380 }),
   },
 });
@@ -215,7 +219,7 @@ const TEMPEST = defineForm({
   ultima: {
     windup: 90, recovery: 120, cost: 30000, duration: 240, cooldown: 600, interval: 5, arms: 3, step: fx.deg(13),
     shot: shot({ kind: Proj.Blade, spd: fx.lit(2.6), rad: fx.lit(3.6), dmg: 8, life: 200 }),
-    ringEvery: 45, ringCount: 30,
+    ringEvery: 45, ringPerPod: 8,
     ringShot: shot({ kind: Proj.Blade, spd: fx.lit(2), rad: fx.lit(3.2), dmg: 8, life: 260 }),
   },
 });
@@ -255,7 +259,7 @@ const FORTRESS = defineForm({
   ultima: {
     windup: 110, recovery: 150, cost: 33000, duration: 240, cooldown: 720, interval: 6, arms: 5, step: fx.deg(7),
     shot: shot({ kind: Proj.Orb, spd: fx.lit(1.7), rad: fx.fromInt(5), dmg: 11, life: 320 }),
-    ringEvery: 75, ringCount: 36,
+    ringEvery: 75, ringPerPod: 18,
     ringShot: shot({ kind: Proj.Heavy, spd: fx.lit(1.3), rad: fx.fromInt(7), dmg: 12, life: 420 }),
   },
 });

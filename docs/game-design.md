@@ -123,8 +123,11 @@ from that weight and must *tell* the arena what is coming before it lands:
   area is wide, but it can be dodged because it moves slowly.
 - **Recoil and root:** heavy attacks root the body while they charge and kick it backwards on release.
 - **Fires from where the guns are:** every projectile spawns at a live pod's muzzle. A destroyed pod cannot fire, and
-  destroying a pod during its wind-up cancels its shot (the energy is still spent).
-- **Feedback:** camera shake and zoom-out, deep low-frequency sound, parts that visibly shift and recoil.
+  destroying a pod during its wind-up cancels its shot (the energy is still spent); if every pod an attack needs is gone,
+  nothing is released and the machine goes straight into its recovery. Salvo and siege fire along the pod's facing; the
+  ultima's pods are radial emitters: each fires its spiral and its ring all around its own muzzle.
+- **Feedback:** a deep zoom-out and low-frequency sound, parts that visibly shift and recoil. The camera itself only shakes
+  when a colossus is destroyed (the rare big explosion); every other impact is shown by effects and a brief colour punch.
 
 #### 5.5.1 Attacks [SET: three attacks on left click, right click and one more key; numbers PROPOSED]
 
@@ -151,7 +154,7 @@ it can never be triggered by mistake while tapping to transform.
 |---|---|---|---|
 | **Salvo** | Its basic weapons are heavy cannon mounts that must swing round and cycle. They cannot aim precisely, so they fill space: a fan of large slow orbs that denies an area instead of hunting a target. | Pods swing toward the target (visible, slow slew), muzzles glow from dim to bright over 12 ticks, short rising tone. | Step through the gaps of the fan (slow orbs, known angles). Out-turn it: the pods lag. Shoot a pod to remove its share of the fan. |
 | **Siege shot** | A heavy shell needs a planted platform to absorb the recoil, so the machine stops, braces, and spends time charging one huge slow shell that bursts into shrapnel. | Body stops and lowers, main barrel extends and glows white-hot, a soft marker shows the burst point, low rising hum, small camera zoom-out; on release the body is thrown backwards. | It is rooted: this is the window to attack the charging pod or the core, or to leave the burst area (the shell needs seconds to arrive). Destroying the charging pod cancels the shot. |
-| **Ultima** | It dumps the whole reactor through every weapon at once. That is why it needs most of the energy a transformation starts with, why the machine is locked in place while capacitors charge, and why it cannot do anything else. | Whole body lights up, plates unfold, energy lines flow from the core to each live pod (so you can see which pods will fire), the arena dims, a ring collapses inward, a loud tone rises for 1.5 s, and every player's HUD flags it. | Break pods during the charge (each dead pod loses its stream), then leave the dense zone: the spirals and rings are slow and full of gaps. Killing the core ends it. |
+| **Ultima** | It dumps the whole reactor through every weapon at once. That is why it needs most of the energy a transformation starts with, why the machine is locked in place while capacitors charge, and why it cannot do anything else. | Whole body lights up, plates unfold, energy lines flow from the core to each live pod (so you can see which pods will fire), the arena dims, a ring collapses inward, a loud tone rises for 1.5 s, and every player's HUD flags it. | Break pods during the charge (each dead pod loses its spiral and its share of the rings; with no ultima pod left it cannot start, and it stops the moment the last one falls), then leave the dense zone: the spirals and rings are slow and full of gaps. Killing the core ends it. |
 
 **Tell rules.** Each is enforced by code and checked by verification (§9), not left to art:
 1. **Minimum wind-up:** Salvo at least 12 ticks, Siege 36, Ultima 90. No boss-attack projectile exists before its wind-up ends.
@@ -268,8 +271,8 @@ multiple pages; visual review of the vector look at gameplay scale.
 
 **Weight and tell checks (§5.5)** run over full matches in which bots use every boss attack:
 - no boss-attack projectile is spawned before its wind-up reached the minimum (12 / 36 / 90 ticks);
-- every boss projectile spawns at the muzzle of a live pod, along that pod's facing at release, and a pod destroyed
-  during its wind-up spawns nothing;
+- every boss projectile spawns at the muzzle of a live pod (salvo and siege along that pod's facing at release, ultima
+  spirals and rings all around it), and a pod destroyed during its wind-up spawns nothing;
 - wind-up, recovery and cost are ordered Salvo < Siege < Ultima in every boss form;
 - body and pod turn rates never exceed the configured limits, and speed and acceleration never exceed the boss-form
   limits (the weight rules);
