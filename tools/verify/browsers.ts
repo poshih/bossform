@@ -1,7 +1,7 @@
 /**
  * One command for every browser-based check: builds the game, serves it under the hosting platform's strict CSP,
- * runs the E2E scenarios, the online co-op matches (Chromium vs WebKit, clean and hostile links), the cross-engine
- * determinism proof and the audio checks, then tears the servers down again.
+ * runs the E2E scenarios, the online matches (Chromium vs WebKit, clean and hostile links), the cross-engine determinism
+ * proof and the audio checks, then tears the servers down again.
  *   node tools/verify/browsers.ts
  * Needs Playwright's chromium, firefox and webkit (npx playwright install chromium firefox webkit).
  */
@@ -24,15 +24,17 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  { name: 'E2E basic flow (1280x720)', script: 'e2e.ts', args: ['basic', '1280', '720', URL] },
-  { name: 'E2E boss mode, all frames', script: 'e2e.ts', args: ['boss', '1280', '720', URL] },
-  { name: 'E2E every boss fight: warning, phases, HP bar', script: 'e2e.ts', args: ['bosses', '1280', '720', URL] },
-  { name: 'E2E local co-op with a gamepad', script: 'e2e.ts', args: ['coop', '1280', '720', URL] },
+  { name: 'E2E menus: title, help, quick battle, pause, quit (1280x720)', script: 'e2e.ts', args: ['menus', '1280', '720', URL] },
+  { name: 'E2E real keyboard and mouse (1280x720)', script: 'e2e.ts', args: ['play', '1280', '720', URL] },
+  { name: 'E2E gamepad (1280x720)', script: 'e2e.ts', args: ['pad', '1280', '720', URL] },
+  { name: 'E2E bot pilots become colossi and tear each other apart (960x540)', script: 'e2e.ts', args: ['bosses', '960', '540', URL] },
+  { name: 'E2E a whole elimination match, results, rematch (640x360)', script: 'e2e.ts', args: ['match', '640', '360', URL] },
   { name: 'E2E layout 1920x1080', script: 'e2e.ts', args: ['layout', '1920', '1080', URL] },
   { name: 'E2E layout 560x480', script: 'e2e.ts', args: ['layout', '560', '480', URL] },
+  { name: 'E2E layout 420x800 (portrait)', script: 'e2e.ts', args: ['layout', '420', '800', URL] },
   { name: 'cross-engine determinism (V8, SpiderMonkey, JavaScriptCore)', script: 'cross-engine.ts', args: [] },
-  { name: 'online co-op, Chromium vs WebKit, clean link', script: 'e2e-online.ts', args: ['0', '0', '0', '15', 'webkit'] },
-  { name: 'online co-op, Chromium vs WebKit, 80ms +-60 / 15% loss', script: 'e2e-online.ts', args: ['80', '60', '0.15', '25', 'webkit'] },
+  { name: 'online, Chromium vs WebKit, clean link', script: 'e2e-online.ts', args: ['0', '0', '0', '15', 'webkit'] },
+  { name: 'online, Chromium vs WebKit, 80ms +-60 / 15% loss', script: 'e2e-online.ts', args: ['80', '60', '0.15', '25', 'webkit'] },
   { name: 'audio engine', script: 'audio.ts', args: [] },
 ];
 

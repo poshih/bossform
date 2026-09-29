@@ -42,7 +42,8 @@ export interface LobbyRequest {
   readonly room: string;
   readonly name: string;
   readonly frame: number;
-  readonly team: number;
+  /** Starting team; omit to start on your own team (free-for-all). */
+  readonly team?: number;
   /** Ticks of input delay for the match (the host's choice). */
   readonly inputDelay?: number;
 }
@@ -224,7 +225,7 @@ export class RelayLobby {
       this.message = 'WAITING FOR PLAYERS';
       this.socket.send(JSON.stringify({
         type: 'member',
-        data: encodeMember({ name: cleanName(this.request.name, DEFAULT_NAMES[raw.peer % DEFAULT_NAMES.length]), frame: this.request.frame, team: this.request.team }),
+        data: encodeMember({ name: cleanName(this.request.name, DEFAULT_NAMES[raw.peer % DEFAULT_NAMES.length]), frame: this.request.frame, team: this.request.team ?? raw.peer }),
       }));
     } else if (raw.type === 'room' && Array.isArray(raw.members) && typeof raw.settings === 'string' && isInt(raw.host, 0, 0xfffe)) {
       this.room = { host: raw.host, members: raw.members, settings: raw.settings };

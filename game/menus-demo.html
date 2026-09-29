@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>BOSSFORM Menus Demo</title>
+<style>
+  html, body { margin: 0; min-height: 100%; background: #04070f; }
+  body { font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  #status {
+    position: fixed; right: 12px; top: 12px; max-width: min(420px, calc(100vw - 24px)); padding: 8px 10px; color: #d9efff;
+    background: rgba(4, 10, 20, 0.78); border: 1px solid rgba(111, 227, 255, 0.18); font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; backdrop-filter: blur(10px); z-index: 20; text-align: right;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="status" aria-live="polite">Menus demo ready.</div>
+<script type="module" src="./src/menusDemo.ts"></script>
+</body>
+</html>

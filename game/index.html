@@ -4,31 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<meta name="description" content="BOSSFORM — an arena mech shoot-'em-up. Move and aim separately, fill the boss gauge and transform into your frame's colossal boss form.">
-<title>BOSSFORM — arena mech combat</title>
+<meta name="description" content="BOSSFORM — a vector mech battle arena. Move and aim separately, graze for energy, and become the boss.">
+<title>BOSSFORM — vector mech arena</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #03040a; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
   #app { position: fixed; inset: 0; overflow: hidden; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-  #game { display: block; position: absolute; left: 0; top: 0; outline: none; touch-action: none; image-rendering: pixelated; }
-  #boot {
-    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 14px; padding: 16px; box-sizing: border-box; text-align: center; color: #bfefff;
-    font: 600 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    letter-spacing: .18em; text-transform: uppercase; background: radial-gradient(ellipse at 50% 55%, #0b1a33 0%, #03040a 70%);
-    z-index: 50;
+  #stage, #hud { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+  #hud { pointer-events: none; }
+  #menus { position: absolute; inset: 0; }
+  #notice {
+    position: absolute; left: 50%; top: 14%; transform: translateX(-50%); max-width: min(90vw, 560px); padding: 10px 18px; z-index: 30;
+    border: 1px solid #ff5c8a; background: rgba(20, 4, 12, .88); color: #ffd6e4; text-align: center;
+    font: 600 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif; letter-spacing: .16em; text-transform: uppercase;
   }
-  #boot h1 { margin: 0; font-size: clamp(22px, 6vw, 44px); letter-spacing: .3em; color: #e9fbff; text-shadow: 0 0 12px #27e1ff, 3px 0 0 #ff2e88; font-weight: 800; }
-  #boot .tag { font-size: 11px; color: #ffc34d; letter-spacing: .3em; }
-  #boot-bar { width: min(320px, 70vw); height: 4px; background: #0f2440; overflow: hidden; position: relative; }
-  #boot-bar::after { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; background: linear-gradient(90deg, transparent, #27e1ff, #ffc34d, transparent); animation: bootslide 1.2s linear infinite; }
+  #notice[hidden] { display: none; }
+  #boot {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 16px;
+    box-sizing: border-box; text-align: center; color: #bfefff; background: #000; z-index: 50;
+    font: 600 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif; letter-spacing: .2em; text-transform: uppercase;
+  }
+  #boot h1 { margin: 0; font-size: clamp(22px, 6vw, 44px); letter-spacing: .34em; font-weight: 700; color: #e9fbff; text-shadow: 0 0 14px #35d0ff; }
+  #boot .tag { font-size: 11px; color: #7cf0ff; letter-spacing: .32em; }
+  #boot-bar { width: min(320px, 70vw); height: 2px; background: #0b1a26; overflow: hidden; position: relative; }
+  #boot-bar::after { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; background: linear-gradient(90deg, transparent, #35d0ff, transparent); animation: bootslide 1.2s linear infinite; }
   @keyframes bootslide { from { left: -30%; } to { left: 100%; } }
   @media (prefers-reduced-motion: reduce) { #boot-bar::after { animation: none; left: 35%; } }
-  #boot-status { min-height: 1.4em; font-size: 12px; color: #9fd9ee; }
-  #boot-retry {
-    display: none; min-width: 120px; min-height: 44px; padding: 0 20px; border: 1px solid #27e1ff; background: #081a2c; color: #e9fbff;
-    font: inherit; letter-spacing: .2em; cursor: pointer;
-  }
-  #boot-retry:focus-visible { outline: 2px solid #ffc34d; outline-offset: 3px; }
+  #boot-status { min-height: 1.4em; font-size: 12px; color: #8fc9d8; }
+  #boot-retry { display: none; min-width: 120px; min-height: 44px; padding: 0 20px; border: 1px solid #35d0ff; background: #04121c; color: #e9fbff; font: inherit; letter-spacing: .2em; cursor: pointer; }
+  #boot-retry:focus-visible { outline: 2px solid #ffd23f; outline-offset: 3px; }
   #boot.failed #boot-bar { display: none; }
   #boot.failed #boot-retry { display: inline-block; }
   #boot.done { display: none; }
@@ -36,13 +39,17 @@
 </head>
 <body>
 <div id="app">
+  <canvas id="stage" tabindex="0" aria-label="BOSSFORM battle arena"></canvas>
+  <canvas id="hud" aria-hidden="true"></canvas>
+  <div id="menus"></div>
+  <div id="notice" role="status" aria-live="polite" hidden></div>
   <div id="boot" role="region" aria-label="Loading BOSSFORM">
     <h1>BOSSFORM</h1>
     <div class="tag">become the boss</div>
     <div id="boot-bar" role="progressbar" aria-label="Loading" aria-busy="true"></div>
     <div id="boot-status" role="status" aria-live="polite">Downloading the game…</div>
     <button id="boot-retry" type="button">Retry</button>
-    <noscript><div style="color:#ffb4c8">BOSSFORM needs JavaScript and WebGL to run.</div></noscript>
+    <noscript>BOSSFORM needs JavaScript and WebGL to run.</noscript>
   </div>
 </div>
 <script>
@@ -64,9 +71,7 @@
       if (t && t.tagName === 'SCRIPT') fail('The game files could not be downloaded. Check your connection and retry.');
       else if (t === window || !t) fail('BOSSFORM hit an error while starting. Retry to load it again.');
     }, true);
-    window.addEventListener('unhandledrejection', function () {
-      fail('BOSSFORM hit an error while starting. Retry to load it again.');
-    });
+    window.addEventListener('unhandledrejection', function () { fail('BOSSFORM hit an error while starting. Retry to load it again.'); });
     setTimeout(function () {
       if (!window.__bossformStarted && !boot.classList.contains('failed')) status.textContent = 'Still loading — a slow connection can take a little longer…';
     }, 12000);

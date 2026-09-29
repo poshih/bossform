@@ -1,7 +1,7 @@
 import { App } from './app.ts';
 import { AudioEngine } from './audio/audio.ts';
-import { joinRoom } from './net/lobby.ts';
-import { Renderer } from './render/renderer.ts';
+import { quickMatch } from './setup.ts';
+import type { MatchSetup } from './setup.ts';
 
 declare global {
   interface Window {
@@ -12,7 +12,9 @@ declare global {
 }
 
 const MAX_FRAME_SECONDS = 0.1;
-const ONLINE_NOTICE_SECONDS = 30;
+const DEFAULT_RELAY_PORT = 4431;
+const DEFAULT_PLAYER_NAME = 'PILOT';
+const MAX_TIMESCALE = 8;
 
 const boot = document.getElementById('boot')!;
 const status = document.getElementById('boot-status')!;
@@ -26,77 +28,73 @@ function fail(message: string, error?: unknown): void {
 
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-async function start(): Promise<void> {
-  const container = document.getElementById('app')!;
-  const canvas = document.createElement('canvas');
-  canvas.id = 'game';
-  canvas.tabIndex = 0;
-  canvas.setAttribute('aria-label', 'BOSSFORM game canvas');
-  container.appendChild(canvas);
+/**
+ * `?start=<mode>,<opponents>,<frame>,<seed>` skips the menus (mode 0 elimination / 1 deathmatch): a link straight into a
+ * match. `&autoplay=1` lets a bot fly your seat too, so a whole match can be watched (or tested) hands-free.
+ */
+function parseStart(query: URLSearchParams): MatchSetup | null {
+  const raw = query.get('start');
+  if (raw === null) return null;
+  const [mode, opponents, frame, seed] = raw.split(',').map(Number);
+  const setup = quickMatch(mode, opponents, frame, seed);
+  return query.get('autoplay') === '1' ? { ...setup, pilots: setup.pilots.map((pilot) => ({ ...pilot, bot: true })) } : setup;
+}
 
+async function start(): Promise<void> {
+  const query = new URLSearchParams(location.search);
+  const container = document.getElementById('app')!;
+  const stageCanvas = document.getElementById('stage') as HTMLCanvasElement;
+  const hudCanvas = document.getElementById('hud') as HTMLCanvasElement;
   status.textContent = 'Preparing graphics…';
   await nextFrame();
-  let renderer: Renderer;
+
+  const audio = new AudioEngine();
+  let app: App;
   try {
-    renderer = new Renderer(canvas);
+    app = new App(
+      { stageCanvas, hudCanvas, menusRoot: document.getElementById('menus')!, notice: document.getElementById('notice')! },
+      {
+        relayUrl: query.get('relay') ?? `ws://${location.hostname}:${DEFAULT_RELAY_PORT}/`,
+        playerName: query.get('name') ?? DEFAULT_PLAYER_NAME,
+        timescale: Math.min(MAX_TIMESCALE, Math.max(1, Math.floor(Number(query.get('timescale') ?? 1)))),
+        start: parseStart(query),
+        freezeOnWindup: query.has('freeze') ? Number(query.get('freeze')) : null,
+      },
+      audio,
+    );
+    app.begin();
   } catch (error) {
     fail('WebGL is unavailable in this browser, so BOSSFORM cannot start. Try enabling hardware acceleration.', error);
     return;
   }
-  canvas.addEventListener('webglcontextlost', (e) => {
+  window.__bossform = app;
+  stageCanvas.addEventListener('webglcontextlost', (e) => {
     e.preventDefault();
     fail('The graphics context was lost. Retry to restart the game.');
   });
 
-  const audio = new AudioEngine();
-  const query = new URLSearchParams(location.search);
-  const relayUrl = query.get('relay');
-  const app = new App(renderer, audio, canvas, { online: relayUrl !== null });
-  window.__bossform = app;
-  if (relayUrl !== null) {
-    app.requestOnline = (frame, difficulty) => {
-      app.notify('CONNECTING TO THE RELAY...', ONLINE_NOTICE_SECONDS);
-      joinRoom({ relayUrl, room: query.get('room') ?? 'lobby', frame, difficulty }, (message) => app.notify(message, ONLINE_NOTICE_SECONDS))
-        .then((start) => app.startOnline(start))
-        .catch((error: Error) => app.notify(`ONLINE FAILED: ${error.message.toUpperCase()}`, ONLINE_NOTICE_SECONDS));
-    };
-  }
-
   const resize = () => {
-    const r = container.getBoundingClientRect();
-    renderer.resize(Math.max(1, Math.floor(r.width)), Math.max(1, Math.floor(r.height)));
+    const box = container.getBoundingClientRect();
+    app.resize(Math.max(1, Math.floor(box.width)), Math.max(1, Math.floor(box.height)), window.devicePixelRatio);
   };
   resize();
   new ResizeObserver(resize).observe(container);
-  window.addEventListener('resize', resize);
-
-  window.addEventListener('blur', () => app.onFocusLost());
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) app.onFocusLost();
-    audio.suspendForHidden(document.hidden);
-  });
+  document.addEventListener('visibilitychange', () => audio.suspendForHidden(document.hidden));
   const unlock = () => audio.unlock();
   window.addEventListener('pointerdown', () => {
-    canvas.focus({ preventScroll: true });
+    stageCanvas.focus({ preventScroll: true });
     unlock();
   });
   window.addEventListener('keydown', unlock);
 
-  status.textContent = 'Compiling shaders…';
-  await nextFrame();
-  app.warmup();
-
   status.textContent = 'Starting…';
-  const autoFrame = query.get('auto');
-  if (relayUrl !== null && autoFrame !== null) app.requestOnline?.(Math.max(0, Math.min(2, Number(autoFrame) || 0)), 1);
   let last = performance.now();
   let started = false;
   const loop = (now: number) => {
     const dt = Math.min(MAX_FRAME_SECONDS, Math.max(0, (now - last) / 1000));
     last = now;
     try {
-      app.update(dt, now);
-      app.render();
+      app.frame(now, dt);
     } catch (error) {
       fail('Something went wrong while running the game. Retry to restart it.', error);
       return;
@@ -105,7 +103,7 @@ async function start(): Promise<void> {
       started = true;
       window.__bossformStarted = true;
       boot.classList.add('done');
-      canvas.focus({ preventScroll: true });
+      stageCanvas.focus({ preventScroll: true });
     }
     requestAnimationFrame(loop);
   };

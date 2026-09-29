@@ -1,31 +1,57 @@
-import { createBeamLoop, createNoiseBuffer, renderSfxBuffer, scheduleSfx, SFX_NAMES, SFX_SPECS, TRACK_NAMES } from './synth.ts';
-import { renderTrack, TRACK_SPECS } from './music.ts';
-import type { BeamLoop, PlayOptions, Sfx, Track } from './synth.ts';
+/**
+ * AudioEngine public API:
+ * - constructor()
+ * - onMuteChange: (muted: boolean) => void
+ * - isMuted(): boolean
+ * - setMuted(muted: boolean): void
+ * - unlock(): void
+ * - get running(): boolean
+ * - play(sfx: Sfx, options?: PlayOptions): void
+ * - playMusic(track: Track, fadeSeconds?: number): void
+ * - stopMusic(fadeSeconds?: number): void
+ * - setLayer(name: LayerName, state: LayerState): void
+ * - suspendForHidden(hidden: boolean): void
+ * - dispose(): void
+ */
+import { TRACK_SPECS, renderTrack } from './music.ts';
+import {
+  LAYER_NAMES,
+  SFX_NAMES,
+  SFX_SPECS,
+  TRACK_NAMES,
+  createLoopLayer,
+  createNoiseBuffer,
+  renderSfxBuffer,
+  scheduleSfx,
+} from './synth.ts';
+import type { LayerName, LayerState, LoopLayer, PlayOptions, Sfx, Track } from './synth.ts';
 
 const STORAGE_KEY = 'bossform.muted';
-const MUSIC_GAIN = 0.58;
-const SFX_GAIN = 0.82;
 const MASTER_ON = 1;
 const MASTER_OFF = 0;
 const CROSSFADE_SECONDS = 0.8;
+const MUSIC_GAIN = 0.56;
+const SFX_GAIN = 0.82;
+const LAYER_GAIN = 0.44;
+const FADE_FLOOR = 0.0001;
 
-type CachedTrack = {
-  track: Track;
-  source: AudioBufferSourceNode;
-  gain: GainNode;
-};
-
-function stopSource(source: CachedTrack, ctx: AudioContext, fadeSeconds: number): void {
-  const fade = Math.max(0.03, fadeSeconds);
-  const now = ctx.currentTime;
-  source.gain.gain.cancelScheduledValues(now);
-  source.gain.gain.setValueAtTime(Math.max(0.0001, source.gain.gain.value), now);
-  source.gain.gain.exponentialRampToValueAtTime(0.0001, now + fade);
-  source.source.stop(now + fade + 0.05);
+interface PlayingTrack {
+  readonly track: Track;
+  readonly source: AudioBufferSourceNode;
+  readonly gain: GainNode;
 }
 
-export type { PlayOptions, Sfx, Track };
-export { renderSfxBuffer, SFX_NAMES, TRACK_NAMES };
+function stopTrack(track: PlayingTrack, ctx: AudioContext, fadeSeconds: number): void {
+  const fade = Math.max(0.03, fadeSeconds);
+  const now = ctx.currentTime;
+  track.gain.gain.cancelScheduledValues(now);
+  track.gain.gain.setValueAtTime(Math.max(FADE_FLOOR, track.gain.gain.value), now);
+  track.gain.gain.exponentialRampToValueAtTime(FADE_FLOOR, now + fade);
+  track.source.stop(now + fade + 0.05);
+}
+
+export type { LayerName, LayerState, PlayOptions, Sfx, Track };
+export { LAYER_NAMES, SFX_NAMES, SFX_SPECS, TRACK_NAMES, renderSfxBuffer };
 
 export class AudioEngine {
   onMuteChange: (muted: boolean) => void = () => {};
@@ -34,25 +60,26 @@ export class AudioEngine {
   private masterGain: GainNode | null = null;
   private musicBus: GainNode | null = null;
   private sfxBus: GainNode | null = null;
+  private layerBus: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   private muted: boolean;
   private readonly lastPlayed = new Map<Sfx, number>();
   private readonly trackCache = new Map<Track, AudioBuffer>();
   private readonly trackRendering = new Map<Track, Promise<AudioBuffer>>();
-  private currentMusic: CachedTrack | null = null;
+  private readonly layers = new Map<LayerName, LoopLayer>();
+  private readonly layerState = new Map<LayerName, LayerState>();
+  private currentTrack: PlayingTrack | null = null;
   private wantedTrack: Track | null = null;
-  private beamLoop: BeamLoop | null = null;
-  private beamActive = false;
 
   constructor() {
-    let storedMuted = false;
+    let stored = false;
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      storedMuted = stored === '1';
+      stored = localStorage.getItem(STORAGE_KEY) === '1';
     } catch {
-      storedMuted = false;
+      stored = false;
     }
-    this.muted = storedMuted;
+    this.muted = stored;
+    for (const name of LAYER_NAMES) this.layerState.set(name, { active: false });
   }
 
   isMuted(): boolean {
@@ -61,7 +88,7 @@ export class AudioEngine {
 
   setMuted(muted: boolean): void {
     this.muted = muted;
-    if (this.masterGain) this.masterGain.gain.value = muted ? MASTER_OFF : MASTER_ON;
+    if (this.masterGain !== null) this.masterGain.gain.value = muted ? MASTER_OFF : MASTER_ON;
     try {
       localStorage.setItem(STORAGE_KEY, muted ? '1' : '0');
     } catch {
@@ -71,8 +98,8 @@ export class AudioEngine {
   }
 
   unlock(): void {
-    if (!this.ctx) this.build();
-    if (this.ctx && this.ctx.state !== 'running') void this.ctx.resume();
+    if (this.ctx === null) this.build();
+    if (this.ctx !== null && this.ctx.state !== 'running') void this.ctx.resume();
   }
 
   get running(): boolean {
@@ -81,9 +108,9 @@ export class AudioEngine {
 
   play(sfx: Sfx, options?: PlayOptions): void {
     const ctx = this.ctx;
-    if (!ctx || ctx.state !== 'running' || !this.sfxBus || !this.noise) return;
-    const gap = SFX_SPECS[sfx].minGap;
+    if (ctx === null || ctx.state !== 'running' || this.sfxBus === null || this.noise === null) return;
     const now = ctx.currentTime;
+    const gap = SFX_SPECS[sfx].minGap;
     const last = this.lastPlayed.get(sfx) ?? -Infinity;
     if (now - last < gap) return;
     this.lastPlayed.set(sfx, now);
@@ -93,41 +120,48 @@ export class AudioEngine {
   playMusic(track: Track, fadeSeconds = CROSSFADE_SECONDS): void {
     if (this.wantedTrack === track) return;
     this.wantedTrack = track;
-    if (!this.ctx || this.ctx.state !== 'running') return;
-    this.startMusic(track, fadeSeconds);
+    if (this.ctx === null || this.ctx.state !== 'running') return;
+    this.startTrack(track, fadeSeconds);
   }
 
   stopMusic(fadeSeconds = CROSSFADE_SECONDS): void {
     this.wantedTrack = null;
-    if (!this.ctx || !this.currentMusic) return;
-    stopSource(this.currentMusic, this.ctx, fadeSeconds);
-    this.currentMusic = null;
+    if (this.ctx === null || this.currentTrack === null) return;
+    stopTrack(this.currentTrack, this.ctx, fadeSeconds);
+    this.currentTrack = null;
   }
 
-  setBeam(active: boolean): void {
-    this.beamActive = active;
-    this.beamLoop?.setActive(active);
+  setLayer(name: LayerName, state: LayerState): void {
+    this.layerState.set(name, {
+      active: state.active,
+      gain: state.gain,
+      pitch: state.pitch,
+      pan: state.pan,
+    });
+    if (this.ctx === null || this.ctx.state !== 'running') return;
+    this.ensureLayer(name)?.setState(state);
   }
 
   suspendForHidden(hidden: boolean): void {
-    if (!this.ctx) return;
+    if (this.ctx === null) return;
     if (hidden) void this.ctx.suspend();
     else if (this.ctx.state === 'suspended') void this.ctx.resume();
   }
 
   dispose(): void {
-    if (this.ctx && this.currentMusic) stopSource(this.currentMusic, this.ctx, 0.04);
-    this.currentMusic = null;
+    if (this.ctx !== null && this.currentTrack !== null) stopTrack(this.currentTrack, this.ctx, 0.04);
+    this.currentTrack = null;
     this.wantedTrack = null;
-    this.beamLoop?.dispose();
-    this.beamLoop = null;
+    for (const layer of this.layers.values()) layer.dispose();
+    this.layers.clear();
     const ctx = this.ctx;
     this.ctx = null;
     this.masterGain = null;
     this.musicBus = null;
     this.sfxBus = null;
+    this.layerBus = null;
     this.noise = null;
-    if (ctx) void ctx.close().catch(() => {});
+    if (ctx !== null) void ctx.close().catch(() => {});
   }
 
   private build(): void {
@@ -160,23 +194,38 @@ export class AudioEngine {
     sfxBus.connect(master);
     this.sfxBus = sfxBus;
 
+    const layerBus = ctx.createGain();
+    layerBus.gain.value = LAYER_GAIN;
+    layerBus.connect(master);
+    this.layerBus = layerBus;
+
     this.noise = createNoiseBuffer(ctx, 2, 5);
-    this.beamLoop = createBeamLoop(ctx, sfxBus, this.noise);
-    this.beamLoop.setActive(this.beamActive);
+    for (const name of LAYER_NAMES) {
+      const layer = this.ensureLayer(name);
+      if (layer !== null) layer.setState(this.layerState.get(name) ?? { active: false });
+    }
 
     ctx.addEventListener('statechange', () => {
       if (ctx.state !== 'running') return;
-      if (this.beamLoop) this.beamLoop.setActive(this.beamActive);
-      const wanted = this.wantedTrack;
-      if (wanted) this.startMusic(wanted, 0.4);
+      for (const name of LAYER_NAMES) this.ensureLayer(name)?.setState(this.layerState.get(name) ?? { active: false });
+      if (this.wantedTrack !== null) this.startTrack(this.wantedTrack, 0.4);
     });
+  }
+
+  private ensureLayer(name: LayerName): LoopLayer | null {
+    const existing = this.layers.get(name);
+    if (existing !== undefined) return existing;
+    if (this.ctx === null || this.layerBus === null || this.noise === null) return null;
+    const layer = createLoopLayer(name, this.ctx, this.layerBus, this.noise);
+    this.layers.set(name, layer);
+    return layer;
   }
 
   private ensureTrack(track: Track): Promise<AudioBuffer> {
     const cached = this.trackCache.get(track);
-    if (cached) return Promise.resolve(cached);
+    if (cached !== undefined) return Promise.resolve(cached);
     const inflight = this.trackRendering.get(track);
-    if (inflight) return inflight;
+    if (inflight !== undefined) return inflight;
     const render = renderTrack(track).then((buffer) => {
       this.trackCache.set(track, buffer);
       return buffer;
@@ -188,30 +237,28 @@ export class AudioEngine {
     return render;
   }
 
-  private startMusic(track: Track, fadeSeconds: number): void {
+  private startTrack(track: Track, fadeSeconds: number): void {
     const ctx = this.ctx;
-    const musicBus = this.musicBus;
-    if (!ctx || !musicBus || ctx.state !== 'running') return;
-    if (this.currentMusic?.track === track) return;
+    if (ctx === null || this.musicBus === null || ctx.state !== 'running') return;
+    if (this.currentTrack?.track === track) return;
     void this.ensureTrack(track).then((buffer) => {
-      if (!this.ctx || this.ctx !== ctx || ctx.state !== 'running' || this.wantedTrack !== track || !this.musicBus) return;
+      if (this.ctx !== ctx || this.musicBus === null || ctx.state !== 'running' || this.wantedTrack !== track) return;
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.loop = TRACK_SPECS[track].loop;
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.setValueAtTime(FADE_FLOOR, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(1, ctx.currentTime + Math.max(0.04, fadeSeconds));
       source.connect(gain).connect(this.musicBus);
-      const previous = this.currentMusic;
-      this.currentMusic = { track, source, gain };
+      const previous = this.currentTrack;
+      this.currentTrack = { track, source, gain };
       source.onended = () => {
-        if (this.currentMusic?.source === source) {
-          this.currentMusic = null;
-          if (!TRACK_SPECS[track].loop && this.wantedTrack === track) this.wantedTrack = null;
-        }
+        if (this.currentTrack?.source !== source) return;
+        this.currentTrack = null;
+        if (!TRACK_SPECS[track].loop && this.wantedTrack === track) this.wantedTrack = null;
       };
       source.start();
-      if (previous) stopSource(previous, ctx, Math.min(0.5, fadeSeconds));
+      if (previous !== null) stopTrack(previous, ctx, Math.min(0.5, fadeSeconds));
     }).catch(() => {
       if (this.wantedTrack === track) this.wantedTrack = null;
     });

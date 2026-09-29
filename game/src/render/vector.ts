@@ -22,7 +22,7 @@ export interface VectorStyle {
   glow: number;
 }
 
-const DEFAULT_STYLE: VectorStyle = { edge: 0x5fe8ff, fill: 0x06131c, fillAlpha: 0.32, edgeWidth: 1.5, glow: 2.4 };
+const DEFAULT_STYLE: VectorStyle = { edge: 0x5fe8ff, fill: 0x06131c, fillAlpha: 0.28, edgeWidth: 1.4, glow: 1.55 };
 
 const VERTEX = /* glsl */ `
 attribute vec3 bary;
@@ -57,10 +57,10 @@ void main() {
   float edge = 1.0 - min(min(k.x, k.y), k.z);
   float facing = abs(dot(normalize(vNormal), normalize(-vView)));
   float rim = pow(1.0 - facing, 2.0);
-  vec3 face = uFill * (0.6 + 0.4 * facing) + uEdge * rim * 0.22;
-  vec3 line = uEdge * uGlow * (1.0 + uPulse);
+  vec3 face = uFill * (0.52 + 0.32 * facing) + uEdge * rim * 0.12;
+  vec3 line = uEdge * uGlow * (0.92 + 0.32 * uPulse);
   vec3 col = mix(face, line, edge);
-  col = mix(col, vec3(4.0), uFlash * (0.35 + 0.65 * edge));
+  col = mix(col, vec3(1.8), uFlash * (0.22 + 0.78 * edge));
   float alpha = mix(uFillAlpha * (0.7 + 0.9 * rim), 1.0, edge) * uOpacity;
   gl_FragColor = vec4(col, alpha);
 }`;

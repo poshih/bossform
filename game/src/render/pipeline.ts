@@ -13,7 +13,7 @@ export interface PipelineOptions {
   readonly bloomThreshold: number;
 }
 
-export const DEFAULT_PIPELINE: PipelineOptions = { maxPixelRatio: 2, msaaSamples: 4, bloomStrength: 0.85, bloomRadius: 0.55, bloomThreshold: 0.7 };
+export const DEFAULT_PIPELINE: PipelineOptions = { maxPixelRatio: 2, msaaSamples: 4, bloomStrength: 0.52, bloomRadius: 0.42, bloomThreshold: 0.92 };
 
 /**
  * Full-resolution rendering: an anti-aliased half-float target (so bright edges can exceed 1), a soft bloom, and a
