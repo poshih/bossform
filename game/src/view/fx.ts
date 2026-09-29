@@ -75,9 +75,14 @@ void main() {
   if (vKind < 0.5) d = abs(length(vLocal) - 0.8) - 0.05;
   else if (vKind < 1.5) d = capsule(vLocal, vec2(0.95, 0.12));
   else if (vKind < 2.5) {
-    float angle = atan(vLocal.y, vLocal.x);
-    float gate = smoothstep(1.7, 1.0, abs(angle - vPhase));
-    d = max(abs(length(vLocal) - 0.78) - 0.08, gate - 0.45);
+    // The gate only shapes the ring itself (gate - GATE_CUT never exceeds 1 - GATE_CUT); atan(0, 0) at the quad's centre is undefined.
+    const float GATE_CUT = 0.45;
+    d = abs(length(vLocal) - 0.78) - 0.08;
+    if (d < 1.0 - GATE_CUT) {
+      float angle = atan(vLocal.y, vLocal.x);
+      float gate = smoothstep(1.7, 1.0, abs(angle - vPhase));
+      d = max(d, gate - GATE_CUT);
+    }
   } else if (vKind < 3.5) d = length(vLocal) - 0.95;
   else if (vKind < 4.5) d = capsule(vLocal, vec2(0.95, 0.20));
   else {

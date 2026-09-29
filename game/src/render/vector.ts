@@ -34,7 +34,9 @@ varying vec3 vLocal;
 void main() {
   // An edge whose flag is set is pushed far from zero so it can never be drawn.
   vBary = bary + hide * 16.0;
-  vNormal = normalize(normalMatrix * normal);
+  // Normalised per fragment: a part scaled flat on one axis (an assembling girder, a zero-length strut) has a singular
+  // normal matrix, so this can be the zero vector.
+  vNormal = normalMatrix * normal;
   vLocal = position;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   vView = mv.xyz;
@@ -63,8 +65,12 @@ void main() {
   float edge = 1.0 - min(min(k.x, k.y), k.z);
   float radial = clamp(length(vLocal.xy) / 56.0, 0.0, 1.0);
   float reveal = smoothstep(radial - 0.08, radial + 0.08, uReveal);
-  float facing = abs(dot(normalize(vNormal), normalize(-vView)));
-  float rim = pow(1.0 - facing, 2.0);
+  // One NaN pixel in the half-float target is smeared over the whole screen by the bloom, so no NaN may leave here:
+  // a flattened part has no normal (it faces the camera: no rim), |dot| of unit vectors can round past 1, and pow()
+  // of a negative base is NaN on most GPUs.
+  float normalLength2 = dot(vNormal, vNormal);
+  float facing = normalLength2 > 0.0 ? clamp(abs(dot(vNormal * inversesqrt(normalLength2), normalize(-vView))), 0.0, 1.0) : 1.0;
+  float rim = (1.0 - facing) * (1.0 - facing);
   vec3 face = uFill * (0.52 + 0.32 * facing) + uEdge * rim * 0.12;
   float wave = 0.5 + 0.5 * sin(dot(vLocal.xy, vec2(0.21, 0.37)) + uTime * 5.4);
   float wave2 = wave * wave;

@@ -1,6 +1,7 @@
 /**
  * Browser E2E for the whole game: real Chromium, real keyboard / mouse / gamepad events, the real WebGL pipeline.
  *   node tools/verify/e2e.ts <scenario> [width] [height] [baseUrl]
+ *   BOSSFORM_GL=gl-egl node tools/verify/e2e.ts ...   draws on the host GPU (ANGLE backend: gl-egl | vulkan | ...) instead of SwiftShader
  * Scenarios: menus | play | match | bosses | pad | layout | camera
  * Screenshots go to tools/verify/shots/e2e-<scenario>-<w>x<h>/. The console must stay free of errors and warnings.
  * Needs a server for the game (dev: `npm run dev` on :4427, or the static build).
@@ -77,7 +78,10 @@ const FAKE_PAD = `
   navigator.getGamepads = () => [{ connected: true, id: 'test pad', index: 0, axes: window.__pad.axes, buttons: buttonList() }];
 `;
 
-const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
+/** ANGLE backend: SwiftShader (software, the default: runs anywhere) or a host GPU backend such as gl-egl or vulkan. */
+const GL_BACKEND = process.env.BOSSFORM_GL ?? 'swiftshader';
+const GL_ARGS = GL_BACKEND === 'swiftshader' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : [`--use-angle=${GL_BACKEND}`, '--use-gl=angle', '--enable-gpu'];
+const browser = await chromium.launch({ args: [...GL_ARGS, '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
 const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
 if (scenario === 'pad') await page.addInitScript(FAKE_PAD);
 const problems: string[] = [];
@@ -113,10 +117,11 @@ const ticksPass = async (ticks: number, timeoutMs = 60000): Promise<void> => {
 const visible = (selector: string) => page.locator(selector).first().isVisible();
 
 /**
- * Share of pixels in a region of the SCREEN (a screenshot, so WebGL and 2D layers count exactly as the player sees them)
- * that are not near-black. The region is given as fractions of the window: x, y, width, height.
+ * Pixel statistics of a region of the SCREEN (a screenshot, so WebGL and 2D layers count exactly as the player sees
+ * them): the share of pixels that are not near-black, and the mean brightness (0..255). The region is given as
+ * fractions of the window: x, y, width, height.
  */
-async function litShare(region: readonly [number, number, number, number]): Promise<number> {
+async function regionStats(region: readonly [number, number, number, number]): Promise<{ lit: number; mean: number }> {
   const png = (await page.screenshot({ type: 'png' })).toString('base64');
   return page.evaluate(async ([data, [rx, ry, rw, rh]]) => {
     const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${data}`)).blob());
@@ -129,12 +134,22 @@ async function litShare(region: readonly [number, number, number, number]): Prom
     ctx.drawImage(bitmap, Math.floor(bitmap.width * rx), Math.floor(bitmap.height * ry), sw, sh, 0, 0, 96, 54);
     const pixels = ctx.getImageData(0, 0, 96, 54).data;
     let lit = 0;
-    for (let i = 0; i < pixels.length; i += 4) if (pixels[i] + pixels[i + 1] + pixels[i + 2] > 90) lit++;
-    return lit / (96 * 54);
+    let sum = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const rgb = pixels[i] + pixels[i + 1] + pixels[i + 2];
+      if (rgb > 90) lit++;
+      sum += rgb / 3;
+    }
+    return { lit: lit / (96 * 54), mean: sum / (96 * 54) };
   }, [png, region] as const);
 }
+const litShare = async (region: readonly [number, number, number, number]): Promise<number> => (await regionStats(region)).lit;
 
 const WHOLE_SCREEN = [0, 0, 1, 1] as const;
+/** The middle of the arena view, clear of every HUD panel. */
+const ARENA_MIDDLE = [0.3, 0.3, 0.4, 0.35] as const;
+/** Mean brightness (0..255) below which the arena view counts as blacked out: the dark floor alone is well above it. */
+const BLACKOUT_MEAN = 2;
 /** Where the scoreboard and the local pilot panel live. */
 const HUD_TOP_LEFT = [0, 0, 0.25, 0.45] as const;
 const HUD_BOTTOM_CENTRE = [0.3, 0.72, 0.4, 0.28] as const;
@@ -259,8 +274,23 @@ async function bossesScenario(): Promise<void> {
   const boss = await until((s) => s.seats!.some((seat) => seat.form === FORM_BOSS), 120000, 250);
   check('a pilot transforms into a colossus', boss !== null);
   await shot('boss-form');
+  // One NaN pixel in the half-float scene target is smeared over the whole screen by the bloom: the arena goes black.
+  // Real GPUs produce NaN where SwiftShader does not (run with BOSSFORM_GL=gl-egl to check on the host GPU).
+  let samples = 0;
+  let blackouts = 0;
+  let darkest = Number.POSITIVE_INFINITY;
   const end = Date.now() + 60000;
-  while (Date.now() < end && ((await snapshot()).tick ?? 0) <= 11000) await page.waitForTimeout(500);
+  while (Date.now() < end && ((await snapshot()).tick ?? 0) <= 11000) {
+    const { mean } = await regionStats(ARENA_MIDDLE);
+    samples++;
+    darkest = Math.min(darkest, mean);
+    if (mean < BLACKOUT_MEAN) {
+      blackouts++;
+      if (blackouts === 1) await shot('blackout');
+    }
+    await page.waitForTimeout(250);
+  }
+  check('the arena is never blacked out while colossi fight', samples > 0 && blackouts === 0, `${blackouts} of ${samples} samples black, darkest mean ${darkest.toFixed(1)} (${GL_BACKEND})`);
   const last = await snapshot();
   check('the deathmatch plays on without errors and without exhausting the projectile pool', last.status === 'running' && last.dropped === 0);
   check('pilots were destroyed by then', last.seats!.some((seat) => seat.deaths > 0));
