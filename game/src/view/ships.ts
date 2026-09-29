@@ -3,6 +3,7 @@ import {
   Attack,
   AttackPhase,
   BOSS_MIN_GAUGE,
+  ENERGY_MAX,
   Ev,
   FireSlot,
   FLASH_TICKS,
@@ -14,6 +15,7 @@ import {
   JUGGERNAUT,
   MAX_PARTS,
   MORPH_TICKS,
+  PRIMARY_WEAPONS,
   Role,
 } from '../sim/index.ts';
 import type { World } from '../sim/index.ts';
@@ -40,7 +42,7 @@ interface ShipRenderSample {
 }
 
 /** Robots are drawn this much larger than their collision bodies so they read as machines; the hurtbox is the core dot. */
-const ROBOT_VISUAL_SCALE = 1.6;
+const ROBOT_VISUAL_SCALE = 1.78;
 /** The bulwark wedge is gameplay, not decoration: it is drawn from the simulation's radius and arc, never scaled. */
 const BULWARK_RADIUS = toWorld(JUGGERNAUT.bulwark.radius);
 const BULWARK_HALF_ARC = binaryAngleToRadians(JUGGERNAUT.bulwark.halfArc);
@@ -68,9 +70,72 @@ const READY_AURA_FLOW = 0.32;
 const READY_AURA_EDGE_WIDTH = 1.35;
 const READY_TICK_LENGTH = 3.1;
 const READY_TICK_WIDTH = 0.42;
+const ENERGY_ARC_SEGMENTS = 72;
+const ENERGY_ARC_INNER_RADIUS = 13.0;
+const ENERGY_ARC_OUTER_RADIUS = 14.35;
+const ENERGY_ARC_Z = 2.1;
+const ENERGY_ARC_START = Math.PI * 0.5;
+const ENERGY_ARC_HEALTHY_OPACITY = 0.92;
+const ENERGY_ARC_DOWN_OPACITY = 0.46;
+const ENERGY_ARC_WARNING = 0.3;
+const ENERGY_ARC_DASH_PERIOD = 4;
+const ENERGY_ARC_DASH_ON = 2;
+const ENERGY_ARC_PULSE_HZ = 10;
+const ENERGY_ARC_BACK_OPACITY = 0.18;
+const ENERGY_ARC_AMBER = 0xffb23a;
+const ENERGY_ARC_RED = 0xff3c35;
+const CORE_DOT_NORMAL_OPACITY = 0.46;
+const CORE_DOT_FOCUS_OPACITY = 0.58;
+const CORE_DOT_BOSS_OPACITY = 0.34;
+const CORE_RING_NORMAL_OPACITY = 0.68;
+const CORE_RING_FOCUS_OPACITY = 0.82;
+const CORE_RING_BOSS_OPACITY = 0.84;
+const CORE_DOT_TEAM_GAIN = 0.56;
+const CORE_DOT_BOSS_COLOR = 0x05080d;
+const BACKPLATE_ROBOT_SCALE = 1.72;
+const BACKPLATE_BOSS_SCALE = 0.86;
+const BACKPLATE_FOCUS_OPACITY = 0.30;
+const BACKPLATE_OPACITY = 0.22;
 
 function teamColor(team: number): THREE.Color {
   return colorIntoLinear(new THREE.Color(), TEAM_COLORS[team % TEAM_COLORS.length]);
+}
+
+function createEnergyArcGeometry(): THREE.BufferGeometry {
+  const positions = new Float32Array(ENERGY_ARC_SEGMENTS * 4 * 3);
+  const indices = new Uint16Array(ENERGY_ARC_SEGMENTS * 6);
+  for (let segment = 0; segment < ENERGY_ARC_SEGMENTS; segment++) {
+    const vertex = segment * 4;
+    const index = segment * 6;
+    indices.set([vertex, vertex + 1, vertex + 2, vertex + 2, vertex + 1, vertex + 3], index);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  return geometry;
+}
+
+function setEnergyArcGeometry(geometry: THREE.BufferGeometry, fraction: number, dashed: boolean): void {
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+  const positions = position.array as Float32Array;
+  const filled = clamp01(fraction) * ENERGY_ARC_SEGMENTS;
+  for (let segment = 0; segment < ENERGY_ARC_SEGMENTS; segment++) {
+    const visible = segment < filled && (!dashed || segment % ENERGY_ARC_DASH_PERIOD < ENERGY_ARC_DASH_ON);
+    const a0 = ENERGY_ARC_START - (segment / ENERGY_ARC_SEGMENTS) * Math.PI * 2;
+    const a1 = ENERGY_ARC_START - ((segment + Math.min(1, Math.max(0, filled - segment))) / ENERGY_ARC_SEGMENTS) * Math.PI * 2;
+    const base = segment * 12;
+    if (!visible) {
+      positions.fill(0, base, base + 12);
+      continue;
+    }
+    positions.set([
+      Math.cos(a0) * ENERGY_ARC_INNER_RADIUS, Math.sin(a0) * ENERGY_ARC_INNER_RADIUS, 0,
+      Math.cos(a0) * ENERGY_ARC_OUTER_RADIUS, Math.sin(a0) * ENERGY_ARC_OUTER_RADIUS, 0,
+      Math.cos(a1) * ENERGY_ARC_INNER_RADIUS, Math.sin(a1) * ENERGY_ARC_INNER_RADIUS, 0,
+      Math.cos(a1) * ENERGY_ARC_OUTER_RADIUS, Math.sin(a1) * ENERGY_ARC_OUTER_RADIUS, 0,
+    ], base);
+  }
+  position.needsUpdate = true;
 }
 
 export class ShipsView implements StageView {
@@ -85,6 +150,12 @@ export class ShipsView implements StageView {
   private readonly colossi = [] as ReturnType<typeof createColossus>[];
   private readonly markers: THREE.Mesh[] = [];
   private readonly markerMaterials: THREE.ShaderMaterial[] = [];
+  private readonly energyArcs: THREE.Mesh[] = [];
+  private readonly energyArcMaterials: THREE.MeshBasicMaterial[] = [];
+  private readonly energyArcBacks: THREE.Mesh[] = [];
+  private readonly energyArcBackMaterials: THREE.MeshBasicMaterial[] = [];
+  private readonly backplates: THREE.Mesh[] = [];
+  private readonly backplateMaterials: THREE.MeshBasicMaterial[] = [];
   private readonly glows: THREE.Mesh[] = [];
   private readonly glowMaterials: THREE.MeshBasicMaterial[] = [];
   private readonly coreDots: THREE.Mesh[] = [];
@@ -101,6 +172,7 @@ export class ShipsView implements StageView {
     this.altPulse = new Float32Array(seats);
     this.partPoses = Array.from({ length: seats }, () => Array.from({ length: MAX_PARTS }, () => ({ hp: 0, facing: 0, flash: 0, heat: 0, charge: 0 })));
     const markerGeometry = new THREE.RingGeometry(13, 14.2, 48);
+    const energyArcBackGeometry = new THREE.RingGeometry(ENERGY_ARC_INNER_RADIUS, ENERGY_ARC_OUTER_RADIUS, ENERGY_ARC_SEGMENTS);
     const glowGeometry = new THREE.CircleGeometry(1, 48);
     const coreDotGeometry = new THREE.CircleGeometry(1, 28);
     const coreRingGeometry = new THREE.RingGeometry(1.1, 1.55, 28);
@@ -136,6 +208,30 @@ export class ShipsView implements StageView {
       this.markers.push(marker);
       this.markerMaterials.push(markerMaterial);
 
+      const energyArcBackMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: 0, depthWrite: false });
+      const energyArcBack = new THREE.Mesh(energyArcBackGeometry.clone(), energyArcBackMaterial);
+      energyArcBack.position.z = ENERGY_ARC_Z - 0.02;
+      energyArcBack.visible = false;
+      this.root.add(energyArcBack);
+      this.energyArcBacks.push(energyArcBack);
+      this.energyArcBackMaterials.push(energyArcBackMaterial);
+
+      const energyArcMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: 0, depthWrite: false });
+      const energyArc = new THREE.Mesh(createEnergyArcGeometry(), energyArcMaterial);
+      energyArc.position.z = ENERGY_ARC_Z;
+      energyArc.visible = false;
+      this.root.add(energyArc);
+      this.energyArcs.push(energyArc);
+      this.energyArcMaterials.push(energyArcMaterial);
+
+      const backplateMaterial = new THREE.MeshBasicMaterial({ color: 0x00040a, transparent: true, opacity: 0, depthWrite: false });
+      const backplate = new THREE.Mesh(glowGeometry.clone(), backplateMaterial);
+      backplate.position.z = -0.42;
+      backplate.visible = false;
+      this.root.add(backplate);
+      this.backplates.push(backplate);
+      this.backplateMaterials.push(backplateMaterial);
+
       const glowMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: 0.08, depthWrite: false });
       const glow = new THREE.Mesh(glowGeometry.clone(), glowMaterial);
       glow.position.z = -0.35;
@@ -144,7 +240,7 @@ export class ShipsView implements StageView {
       this.glows.push(glow);
       this.glowMaterials.push(glowMaterial);
 
-      const coreDotMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false, depthTest: false });
+      const coreDotMaterial = new THREE.MeshBasicMaterial({ color: teamColor(0), transparent: true, opacity: CORE_DOT_NORMAL_OPACITY, depthWrite: false, depthTest: false });
       const coreDot = new THREE.Mesh(coreDotGeometry.clone(), coreDotMaterial);
       coreDot.position.z = 3.2;
       coreDot.renderOrder = 40;
@@ -180,6 +276,7 @@ export class ShipsView implements StageView {
       this.modelFrames.push(Frame.Vanguard);
     }
     markerGeometry.dispose();
+    energyArcBackGeometry.dispose();
     glowGeometry.dispose();
     coreDotGeometry.dispose();
     coreRingGeometry.dispose();
@@ -219,6 +316,7 @@ export class ShipsView implements StageView {
       this.bulwarkMaterials[seat].uniforms.uFill.value.copy(color).multiplyScalar(BULWARK_FILL_TINT);
       this.glowMaterials[seat].color.copy(color);
       this.coreRingMaterials[seat].color.copy(color);
+      this.energyArcBackMaterials[seat].color.copy(color);
       this.readyAuraMaterials[seat].uniforms.uEdge.value.copy(color);
     }
   }
@@ -238,6 +336,11 @@ export class ShipsView implements StageView {
       const colossus = this.colossi[seat];
       const marker = this.markers[seat];
       const markerMaterial = this.markerMaterials[seat];
+      const energyArc = this.energyArcs[seat];
+      const energyArcMaterial = this.energyArcMaterials[seat];
+      const energyArcBack = this.energyArcBacks[seat];
+      const energyArcBackMaterial = this.energyArcBackMaterials[seat];
+      const backplate = this.backplates[seat];
       const glow = this.glows[seat];
       const coreDot = this.coreDots[seat];
       const coreRing = this.coreRings[seat];
@@ -295,19 +398,40 @@ export class ShipsView implements StageView {
       colossus.root.position.set(sample.x, sample.y, 0);
       if (showColossus) colossus.update(this.colossusPose(previous, current, seat, alpha, timeSeconds, sample, morph));
 
+      backplate.visible = showRobot || showColossus;
+      backplate.position.set(sample.x, sample.y, -0.42);
+      backplate.scale.setScalar(showColossus ? toWorld(FORMS[frame].reach) * BACKPLATE_BOSS_SCALE : toWorld(FRAME_STATS[frame].grazeR) * BACKPLATE_ROBOT_SCALE);
+      this.backplateMaterials[seat].opacity = seat === focusSeat ? BACKPLATE_FOCUS_OPACITY : BACKPLATE_OPACITY;
+
       glow.visible = showRobot || showColossus;
       glow.position.set(sample.x, sample.y, -0.35);
       glow.scale.setScalar(showColossus ? toWorld(FORMS[frame].reach) * 0.78 : toWorld(FRAME_STATS[frame].bodyR) * (1.35 + ROBOT_VISUAL_SCALE * 0.18));
-      this.glowMaterials[seat].opacity = showColossus ? (seat === focusSeat ? 0.06 : 0.045) : (seat === focusSeat ? 0.10 : 0.07);
+      this.glowMaterials[seat].opacity = showColossus ? (seat === focusSeat ? 0.045 : 0.032) : (seat === focusSeat ? 0.085 : 0.055);
 
       marker.visible = showRobot || showColossus;
       marker.position.set(sample.x, sample.y, 1.5);
       marker.scale.setScalar(showColossus ? BOSS_MARKER_SCALE : NORMAL_MARKER_SCALE);
-      markerMaterial.uniforms.uOpacity.value = seat === focusSeat ? 0.88 : 0;
-      markerMaterial.uniforms.uPulse.value = seat === focusSeat ? 0.10 + 0.05 * Math.sin(timeSeconds * 3.2) : 0;
+      markerMaterial.uniforms.uOpacity.value = seat === focusSeat ? 0.18 : 0;
+      markerMaterial.uniforms.uPulse.value = seat === focusSeat ? 0.04 + 0.03 * Math.sin(timeSeconds * 3.2) : 0;
       markerMaterial.uniforms.uFlash.value = 0;
       markerMaterial.uniforms.uTime.value = timeSeconds;
-      markerMaterial.uniforms.uFlow.value = seat === focusSeat ? 0.12 : 0;
+      markerMaterial.uniforms.uFlow.value = seat === focusSeat ? 0.05 : 0;
+
+      const showEnergyArc = seat === focusSeat && showRobot;
+      energyArc.visible = showEnergyArc;
+      energyArcBack.visible = showEnergyArc;
+      if (showEnergyArc) {
+        const energy = clamp01(current.plEnergy[seat] / ENERGY_MAX);
+        const shieldDown = current.plShield[seat] !== 1 || current.plShieldBreak[seat] > 0;
+        const cannotPay = current.plEnergy[seat] < PRIMARY_WEAPONS[frame].cost;
+        const pulse = cannotPay ? 0.68 + 0.32 * Math.sin(timeSeconds * ENERGY_ARC_PULSE_HZ) : 1;
+        setEnergyArcGeometry(energyArc.geometry, energy, shieldDown);
+        energyArc.position.set(sample.x, sample.y, ENERGY_ARC_Z);
+        energyArcBack.position.set(sample.x, sample.y, ENERGY_ARC_Z - 0.02);
+        energyArcMaterial.color.setHex(cannotPay ? ENERGY_ARC_RED : energy < ENERGY_ARC_WARNING ? ENERGY_ARC_AMBER : TEAM_COLORS[current.plTeam[seat] % TEAM_COLORS.length]).convertSRGBToLinear();
+        energyArcMaterial.opacity = (shieldDown ? ENERGY_ARC_DOWN_OPACITY : ENERGY_ARC_HEALTHY_OPACITY) * pulse;
+        energyArcBackMaterial.opacity = ENERGY_ARC_BACK_OPACITY;
+      }
 
       const focusGain = seat === focusSeat ? FOCUS_CORE_GAIN : 1;
       const coreRadius = showColossus
@@ -319,8 +443,13 @@ export class ShipsView implements StageView {
       coreRing.position.set(sample.x, sample.y, 3.1);
       coreDot.scale.setScalar(coreRadius);
       coreRing.scale.setScalar(coreRadius);
-      this.coreDotMaterials[seat].opacity = showColossus ? 0.98 : seat === focusSeat ? 1 : 0.92;
-      this.coreRingMaterials[seat].opacity = showColossus ? 0.96 : seat === focusSeat ? 0.98 : 0.88;
+      if (showColossus) {
+        this.coreDotMaterials[seat].color.setHex(CORE_DOT_BOSS_COLOR);
+      } else {
+        this.coreDotMaterials[seat].color.copy(teamColor(current.plTeam[seat])).multiplyScalar(CORE_DOT_TEAM_GAIN);
+      }
+      this.coreDotMaterials[seat].opacity = showColossus ? CORE_DOT_BOSS_OPACITY : seat === focusSeat ? CORE_DOT_FOCUS_OPACITY : CORE_DOT_NORMAL_OPACITY;
+      this.coreRingMaterials[seat].opacity = showColossus ? CORE_RING_BOSS_OPACITY : seat === focusSeat ? CORE_RING_FOCUS_OPACITY : CORE_RING_NORMAL_OPACITY;
     }
   }
 
@@ -331,6 +460,12 @@ export class ShipsView implements StageView {
     for (const colossus of this.colossi) colossus.dispose();
     for (const marker of this.markers) marker.geometry.dispose();
     for (const material of this.markerMaterials) material.dispose();
+    for (const arc of this.energyArcs) arc.geometry.dispose();
+    for (const material of this.energyArcMaterials) material.dispose();
+    for (const arc of this.energyArcBacks) arc.geometry.dispose();
+    for (const material of this.energyArcBackMaterials) material.dispose();
+    for (const backplate of this.backplates) backplate.geometry.dispose();
+    for (const material of this.backplateMaterials) material.dispose();
     for (const glow of this.glows) glow.geometry.dispose();
     for (const material of this.glowMaterials) material.dispose();
     for (const dot of this.coreDots) dot.geometry.dispose();

@@ -1,14 +1,15 @@
 /**
  * Balance report (dev tool, not a check): runs bot-versus-bot matches and prints the numbers the design is tuned by:
  * time to the first transformation, transformations per pilot-minute, how long boss forms last and how much of
- * their armour survives, kill pace, and how often the damage window blocks a hit.
- *   node tools/verify/balance.ts [matches=6]
+ * their armour survives, kill pace, how often the damage window blocks a hit, and how energy, shields and boosts are used.
+ *   node tools/verify/balance.ts [matches=6] [only]     only: run just the reports whose name contains this text
  */
-import { Ev, Form, FORMS, Mode, Phase, TICK_RATE, W } from '../../game/src/sim/index.ts';
+import { ENERGY_MAX, Ev, Form, FORMS, Mode, Phase, TICK_RATE, W } from '../../game/src/sim/index.ts';
 import { freeForAll, rotatingFrames, runBots } from './game-run.ts';
 import type { RunSpec } from './game-run.ts';
 
 const matches = Number(process.argv[2] ?? 6);
+const only = process.argv[3] ?? '';
 const FRAME_NAMES = ['VANGUARD', 'GALE', 'JUGGERNAUT'];
 
 interface Totals {
@@ -27,12 +28,24 @@ interface Totals {
   neutralKills: number;
   byFrame: Array<{ morphs: number; kills: number; deaths: number }>;
   roundTicks: number[];
+  robotTicks: number;
+  shieldTicks: number;
+  lowEnergyTicks: number;
+  boosts: number;
+  shieldHits: number;
+  shieldDamage: number;
+  shieldBreaks: number;
+  fires: number;
 }
+
+/** A robot counts as low on energy below this share of a full pool. */
+const LOW_ENERGY_SHARE = 0.15;
 
 function measure(specs: readonly RunSpec[]): Totals {
   const t: Totals = {
     ticks: 0, pilotTicks: 0, firstMorph: [], morphs: 0, bossTicks: 0, bossLife: [], partsDownPerForm: [], deaths: 0, bossDeaths: 0, hits: 0, blocked: 0,
     grazes: 0, neutralKills: 0, byFrame: [0, 1, 2].map(() => ({ morphs: 0, kills: 0, deaths: 0 })), roundTicks: [],
+    robotTicks: 0, shieldTicks: 0, lowEnergyTicks: 0, boosts: 0, shieldHits: 0, shieldDamage: 0, shieldBreaks: 0, fires: 0,
   };
   for (const spec of specs) {
     const seats = spec.frames.length;
@@ -90,6 +103,20 @@ function measure(specs: readonly RunSpec[]): Totals {
             case Ev.NeutralKilled:
               t.neutralKills++;
               break;
+            case Ev.Boost:
+              t.boosts++;
+              break;
+            case Ev.ShieldHit:
+              t.shieldHits++;
+              t.shieldDamage += w.events.b[e];
+              break;
+            case Ev.ShieldBreak:
+              t.shieldBreaks++;
+              t.shieldDamage += w.events.b[e];
+              break;
+            case Ev.Fire:
+              t.fires++;
+              break;
             default:
           }
         }
@@ -97,6 +124,11 @@ function measure(specs: readonly RunSpec[]): Totals {
         for (let s = 0; s < seats; s++) {
           if (m.plActive[s] === 1) t.pilotTicks++;
           if (m.plForm[s] === Form.Boss) t.bossTicks++;
+          if (phase === Phase.Battle && m.plAlive[s] === 1 && m.plForm[s] === Form.Normal) {
+            t.robotTicks++;
+            if (m.plShield[s] === 1) t.shieldTicks++;
+            if (m.plEnergy[s] < ENERGY_MAX * LOW_ENERGY_SHARE) t.lowEnergyTicks++;
+          }
         }
       },
     });
@@ -109,12 +141,14 @@ const avg = (values: readonly number[]) => (values.length === 0 ? NaN : values.r
 const secs = (ticks: number) => (ticks / TICK_RATE).toFixed(1);
 
 function report(name: string, specs: readonly RunSpec[]): void {
+  if (!name.includes(only)) return;
   const t = measure(specs);
   const minutes = t.pilotTicks / TICK_RATE / 60;
   console.log(`\n== ${name}: ${specs.length} matches, ${(t.ticks / TICK_RATE / 60).toFixed(1)} min of play, ${minutes.toFixed(1)} pilot-minutes`);
   console.log(`first transformation ${secs(avg(t.firstMorph))} s into the round (median ${secs([...t.firstMorph].sort((a, b) => a - b)[Math.floor(t.firstMorph.length / 2)] ?? NaN)})`);
   console.log(`transformations ${(t.morphs / minutes).toFixed(2)} per pilot-minute; boss form lives ${secs(avg(t.bossLife))} s on average, ${avg(t.partsDownPerForm).toFixed(1)} parts destroyed per form; ${(100 * t.bossTicks / t.pilotTicks).toFixed(0)}% of pilot time is boss form`);
   console.log(`deaths ${(t.deaths / minutes).toFixed(2)} per pilot-minute (${(t.deaths / (t.ticks / TICK_RATE / 60)).toFixed(1)} per match-minute), hits ${(t.hits / minutes).toFixed(0)} / blocked ${(t.blocked / minutes).toFixed(0)} per pilot-minute, grazes ${(t.grazes / minutes).toFixed(0)}, neutrals killed ${(t.neutralKills / minutes).toFixed(2)}`);
+  console.log(`robots: shield up ${(100 * t.shieldTicks / t.robotTicks).toFixed(0)}% of the time, energy low ${(100 * t.lowEnergyTicks / t.robotTicks).toFixed(0)}%; per pilot-minute ${(t.fires / minutes).toFixed(0)} shots fired, ${(t.boosts / minutes).toFixed(1)} boosts, ${(t.shieldHits / minutes).toFixed(0)} shield hits (${(t.shieldDamage / minutes).toFixed(0)} damage stopped), ${(t.shieldBreaks / minutes).toFixed(2)} shields shattered`);
   console.log(t.byFrame.map((f, i) => `${FRAME_NAMES[i]} (${FORMS[i].name}): ${f.morphs} transformations, ${f.kills} kills, ${f.deaths} deaths`).join(' | '));
   if (t.roundTicks.length > 0) console.log(`round length ${secs(avg(t.roundTicks))} s on average (${secs(Math.min(...t.roundTicks))} to ${secs(Math.max(...t.roundTicks))})`);
 }

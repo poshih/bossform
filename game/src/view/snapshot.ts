@@ -35,6 +35,12 @@ export class WorldSnapshot {
   readonly plBulwark: Int32Array;
   readonly plAtkTimer: Int32Array;
   readonly plEpoch: Int32Array;
+  readonly plShield: Uint8Array;
+  readonly plEnergy: Int32Array;
+  readonly plShieldWait: Int32Array;
+  readonly plShieldBreak: Int32Array;
+  readonly plBoost: Int32Array;
+  readonly plBoostCd: Int32Array;
 
   readonly ptHp: Int32Array;
   readonly ptAng: Int32Array;
@@ -100,6 +106,12 @@ export class WorldSnapshot {
     this.plBulwark = new Int32Array(this.seats);
     this.plAtkTimer = new Int32Array(this.seats);
     this.plEpoch = new Int32Array(this.seats);
+    this.plShield = new Uint8Array(this.seats);
+    this.plEnergy = new Int32Array(this.seats);
+    this.plShieldWait = new Int32Array(this.seats);
+    this.plShieldBreak = new Int32Array(this.seats);
+    this.plBoost = new Int32Array(this.seats);
+    this.plBoostCd = new Int32Array(this.seats);
 
     this.ptHp = new Int32Array(this.parts);
     this.ptAng = new Int32Array(this.parts);
@@ -168,6 +180,12 @@ export class WorldSnapshot {
     this.plBulwark.set(m.plBulwark);
     this.plAtkTimer.set(m.plAtkTimer);
     this.plEpoch.set(m.plEpoch);
+    this.plShield.set(m.plShield);
+    this.plEnergy.set(m.plEnergy);
+    this.plShieldWait.set(m.plShieldWait);
+    this.plShieldBreak.set(m.plShieldBreak);
+    this.plBoost.set(m.plBoost);
+    this.plBoostCd.set(m.plBoostCd);
 
     this.ptHp.set(m.ptHp);
     this.ptAng.set(m.ptAng);

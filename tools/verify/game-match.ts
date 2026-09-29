@@ -1,13 +1,14 @@
 /**
  * Game rules eval (3/4): match flow (elimination, sudden death, deathmatch, teams) in hand-built situations, then
  * full bot-versus-bot matches on which every rule is watched tick by tick: the speed rule, friendly fire, the
- * damage window, the boss-attack tell, the weight limits, and basic sanity of the state.
+ * damage window, the boss-attack tell, the weight limits, energy, shields and boosts, and basic sanity of the state.
  */
 import { fx } from '@metronome/engine';
 import {
   Attack, BOSS_KILL_SCORE, DEATHMATCH_TICKS, Ev, Form, FORMS, Frame, FRAME_STATS, KILL_SCORE, MAX_PARTS, MIN_WINDUP_TICKS, Mode, NO_WINNER,
   PartKind, Phase, PROJECTILE_SPEED_CAP, RESPAWN_TICKS, ROOT_BRAKE, ROUND_END_TICKS, ROUNDS_TO_WIN, SAFE_RADIUS_MIN, SHOT_DEFS, SHRINK_TICKS,
   SPAWN_PROTECT_TICKS, SPAWN_RING_PCT, STORM_INTERVAL, SUDDEN_DEATH_TICKS, VANGUARD, W, GAUGE_MAX, arenaRadius, podMuzzle, radial,
+  ENERGY_MAX,
 } from '../../game/src/sim/index.ts';
 import type { GameSim } from '../../game/src/sim/index.ts';
 import { freeForAll, rotatingFrames, runBots } from './game-run.ts';
@@ -261,6 +262,11 @@ class Watch {
     if (m.plHp[seat] > stats.hp) this.fail(`tick ${tick}: seat ${seat} above full health`);
     if (m.plAlive[seat] === 1 && radial(m.plX[seat], m.plY[seat]) > w.arenaR + fx.fromInt(1)) this.fail(`tick ${tick}: seat ${seat} left the arena`);
     if (m.plAlive[seat] === 0 && m.plForm[seat] !== Form.Normal) this.fail(`tick ${tick}: a destroyed ship is still transformed`);
+    if (m.plEnergy[seat] < 0 || m.plEnergy[seat] > ENERGY_MAX) this.fail(`tick ${tick}: seat ${seat} energy ${m.plEnergy[seat]} out of range`);
+    if (m.plShield[seat] === 1 && (m.plForm[seat] !== Form.Normal || m.plAlive[seat] === 0 || m.plEnergy[seat] <= 0)) this.fail(`tick ${tick}: seat ${seat} has a shield without being a living robot with energy`);
+    if (m.plShield[seat] === 1 && m.plBulwark[seat] > 0) this.fail(`tick ${tick}: seat ${seat} has its shield up behind a raised bulwark (the bulwark takes its place)`);
+    if (m.plBoost[seat] > 0 && (m.plForm[seat] !== Form.Normal || m.plAlive[seat] === 0)) this.fail(`tick ${tick}: seat ${seat} boosts without being a living robot`);
+    if (m.plBoost[seat] > 0 && Math.hypot(m.plVX[seat], m.plVY[seat]) > FRAME_STATS[m.plFrame[seat]].boost.speed * TRIG_LENGTH_TOLERANCE) this.fail(`tick ${tick}: seat ${seat} boosts faster than its boost speed`);
     const boss = m.plForm[seat] === Form.Boss && m.plAlive[seat] === 1;
     if (boss) {
       const form = FORMS[m.plFrame[seat]];
@@ -290,6 +296,9 @@ const MATCHES = [
   { name: 'elimination, 2 v 2', mode: Mode.Elimination, frames: rotatingFrames(4, 1), teams: [0, 0, 1, 1], ticks: 40000, seed: 5 },
   { name: 'elimination, 3 pilots, free-for-all', mode: Mode.Elimination, frames: rotatingFrames(3), teams: freeForAll(3), ticks: 40000, seed: 8 },
 ] as const;
+
+/** A heading's fixed-point unit vector (sine and cosine tables) may be up to about 1e-5 longer than 1. */
+const TRIG_LENGTH_TOLERANCE = 1.0001;
 
 const totals = { morphs: new Set<number>(), attacks: new Set<number>(), partsDown: 0, deaths: 0, boss: 0, neutral: 0, player: 0, seeker: 0 };
 for (const spec of MATCHES) {

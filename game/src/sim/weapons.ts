@@ -1,13 +1,34 @@
 import { fx } from '@metronome/engine';
+import { stopBoost } from './boost.ts';
 import { Attack } from './constants.ts';
+import { spendEnergy } from './energy.ts';
 import { Ev, FireSlot } from './events.ts';
-import { Frame, GALE, JUGGERNAUT, MUZZLE, VANGUARD } from './frames.ts';
+import { ALT_ABILITIES, Frame, GALE, JUGGERNAUT, MUZZLE, VANGUARD } from './frames.ts';
 import { Button } from './input.ts';
 import { fan, launch } from './projectiles.ts';
 import type { Shooter } from './projectiles.ts';
 import type { World } from './world.ts';
 
-/** The three robots' own weapons (normal form). Every shot obeys the game's speed rule; see shots.ts. */
+/** The alt can be used this tick: its cooldown has run out and the pool can pay for it (ALT_ABILITIES). */
+export function canUseAlt(w: World, seat: number): boolean {
+  const { m } = w;
+  return m.plAltCd[seat] === 0 && m.plEnergy[seat] >= ALT_ABILITIES[m.plFrame[seat]].cost;
+}
+
+/** Holding a weapon's button: the primary always, the alt when it is an attack. An attacking robot has no shield (energy.ts). */
+export function attacking(frame: number, buttons: number): boolean {
+  return (buttons & Button.Fire) !== 0 || ((buttons & Button.Alt) !== 0 && ALT_ABILITIES[frame].attack);
+}
+
+/** The shield stays down while the robot attacks, and while JUGGERNAUT's bulwark is raised: the bulwark takes its place, in front only. */
+export function shieldBlocked(w: World, seat: number, buttons: number): boolean {
+  return attacking(w.m.plFrame[seat], buttons) || w.m.plBulwark[seat] > 0;
+}
+
+/**
+ * The three robots' own weapons (normal form). Every shot obeys the game's speed rule (shots.ts) and pays its energy cost
+ * (frames.ts) before it fires: a weapon whose cost the pool cannot pay stays silent.
+ */
 export function fireNormal(w: World, seat: number, buttons: number, moveX: number, moveY: number): void {
   const { m } = w;
   const who: Shooter = { owner: seat, team: m.plTeam[seat], attack: Attack.None, part: -1 };
@@ -33,13 +54,13 @@ function muzzleY(w: World, seat: number): number {
 
 function vanguard(w: World, seat: number, who: Shooter, buttons: number): void {
   const { m } = w;
-  if ((buttons & Button.Fire) !== 0 && m.plFireCd[seat] === 0) {
+  if ((buttons & Button.Fire) !== 0 && m.plFireCd[seat] === 0 && spendEnergy(w, seat, VANGUARD.rifle.cost)) {
     const rifle = VANGUARD.rifle;
     fan(w, who, rifle.shot, muzzleX(w, seat), muzzleY(w, seat), m.plAim[seat], rifle.count, rifle.spread);
     m.plFireCd[seat] = rifle.interval;
     w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Vanguard, FireSlot.Primary);
   }
-  if ((buttons & Button.Alt) !== 0 && m.plAltCd[seat] === 0) {
+  if ((buttons & Button.Alt) !== 0 && m.plAltCd[seat] === 0 && spendEnergy(w, seat, VANGUARD.seekers.cost)) {
     const seekers = VANGUARD.seekers;
     fan(w, who, seekers.shot, muzzleX(w, seat), muzzleY(w, seat), m.plAim[seat], seekers.count, seekers.spread);
     m.plAltCd[seat] = seekers.cooldown;
@@ -49,7 +70,7 @@ function vanguard(w: World, seat: number, who: Shooter, buttons: number): void {
 
 function gale(w: World, seat: number, who: Shooter, buttons: number, moveX: number, moveY: number): void {
   const { m } = w;
-  if ((buttons & Button.Fire) !== 0 && m.plFireCd[seat] === 0) {
+  if ((buttons & Button.Fire) !== 0 && m.plFireCd[seat] === 0 && spendEnergy(w, seat, GALE.darts.cost)) {
     const darts = GALE.darts;
     const side = m.plAim[seat] + fx.ANGLE_QUARTER;
     const ox = fx.mul(fx.cos(side), darts.offset);
@@ -62,6 +83,7 @@ function gale(w: World, seat: number, who: Shooter, buttons: number, moveX: numb
   if ((buttons & Button.Alt) !== 0 && m.plAltCd[seat] === 0) {
     const dash = GALE.dash;
     const heading = moveX !== 0 || moveY !== 0 ? fx.atan2(moveY, moveX) : m.plAim[seat];
+    stopBoost(w, seat);
     m.plVX[seat] = fx.mul(fx.cos(heading), dash.speed);
     m.plVY[seat] = fx.mul(fx.sin(heading), dash.speed);
     m.plDash[seat] = dash.ticks;
@@ -74,7 +96,7 @@ function gale(w: World, seat: number, who: Shooter, buttons: number, moveX: numb
 
 function juggernaut(w: World, seat: number, who: Shooter, buttons: number): void {
   const { m } = w;
-  if ((buttons & Button.Fire) !== 0 && m.plFireCd[seat] === 0) {
+  if ((buttons & Button.Fire) !== 0 && m.plFireCd[seat] === 0 && spendEnergy(w, seat, JUGGERNAUT.mortar.cost)) {
     const mortar = JUGGERNAUT.mortar;
     launch(w, who, mortar.shot, muzzleX(w, seat), muzzleY(w, seat), m.plAim[seat]);
     m.plFireCd[seat] = mortar.interval;

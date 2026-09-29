@@ -14,8 +14,8 @@ import { check, finish, info, section } from './lib.ts';
 import { FAR_SHAKE_DISTANCE, NEAR_SHAKE_DISTANCE } from '../../game/src/view/shake.ts';
 import { fx } from '@metronome/engine';
 import { FOLLOW_SMOOTH_SECONDS, NORMAL_VIEW_HEIGHT } from '../../game/src/render/camera.ts';
-import { GALE } from '../../game/src/sim/frames.ts';
-import { TICK_RATE } from '../../game/src/sim/constants.ts';
+import { FRAME_STATS, GALE, VANGUARD } from '../../game/src/sim/frames.ts';
+import { ENERGY_MAX, SHIELD_COST_PER_DAMAGE, SHIELD_RAISE_TICKS, TICK_RATE } from '../../game/src/sim/constants.ts';
 
 const [scenario = 'menus', w = '1280', h = '720', base = 'http://127.0.0.1:4427/'] = process.argv.slice(2);
 const WIDTH = Number(w);
@@ -26,6 +26,8 @@ fs.mkdirSync(outDir, { recursive: true });
 /** Input checks hold a key or button for this many simulated ticks, and wait this long for a tap to register. */
 const HOLD_TICKS = 45;
 const TAP_SETTLE_TICKS = 10;
+/** Energy the pilot must hold before the tap check: one shot plus a few hits its shield may stop before the tap lands. */
+const TAP_ENERGY = VANGUARD.rifle.cost + 3 * VANGUARD.rifle.shot.dmg * SHIELD_COST_PER_DAMAGE;
 const PHASE_BATTLE = 1;
 const PHASE_OVER = 3;
 const FORM_BOSS = 2;
@@ -39,11 +41,13 @@ const CAMERA_LAG_MARGIN = 1.1;
 /** Simulated ticks to watch: long enough for pilots to fight, and (at timescale 8) for colossi to be built and destroyed. */
 const CAMERA_FOLLOW_TICKS = 900;
 const CAMERA_FIGHT_TICKS = 16000;
+/** The fastest a robot ever moves: a boost or GALE's phase dash, whichever is quicker (units per tick). */
+const FASTEST_ROBOT_SPEED = Math.max(GALE.dash.speed, ...FRAME_STATS.map((stats) => stats.boost.speed));
 /**
  * A settled pilot is drawn within this many pixels of the centre: the follow is a critically damped spring, so it trails
- * a pilot moving at speed v by v x its smoothing time; the fastest movement is Gale's dash. (720p: about 54 px.)
+ * a pilot moving at speed v by v x its smoothing time; the fastest movement is a boost. (720p: about 69 px.)
  */
-const CAMERA_CENTRE_PX = fx.toFloat(GALE.dash.speed) * TICK_RATE * FOLLOW_SMOOTH_SECONDS * (HEIGHT / NORMAL_VIEW_HEIGHT) * CAMERA_LAG_MARGIN;
+const CAMERA_CENTRE_PX = fx.toFloat(FASTEST_ROBOT_SPEED) * TICK_RATE * FOLLOW_SMOOTH_SECONDS * (HEIGHT / NORMAL_VIEW_HEIGHT) * CAMERA_LAG_MARGIN;
 /** Frames slower than this (a software renderer) are not used for the centring check. */
 const CAMERA_SMOOTH_FRAME_MS = 50;
 const ANGLE_FULL = 65536;
@@ -60,6 +64,11 @@ interface SeatInfo {
   kills: number;
   deaths: number;
   fired: number;
+  energy: number;
+  shield: boolean;
+  shieldBroken: boolean;
+  boosting: boolean;
+  boostCooldown: number;
 }
 
 interface Snapshot {
@@ -231,11 +240,44 @@ async function playScenario(): Promise<void> {
   const firing = await snapshot();
   await page.mouse.up();
   check('holding the left mouse button fires (projectiles appear)', (firing.projectiles ?? 0) > idle + 2, `${idle} -> ${firing.projectiles}`);
+  check('firing spends energy and drops the shield', !firing.seats![0].shield && firing.seats![0].energy < ENERGY_MAX, `shield ${firing.seats![0].shield}, energy ${firing.seats![0].energy}`);
+  const raised = await until((s) => s.seats![0].shield, 10000);
+  check(`the shield comes back after the button is released (${SHIELD_RAISE_TICKS} ticks)`, raised !== null);
   check('the scene and the HUD are drawn', (await litShare(WHOLE_SCREEN)) > 0.05 && (await litShare(HUD_TOP_LEFT)) > 0.01);
   await shot('play');
 
+  section('Shift boosts toward the pressed direction');
+  const boost = FRAME_STATS[0].boost;
+  // Toward the arena's centre (left or right), so the rim can never cut the boost short.
+  const inward = (await snapshot()).seats![0].x > 0 ? -1 : 1;
+  const steer = inward < 0 ? 'KeyA' : 'KeyD';
+  await page.keyboard.down(steer);
+  await ticksPass(HOLD_TICKS);
+  const beforeBoost = (await snapshot()).seats![0];
+  await page.keyboard.down('ShiftLeft');
+  const boosted = await until((s) => s.seats![0].boostCooldown > 0, 10000);
+  await page.keyboard.up('ShiftLeft');
+  await until((s) => !s.seats![0].boosting, 10000);
+  await page.keyboard.up(steer);
+  const afterBoost = (await snapshot()).seats![0];
+  const boostDistance = (boost.ticks * boost.speed) / fx.ONE;
+  const travelled = (afterBoost.x - beforeBoost.x) * inward;
+  check(`steering sideways and pressing Shift boosts that way: at least the boost's ${boostDistance} units`, boosted !== null && travelled >= boostDistance && Math.abs(afterBoost.y - beforeBoost.y) < boostDistance / 4,
+    `${travelled.toFixed(0)} units ${inward < 0 ? 'left' : 'right'}, ${(afterBoost.y - beforeBoost.y).toFixed(0)} up`);
+  await until((s) => s.seats![0].boostCooldown === 0, 10000);
+  const beforeTapBoost = (await snapshot()).seats![0].boostCooldown;
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ShiftLeft', key: 'Shift', shiftKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: 'ShiftLeft', key: 'Shift' }));
+  });
+  const tapBoost = await until((s) => s.seats![0].boostCooldown > 0, 10000);
+  check('an instant tap of Shift still boosts', beforeTapBoost === 0 && tapBoost !== null);
+
   section('a tap shorter than one tick still fires; a click in a menu never does');
-  await page.waitForTimeout(600);
+  // The bots are shooting this idle pilot and every hit its shield stops costs energy: wait until a shot is affordable
+  // with room for a few more stopped hits before the tap is sampled.
+  const armed = await until((s) => s.seats![0].alive && s.seats![0].energy >= TAP_ENERGY, 20000);
+  if (armed === null) throw new Error('the pilot never had the energy for one shot');
   const beforeTap = (await snapshot()).seats![0].fired;
   // keydown and keyup in the same task: no simulation tick can run between them.
   await page.evaluate(() => {

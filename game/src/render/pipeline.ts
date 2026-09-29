@@ -92,7 +92,7 @@ const POST_SHADER = {
   `,
 } as const;
 
-export const DEFAULT_PIPELINE: PipelineOptions = { msaaSamples: 4, bloomStrength: 0.50, bloomRadius: 0.30, bloomThreshold: 0.92 };
+export const DEFAULT_PIPELINE: PipelineOptions = { msaaSamples: 4, bloomStrength: 0.28, bloomRadius: 0.22, bloomThreshold: 1.04 };
 
 /**
  * Full-resolution rendering: an anti-aliased half-float target (so bright edges can exceed 1), a soft bloom, and a

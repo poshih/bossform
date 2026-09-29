@@ -32,8 +32,9 @@ npm run build        # typecheck everything, then game/dist (relative paths, ~22
 | Move | `W A S D` | left stick |
 | Aim (independent of movement) | mouse cursor (or arrow keys) | right stick |
 | Fire / boss **Salvo** | left click, `J` | `RT`, `RB`, `A` |
-| Alt / boss **Siege shot** | right click, `K` | `LT`, `LB`, `B` |
-| **Transform** (energy at least 50%) | `Space` | `Y` |
+| Alt / boss **Siege shot** | right click, `K` | `LT`, `B` |
+| **Boost** (robot; its first instant dodges through bullets) | `Shift` | `LB` |
+| **Transform** (boss gauge at least 50%) | `Space` | `Y` |
 | Boss **Ultima** | `E` | `X` |
 | Pause / mute | `Esc` `P` / `M` | `Start` |
 
@@ -43,8 +44,10 @@ storm hurts everything outside it. *Deathmatch*: score kills, respawn after 3 s,
 
 **The rules that make it this game.** No projectile of any owner is ever faster than 3.2 units per tick: one cap,
 enforced where projectiles are made and moved. Only a tiny core is vulnerable. A robot can take **at most its cap of
-damage per window** (a per-robot balance value: lighter, faster robots take less). Grazing bullets, dealing and taking
-damage, and orbs fill the energy gauge.
+damage per window** (a per-robot balance value: lighter, faster robots take less). **A robot that is not firing has its
+shield up**, and the shield and the guns share **one energy pool** (about 7 s of continuous fire, refilled in under 1.5 s
+once the pilot lets go): attacking costs your guard. Grazing bullets, dealing and taking damage, and orbs fill the **boss
+gauge**, which transforms the robot.
 
 ### The three robots and their boss forms
 
@@ -52,14 +55,14 @@ damage, and orbs fill the energy gauge.
 |---|---|---|---|---|
 | **VANGUARD** | versatile hero | 3-bullet fan rifle | two slow seeker orbs | **PALADIN**: plates, wing panels, shoulder cannons, prow lance |
 | **GALE** | fast striker | twin darts | phase dash (protected) leaving a delayed ring | **TEMPEST**: the lightest colossus, four orbiting bit cannons |
-| **JUGGERNAUT** | heavy bunker | slow mortar shell that bursts into shrapnel | bulwark wedge that absorbs bullets into energy | **FORTRESS**: the heaviest, nine parts, a huge mortar |
+| **JUGGERNAUT** | heavy bunker | slow mortar shell that bursts into shrapnel | bulwark wedge that swallows bullets into its boss gauge | **FORTRESS**: the heaviest, nine parts, a huge mortar |
 
 ### The boss form (the designer's brief: large, heavy, told)
 
 Transform (46 ticks, safe while it unfolds) into a machine with an armoured body around a small core. Bullets hit plates
 and pods first; **only the core hurts the pilot**, and only where no live plate covers it. Destroyed parts stay
 destroyed until the next transformation. The body and every pod turn slowly and heavily, and **a gun fires where it points**.
-Energy is fuel: it burns steadily and every attack costs some; at zero the machine folds back into the robot.
+The boss gauge is fuel: it burns steadily and every attack costs some; at zero the machine folds back into the robot.
 
 | Attack | Input | Wind-up (the tell) | Character |
 |---|---|---|---|
@@ -101,7 +104,8 @@ online match through the relay.
 ```sh
 npm run typecheck
 npm run verify            # headless (~2 min): architecture, numerics, engine lockstep / hostile network / scale, and the
-                          #   game rules on the real simulation: definitions, damage window, graze, teams, energy,
+                          #   game rules on the real simulation: definitions, movement and boost, damage window, graze,
+                          #   teams, energy and the shield, the boss gauge,
                           #   boss form (parts, core rule, every attack's tell, cost, cancellation), neutrals, elimination,
                           #   sudden death, deathmatch, full bot matches watched tick by tick, determinism, scale
 npm run verify:browsers   # builds, serves under a strict CSP, then real-browser E2E (menus, keyboard + mouse, gamepad,

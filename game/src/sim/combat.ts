@@ -1,9 +1,11 @@
 import { fx } from '@metronome/engine';
 import {
-  BOSS_PART_GAIN_PCT, FLASH_TICKS, Form, GAUGE_PER_ABSORB, GAUGE_PER_DAMAGE_DEALT, GAUGE_PER_GRAZE, HOT_PART_DAMAGE_PCT,
+  BOSS_PART_GAIN_PCT, FLASH_TICKS, Form, GAUGE_PER_ABSORB, GAUGE_PER_DAMAGE_DEALT, GAUGE_PER_GRAZE, HOT_PART_DAMAGE_PCT, SHIELD_COST_PER_DAMAGE,
 } from './constants.ts';
+import { dodging } from './boost.ts';
 import { DamageKind, damageShip } from './damage.ts';
-import { earn } from './energy.ts';
+import { absorbShot, spendEnergy } from './energy.ts';
+import { earn } from './gauge.ts';
 import { Ev } from './events.ts';
 import { FORMS } from './forms.ts';
 import { FRAME_STATS, JUGGERNAUT } from './frames.ts';
@@ -32,15 +34,23 @@ function cacheParts(w: World): void {
   }
 }
 
-/** A bulwark is a wedge in front of the ship: hostile projectiles inside it are swallowed. */
+/**
+ * A bulwark is a wedge in front of the ship: hostile projectiles inside it are swallowed. It runs on energy like the shield it
+ * replaces (the same price per point of damage), so it catches only what the pool can pay for.
+ */
 function bulwarkCatches(w: World, seat: number, dx: number, dy: number, def: ShotDef): boolean {
   const { m } = w;
   const bulwark = JUGGERNAUT.bulwark;
   if (m.plBulwark[seat] === 0 || !within(dx, dy, bulwark.radius + def.rad)) return false;
-  return Math.abs(fx.angleDiff(fx.atan2(dy, dx), m.plAim[seat])) <= bulwark.halfArc;
+  if (Math.abs(fx.angleDiff(fx.atan2(dy, dx), m.plAim[seat])) > bulwark.halfArc) return false;
+  return spendEnergy(w, seat, def.dmg * SHIELD_COST_PER_DAMAGE);
 }
 
-/** Returns true if the projectile was used up. */
+/**
+ * Returns true if the projectile was used up. In order: the bulwark wedge; protection (spawn, phase dash) lets everything
+ * pass; a boost's dodge ticks let everything pass, a touch of the core included, which only grazes; a raised shield stops
+ * and smothers whatever reaches it (the graze radius is its radius); otherwise a touch of the core hurts and a near miss grazes.
+ */
 function hitRobot(w: World, seat: number, p: number, def: ShotDef): boolean {
   const { m } = w;
   const stats = FRAME_STATS[m.plFrame[seat]];
@@ -53,10 +63,18 @@ function hitRobot(w: World, seat: number, p: number, def: ShotDef): boolean {
     return true;
   }
   if (m.plInvuln[seat] > 0 || !within(dx, dy, stats.grazeR + def.rad)) return false;
-  if (within(dx, dy, stats.hurtR + def.rad)) {
-    damageShip(w, seat, def.dmg, m.pOwner[p], DamageKind.Bullet);
-    detonate(w, p);
-    return true;
+  if (!dodging(w, seat)) {
+    if (m.plShield[seat] === 1) {
+      // The shield smothers what it stops: a shell that would burst into shrapnel does not.
+      absorbShot(w, seat, def.dmg, m.pOwner[p], m.pX[p], m.pY[p]);
+      w.freeProjectile(p);
+      return true;
+    }
+    if (within(dx, dy, stats.hurtR + def.rad)) {
+      damageShip(w, seat, def.dmg, m.pOwner[p], DamageKind.Bullet);
+      detonate(w, p);
+      return true;
+    }
   }
   if (m.pGraze[p] < 0) {
     m.pGraze[p] = seat;

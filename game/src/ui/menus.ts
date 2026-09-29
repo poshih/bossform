@@ -590,6 +590,7 @@ export class Menus {
             <tr><th>Aim</th><td>Mouse</td><td>Right Stick</td></tr>
             <tr><th>Fire / Salvo</th><td>LMB</td><td>RT</td></tr>
             <tr><th>Alt / Siege</th><td>RMB</td><td>LT</td></tr>
+            <tr><th>Boost</th><td>Shift</td><td>LB</td></tr>
             <tr><th>Transform</th><td>Space</td><td>Y</td></tr>
             <tr><th>Ultima</th><td>E</td><td>X</td></tr>
             <tr><th>Pause</th><td>Esc</td><td>Start</td></tr>
@@ -601,9 +602,12 @@ export class Menus {
         <div class="bf-help-page">
           <div class="bf-screen-copy">Rules</div>
           <ul class="bf-help-list">
-            <li>All bullets are slow enough to read. Graze danger to build energy.</li>
+            <li>Stop firing and your shield comes up. Firing drops it: attacking costs you your guard.</li>
+            <li>Energy feeds both your guns and your shield. Let go of the trigger and it refills fast.</li>
+            <li>Boost with Shift toward where you steer. Its first instant dodges straight through bullets.</li>
+            <li>All bullets are slow enough to read. Graze danger and land hits to fill your boss gauge.</li>
             <li>Your core can only take so much damage per window. Saturate, reposition, punish.</li>
-            <li>At 500 energy, transform into a colossus. Boss form burns fuel while active.</li>
+            <li>With a half-full boss gauge, transform into a colossus. Boss form burns the gauge as fuel.</li>
             <li>Only the boss core deals real damage — tear off armour plates and pods first.</li>
             <li>Salvo fills space, Siege roots for a heavier blast, Ultima warns every HUD before it erupts.</li>
           </ul>

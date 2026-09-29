@@ -12,6 +12,7 @@ export type BossWindupSfx =
 export type Sfx =
   | 'shotVanguard' | 'shotGale' | 'shotJuggernaut' | 'seekerLaunch'
   | 'dash' | 'bulwarkRaise' | 'absorb' | 'hit' | 'blocked' | 'graze'
+  | 'boost' | 'shieldHit' | 'shieldBreak' | 'shieldUp'
   | 'partHit' | 'partDown' | 'podFire' | 'death' | 'respawn' | 'orbPickup'
   | 'neutralFire' | 'neutralHit' | 'neutralKilled' | 'burst'
   | 'morphStart' | 'morphDone' | 'bossEnd'
@@ -49,6 +50,7 @@ export const AUDIO_SAMPLE_RATE = 44100;
 export const SFX_NAMES = [
   'shotVanguard', 'shotGale', 'shotJuggernaut', 'seekerLaunch',
   'dash', 'bulwarkRaise', 'absorb', 'hit', 'blocked', 'graze',
+  'boost', 'shieldHit', 'shieldBreak', 'shieldUp',
   'partHit', 'partDown', 'podFire', 'death', 'respawn', 'orbPickup',
   'neutralFire', 'neutralHit', 'neutralKilled', 'burst',
   'morphStart', 'morphDone', 'bossEnd',
@@ -119,6 +121,10 @@ export const SFX_SPECS: Record<Sfx, SfxSpec> = {
   hit: { duration: 0.1, minGap: 0.04 },
   blocked: { duration: 0.07, minGap: 0.04 },
   graze: { duration: 0.042, minGap: 0.025 },
+  boost: { duration: 0.22, minGap: 0.08 },
+  shieldHit: { duration: 0.12, minGap: 0.035 },
+  shieldBreak: { duration: 0.45, minGap: 0.2 },
+  shieldUp: { duration: 0.18, minGap: 0.12 },
   partHit: { duration: 0.11, minGap: 0.05 },
   partDown: { duration: 0.32, minGap: 0.12 },
   podFire: { duration: 0.12, minGap: 0.045 },
@@ -451,6 +457,31 @@ export function scheduleSfx(ctx: AnyContext, destination: AudioNode, noise: Audi
       break;
     case 'graze':
       tone(ctx, voice, 'sine', 3000, 3600, start, 0.02, 0.014, 'bandpass', 3400);
+      break;
+    case 'boost':
+      // An airy rush that opens upward, a low push under it and a quick rising edge on top.
+      noiseBurst(ctx, voice, noise, start, 0.2, 0.05, 'bandpass', 900, 4200, 1.4);
+      tone(ctx, voice, 'sine', 140, 70, start, 0.08, 0.03, 'lowpass', 400);
+      tone(ctx, voice, 'triangle', 420, 980, start + 0.01, 0.09, 0.015, 'bandpass', 1400);
+      break;
+    case 'shieldHit':
+      // Glassy: a short bright ping with a bell overtone and a tick of noise.
+      tone(ctx, voice, 'sine', 1800, 1500, start, 0.06, 0.018, 'bandpass', 1800);
+      bell(ctx, voice, start + 0.005, 96, 0.006);
+      noiseBurst(ctx, voice, noise, start, 0.02, 0.008, 'highpass', 6000, 5000, 1.1);
+      break;
+    case 'shieldBreak':
+      // Shatter: a falling crash of glass over a low thud (band-passed: an open high end is piercing in a busy mix).
+      noiseBurst(ctx, voice, noise, start, 0.26, 0.05, 'bandpass', 5200, 2600, 0.8);
+      tone(ctx, voice, 'square', 1200, 300, start, 0.22, 0.02, 'bandpass', 1500);
+      bell(ctx, voice, start + 0.01, 90, 0.008);
+      bell(ctx, voice, start + 0.03, 94, 0.006);
+      tone(ctx, voice, 'sine', 110, 55, start, 0.2, 0.04, 'lowpass', 300);
+      break;
+    case 'shieldUp':
+      // Soft rising chime: the shield is back.
+      tone(ctx, voice, 'sine', 520, 880, start, 0.12, 0.012, 'bandpass', 900);
+      bell(ctx, voice, start + 0.04, 84, 0.004);
       break;
     case 'partHit':
       metalClack(ctx, voice, noise, start, 0.03);

@@ -2,6 +2,8 @@ import { fx } from '@metronome/engine';
 import {
   Attack, AttackPhase, BOSS_DRAIN_PER_TICK, Form, MAX_PARTS, MORPH_TICKS, REVERT_PROTECT_TICKS, ROOT_BRAKE,
 } from './constants.ts';
+import { stopBursts } from './boost.ts';
+import { dropShield } from './energy.ts';
 import { Ev } from './events.ts';
 import { FORMS, PartKind, Role } from './forms.ts';
 import type { AttackTiming, FormDef } from './forms.ts';
@@ -41,6 +43,8 @@ export function startMorph(w: World, seat: number): void {
   const form = FORMS[m.plFrame[seat]];
   const base = w.partBase(seat);
   clearBoss(w, seat);
+  dropShield(w, seat);
+  stopBursts(w, seat);
   m.plForm[seat] = Form.Morph;
   m.plTimer[seat] = MORPH_TICKS;
   m.plInvuln[seat] = Math.max(m.plInvuln[seat], MORPH_TICKS);

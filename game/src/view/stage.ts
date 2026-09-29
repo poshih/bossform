@@ -11,6 +11,7 @@ import { OrbsView } from './orbs.ts';
 import { ProjectilesView } from './projectiles.ts';
 import { WorldSnapshot } from './snapshot.ts';
 import { COLOSSUS_DEATH_SHAKE, shakeFalloff } from './shake.ts';
+import { ShieldsBoostView } from './shields.ts';
 import { ShipsView } from './ships.ts';
 import { lerp, toWorld } from './shared.ts';
 
@@ -43,6 +44,7 @@ export class Stage {
       new ProjectilesView(world),
       new NeutralsView(world.cap.neutrals),
       new ShipsView(world.seats),
+      new ShieldsBoostView(world.seats),
       this.fx,
     ];
     for (const view of this.views) this.scene.add(view.root);

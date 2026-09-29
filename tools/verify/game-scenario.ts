@@ -28,6 +28,9 @@ export interface ScenarioOptions {
 
 export const units = (value: number): number => fx.fromInt(value);
 
+/** `exposed()` keeps shields broken this long: longer than any scenario runs. */
+const SHIELDLESS_TICKS = 1 << 30;
+
 /** A hand-built situation on the real simulation, with an event log and helpers to place ships and shots. */
 export class Scenario {
   readonly sim: GameSim;
@@ -75,8 +78,20 @@ export class Scenario {
     return this;
   }
 
+  /**
+   * Takes away every protection: spawn protection ends, and shields stay down for the rest of the scenario (a test aid:
+   * damage, grazing and the like are checked on bare robots; shields have sections of their own, see `shields()`).
+   */
   exposed(): this {
     this.m.plInvuln.fill(0);
+    this.m.plShield.fill(0);
+    this.m.plShieldBreak.fill(SHIELDLESS_TICKS);
+    return this;
+  }
+
+  /** Lets shields work again after `exposed()`: each comes up on the next tick its pilot is not attacking. */
+  shields(): this {
+    this.m.plShieldBreak.fill(0);
     return this;
   }
 

@@ -51,6 +51,14 @@ export const Ev = {
   RoundEnd: 26,
   /** The storm hurt a ship outside the safe zone: a = seat, b = damage. */
   StormHit: 27,
+  /** A robot started a boost: a = seat, b = heading (binary angle), c = frame; x, y = where it started. */
+  Boost: 28,
+  /** A shield stopped a projectile: a = seat, b = the damage it stopped, c = the shooter's seat or NO_SEAT; x, y = the impact. */
+  ShieldHit: 29,
+  /** A shield ran dry stopping a projectile and shattered: a = seat, b = that projectile's damage, c = the shooter or NO_SEAT. */
+  ShieldBreak: 30,
+  /** A shield came up (the pilot stopped attacking, or it recovered from a break): a = seat. */
+  ShieldUp: 31,
 } as const;
 
 /** Which of a robot's two weapons an Ev.Fire event is about. */

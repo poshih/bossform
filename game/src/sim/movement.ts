@@ -81,6 +81,15 @@ export function coast(w: World, seat: number): void {
   m.plY[seat] += m.plVY[seat];
 }
 
+/** Slows a ship to at most `top` without turning it (the end of a boost). */
+export function limitSpeed(w: World, seat: number, top: number): void {
+  const { m } = w;
+  const next: Vec = { x: 0, y: 0 };
+  capped(m.plVX[seat], m.plVY[seat], top, next);
+  m.plVX[seat] = next.x;
+  m.plVY[seat] = next.y;
+}
+
 /**
  * The rim is solid: a ship whose edge (`edge` from its centre) would cross it is put back on it, and only
  * the outward part of its velocity is removed, so it slides along the wall.

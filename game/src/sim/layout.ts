@@ -52,6 +52,9 @@ export function layoutFor(cap: Capacity) {
     plGauge: field.i32(S), plTimer: field.i32(S), plFlash: field.i32(S),
     plFireCd: field.i32(S), plAltCd: field.i32(S), plUltCd: field.i32(S), plDash: field.i32(S), plBulwark: field.i32(S),
     plAtkTimer: field.i32(S), plAtkSeq: field.i32(S),
+    // Energy and shield (energy.ts), boost (boost.ts)
+    plShield: field.u8(S), plEnergy: field.i32(S), plRegenWait: field.i32(S), plShieldWait: field.i32(S), plShieldBreak: field.i32(S),
+    plBoost: field.i32(S), plBoostCd: field.i32(S),
     plLastHit: field.i32(S), plLastHitAt: field.i32(S), plEpoch: field.i32(S),
     plKills: field.i32(S), plDeaths: field.i32(S), plDealt: field.i32(S), plGrazes: field.i32(S),
 

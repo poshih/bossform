@@ -1,7 +1,7 @@
 import { fx } from '@metronome/engine';
 import type { InputCodec } from '@metronome/engine';
 
-/** One seat's controls for one tick: analog movement, an independent aim angle, and four buttons. */
+/** One seat's controls for one tick: analog movement, an independent aim angle, and five buttons. */
 export interface GameInput {
   /** -127..127 (right positive). */
   readonly moveX: number;
@@ -12,9 +12,12 @@ export interface GameInput {
   readonly buttons: number;
 }
 
-/** Fire / Alt: the ship's two weapons (the boss form's salvo and siege shot). Boss: transform. Ultima: the boss form's final attack. */
-export const Button = { Fire: 1, Alt: 2, Boss: 4, Ultima: 8 } as const;
-const BUTTON_MASK = Button.Fire | Button.Alt | Button.Boss | Button.Ultima;
+/**
+ * Fire / Alt: the ship's two weapons (the boss form's salvo and siege shot). Boss: transform. Ultima: the boss form's final
+ * attack. Boost: a robot's burst of speed (held, it boosts again whenever the boost is ready).
+ */
+export const Button = { Fire: 1, Alt: 2, Boss: 4, Ultima: 8, Boost: 16 } as const;
+const BUTTON_MASK = Button.Fire | Button.Alt | Button.Boss | Button.Ultima | Button.Boost;
 export const MOVE_MAX = 127;
 
 export const NEUTRAL_INPUT: GameInput = Object.freeze({ moveX: 0, moveY: 0, aim: fx.ANGLE_QUARTER, buttons: 0 });

@@ -200,6 +200,19 @@ export class AudioDirector {
         case Ev.Dash:
           this.playSpatial(world, { sfx: 'dash', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
+        case Ev.Boost:
+          this.playSpatial(world, { sfx: 'boost', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.ShieldHit:
+          this.playSpatial(world, { sfx: 'shieldHit', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.ShieldBreak:
+          this.playSpatial(world, { sfx: 'shieldBreak', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.ShieldUp:
+          // Your own shield coming back is feedback for you; everyone else's would be noise.
+          if (a === localSeat) this.engine.play('shieldUp');
+          break;
         case Ev.BulwarkUp:
           this.playSpatial(world, { sfx: 'bulwarkRaise', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;

@@ -1,7 +1,7 @@
 import { fx } from '@metronome/engine';
 import {
-  Attack, Button, BOSS_MIN_GAUGE, Form, FORMS, FRAME_STATS, Frame, GALE, JUGGERNAUT, MOVE_MAX, NEUTRAL_DEFS, NEUTRAL_INPUT, PartKind, Phase, Role,
-  SHOT_DEFS, ShotFlag, VANGUARD, W, attackFuel, canStartAttack, isFighting,
+  Attack, Button, BOSS_MIN_GAUGE, Form, FORMS, FRAME_STATS, Frame, MOVE_MAX, NEUTRAL_DEFS, NEUTRAL_INPUT, PartKind, Phase, Role,
+  PRIMARY_WEAPONS, SHOT_DEFS, ShotFlag, VANGUARD, W, attackFuel, canBoost, canStartAttack, isFighting,
 } from '../sim/index.ts';
 import type { GameInput, World } from '../sim/index.ts';
 
@@ -18,6 +18,8 @@ const ORB_SEEK_RANGE = 170;
 const NEUTRAL_SEEK_RANGE = 380;
 const STORM_MARGIN = 40;
 const FIRE_RANGE = 430;
+/** A robot opens fire only where its primary's shots still reach (energy is not spent on shots that fade short). */
+const REACH_SHARE = 0.92;
 const STRAFE_MIN_TICKS = 40;
 const STRAFE_SPREAD_TICKS = 80;
 const AIM_TOLERANCE = fx.deg(14);
@@ -52,10 +54,36 @@ const INCOMING_RADIUS = 90;
 
 /** Preferred fighting distance per frame: the fast striker brawls, the heavy bunker keeps its distance. */
 const PREFERRED_RANGE: readonly number[] = [230, 170, 270];
+/**
+ * Energy discipline (energy powers both the guns and the shield): a bot stops firing when its pool runs low and starts again
+ * once it has refilled this far, so it is not left without a shield for long. A target whose shield just shattered is fired
+ * on regardless.
+ */
+const FIRE_STOP_ENERGY = 60;
+const FIRE_RESUME_ENERGY = 260;
+/** VANGUARD launches seekers only with this much energy to spare on top of their cost. */
+const SEEKER_SPARE_ENERGY = 200;
+/** Chances per tick (scaled by skill for dodging) of boosting out of a shot about to land, at a far target, or away when nearly destroyed. */
+const BOOST_DODGE_CHANCE = 0.1;
+const BOOST_CLOSE_CHANCE = 0.03;
+const BOOST_ESCAPE_CHANCE = 0.1;
+/** Boost at a target this much farther away than the preferred range. */
+const BOOST_CLOSE_EXTRA = 160;
+/** Boost away from a pilot this close while below this share of health. */
+const ESCAPE_RANGE = 170;
+const ESCAPE_HP_SHARE = 0.3;
 
 interface Point {
   x: number;
   y: number;
+}
+
+/** What a bot aims at: an opposing pilot (`seat`) or a neutral unit (`seat` -1). */
+interface Target extends Point {
+  vx: number;
+  vy: number;
+  ship: boolean;
+  seat: number;
 }
 
 const to = (a: number) => a * UNIT;
@@ -65,6 +93,8 @@ export class Bot {
   private state: number;
   private strafe = 1;
   private strafeLeft = 0;
+  /** Holding fire until the energy pool refills (see FIRE_STOP_ENERGY). */
+  private conserving = false;
   /** 0..1: how sharply the bot reacts to bullets and how well it leads its aim. */
   private readonly skill: number;
 
@@ -123,15 +153,23 @@ export class Bot {
       mx += dodge.x;
       my += dodge.y;
     }
+    let buttons = 0;
+    if (!boss) {
+      const burst = this.boostDirection(w, me, target, range, dodge, urgent);
+      if (burst !== null) {
+        mx = burst.x;
+        my = burst.y;
+        buttons |= Button.Boost;
+      }
+    }
     const length = Math.hypot(mx, my);
     if (length > 1) {
       mx /= length;
       my /= length;
     }
 
-    let buttons = 0;
-    if (boss) buttons = this.bossButtons(w, target, range);
-    else buttons = this.normalButtons(w, frame, target, range, urgent);
+    if (boss) buttons |= this.bossButtons(w, target, range);
+    else buttons |= this.normalButtons(w, frame, target, range, urgent);
     // Transform to fight a pilot, never for chores against neutral units.
     if (!boss && target !== null && target.ship && m.plGauge[seat] >= BOSS_MIN_GAUGE + TRANSFORM_RESERVE && range < TRANSFORM_RANGE && m.plHp[seat] > TRANSFORM_MIN_HP) {
       buttons |= Button.Boss;
@@ -140,17 +178,17 @@ export class Bot {
     return { moveX: Math.round(mx * MOVE_MAX), moveY: Math.round(my * MOVE_MAX), aim, buttons };
   }
 
-  /** Nearest opposing ship, or a neutral unit when no ship is close (they pay in energy). */
-  private pickTarget(w: World, me: Point): (Point & { vx: number; vy: number; ship: boolean }) | null {
+  /** Nearest opposing ship, or a neutral unit when no ship is close (they pay into the boss gauge). */
+  private pickTarget(w: World, me: Point): Target | null {
     const { m } = w;
-    let best: (Point & { vx: number; vy: number; ship: boolean }) | null = null;
+    let best: Target | null = null;
     let bestD = Infinity;
     for (let s = 0; s < w.seats; s++) {
       if (s === this.seat || !isFighting(w, s) || m.plTeam[s] === m.plTeam[this.seat]) continue;
       const d = Math.hypot(to(m.plX[s]) - me.x, to(m.plY[s]) - me.y);
       if (d < bestD) {
         bestD = d;
-        best = { x: to(m.plX[s]), y: to(m.plY[s]), vx: to(m.plVX[s]), vy: to(m.plVY[s]), ship: true };
+        best = { x: to(m.plX[s]), y: to(m.plY[s]), vx: to(m.plVX[s]), vy: to(m.plVY[s]), ship: true, seat: s };
       }
     }
     if (best !== null && bestD < NEUTRAL_SEEK_RANGE) return best;
@@ -159,10 +197,28 @@ export class Bot {
       const d = Math.hypot(to(m.nX[n]) - me.x, to(m.nY[n]) - me.y) - to(NEUTRAL_DEFS[m.nType[n]].rad);
       if (d < bestD && d < NEUTRAL_SEEK_RANGE) {
         bestD = d;
-        best = { x: to(m.nX[n]), y: to(m.nY[n]), vx: to(m.nVX[n]), vy: to(m.nVY[n]), ship: false };
+        best = { x: to(m.nX[n]), y: to(m.nY[n]), vx: to(m.nVX[n]), vy: to(m.nVY[n]), ship: false, seat: -1 };
       }
     }
     return best;
+  }
+
+  /** A unit direction to boost in this tick, or null: out of an urgent dodge, at a far pilot, or away when nearly destroyed. */
+  private boostDirection(w: World, me: Point, target: Target | null, range: number, dodge: Point & { soonest: number }, urgent: boolean): Point | null {
+    const { m } = w;
+    const seat = this.seat;
+    if (!canBoost(w, seat)) return null;
+    // Like a person: a boost out of the way at the last moment, when a shot is about to land, not whenever one is coming.
+    if (urgent && dodge.soonest <= FRAME_STATS[m.plFrame[seat]].boost.dodge && this.random() < BOOST_DODGE_CHANCE * this.skill) {
+      const length = Math.hypot(dodge.x, dodge.y);
+      return { x: dodge.x / length, y: dodge.y / length };
+    }
+    if (target === null || !target.ship || range < 1) return null;
+    const toward = { x: (target.x - me.x) / range, y: (target.y - me.y) / range };
+    if (range > PREFERRED_RANGE[m.plFrame[seat]] + BOOST_CLOSE_EXTRA && this.random() < BOOST_CLOSE_CHANCE) return toward;
+    const low = m.plHp[seat] < FRAME_STATS[m.plFrame[seat]].hp * ESCAPE_HP_SHARE;
+    if (low && range < ESCAPE_RANGE && this.random() < BOOST_ESCAPE_CHANCE) return { x: -toward.x, y: -toward.y };
+    return null;
   }
 
   private leadAim(w: World, me: Point, target: Point & { vx: number; vy: number }, range: number): number {
@@ -176,17 +232,20 @@ export class Bot {
 
   private projectileSpeed(w: World, frame: number): number {
     if (w.m.plForm[this.seat] === Form.Boss) return FORMS[frame].salvo.shot.spd;
-    return [VANGUARD.rifle.shot.spd, GALE.darts.shot.spd, JUGGERNAUT.mortar.shot.spd][frame];
+    return PRIMARY_WEAPONS[frame].shot.spd;
   }
 
-  /** Steers away from the closest approach of every hostile projectile that would touch the core. */
-  private dodge(w: World, me: Point): Point {
+  /**
+   * Steers away from the closest approach of every hostile projectile that would touch the core. `soonest` is the fewest
+   * ticks until one of them arrives (Infinity when none threatens).
+   */
+  private dodge(w: World, me: Point): Point & { soonest: number } {
     const { m } = w;
     const seat = this.seat;
     const boss = m.plForm[seat] === Form.Boss;
     const frame = m.plFrame[seat];
     const coreR = to(boss ? FORMS[frame].coreR : FRAME_STATS[frame].hurtR);
-    const out: Point = { x: 0, y: 0 };
+    const out = { x: 0, y: 0, soonest: Infinity };
     const sense = SENSE_RANGE * (SENSE_BASE_SHARE + (1 - SENSE_BASE_SHARE) * this.skill);
     for (let p = 0; p < w.cap.projectiles; p++) {
       if (m.pAlive[p] !== 1 || m.pTeam[p] === m.plTeam[seat]) continue;
@@ -208,6 +267,7 @@ export class Bot {
       const need = coreR + to(def.rad) + DODGE_MARGIN;
       if (d >= need) continue;
       const weight = ((need - d) / need) / (1 + t * DODGE_TIME_FALLOFF);
+      out.soonest = Math.min(out.soonest, t);
       if (d < 0.001) {
         out.x += -vy * weight;
         out.y += vx * weight;
@@ -240,11 +300,18 @@ export class Bot {
     return best;
   }
 
-  private normalButtons(w: World, frame: number, target: (Point & { ship: boolean }) | null, range: number, threatened: boolean): number {
+  private normalButtons(w: World, frame: number, target: Target | null, range: number, threatened: boolean): number {
+    const { m } = w;
+    const energy = m.plEnergy[this.seat];
+    if (this.conserving && energy >= FIRE_RESUME_ENERGY) this.conserving = false;
+    else if (!this.conserving && energy < FIRE_STOP_ENERGY) this.conserving = true;
     let buttons = 0;
     if (target === null) return buttons;
-    if (range < FIRE_RANGE) buttons |= Button.Fire;
-    if (frame === Frame.Vanguard && range < SEEKER_RANGE) buttons |= Button.Alt;
+    const exposed = target.ship && m.plShieldBreak[target.seat] > 0;
+    const primary = PRIMARY_WEAPONS[frame].shot;
+    const reach = Math.min(FIRE_RANGE, to(primary.spd) * primary.life * REACH_SHARE);
+    if (range < reach && (!this.conserving || exposed)) buttons |= Button.Fire;
+    if (frame === Frame.Vanguard && range < SEEKER_RANGE && energy >= VANGUARD.seekers.cost + SEEKER_SPARE_ENERGY) buttons |= Button.Alt;
     if (frame === Frame.Gale && threatened && this.random() < DASH_CHANCE) buttons |= Button.Alt;
     if (frame === Frame.Juggernaut && (threatened || this.incoming(w) > BULWARK_THREAT)) buttons |= Button.Alt;
     return buttons;
@@ -262,7 +329,7 @@ export class Bot {
   }
 
   /** Boss form: wait for the pods to swing onto the target (the tell works both ways), then use the attacks by priority. */
-  private bossButtons(w: World, target: (Point & { ship: boolean }) | null, range: number): number {
+  private bossButtons(w: World, target: Target | null, range: number): number {
     const { m } = w;
     if (target === null) return 0;
     const seat = this.seat;

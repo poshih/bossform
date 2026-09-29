@@ -1,20 +1,40 @@
 /**
  * Game rules eval (1/4): the rules that are not about boss forms or match flow, each checked by running the real
- * simulation in a hand-built situation: authoring-time definitions, configuration, the damage window, graze,
- * teams, protection, energy, neutral units, orbs and departing pilots.
+ * simulation in a hand-built situation: authoring-time definitions, movement and the boost, configuration, the damage
+ * window, graze, teams, protection, energy and the shield, the boss gauge, neutral units, orbs and departing pilots.
  */
 import { fx } from '@metronome/engine';
 import {
   Attack, Button, decodeConfig, encodeConfig, Ev, FORMS, Form, FRAME_STATS, Frame, GALE, GAUGE_MAX, GAUGE_PER_DAMAGE_DEALT,
   GAUGE_PER_DAMAGE_TAKEN, GAUGE_PER_GRAZE, JUGGERNAUT, MIN_WINDUP_TICKS, Mode, NEUTRAL_DEFS, NeutralType, NO_SEAT, ORB_VALUE, Phase,
-  PROJECTILE_SPEED_CAP, SHOT_DEFS, ShotFlag, VANGUARD, W, WAVE_INTERVAL_TICKS, BOSS_DRAIN_PER_TICK, ARENA_RADIUS_LIMIT, RADIAL_SHIFT, inside, span2,
+  PRIMARY_WEAPONS, PROJECTILE_SPEED_CAP, SHOT_DEFS, canBoost, canUseAlt, ShotFlag, VANGUARD, W, WAVE_INTERVAL_TICKS, BOSS_DRAIN_PER_TICK, ARENA_RADIUS_LIMIT, RADIAL_SHIFT, inside, span2,
+  ENERGY_MAX, ENERGY_REGEN_DELAY, ENERGY_REGEN_PER_TICK, MOVE_MAX, SHIELD_BREAK_TICKS, SHIELD_COST_PER_DAMAGE, SHIELD_RAISE_ENERGY, SHIELD_RAISE_TICKS, TICK_RATE,
 } from '../../game/src/sim/index.ts';
+import type { GameInput, World } from '../../game/src/sim/index.ts';
 import { shot } from '../../game/src/sim/shots.ts';
 import { holding, IDLE, Scenario } from './game-scenario.ts';
 import { check, finish, info, section } from './lib.ts';
 
 const FRAME_NAMES = ['VANGUARD', 'GALE', 'JUGGERNAUT'];
 const bolt = VANGUARD.rifle.shot;
+/** Each robot's primary weapon: refire interval and energy cost. */
+/** The design's pace: a full pool feeds a primary weapon for about 7 s of continuous fire. */
+const SUSTAINED_FIRE_SECONDS = [6.5, 8] as const;
+const FRAMES = [Frame.Vanguard, Frame.Gale, Frame.Juggernaut] as const;
+
+/** Puts a bolt (heading +x) where one step of its own motion lands it exactly on the raw point (x, y), owned by seat 1. */
+function boltOnto(s: Scenario, x: number, y: number): number {
+  const p = s.shootAt(bolt, 1, 1, 0, 0);
+  s.m.pX[p] = x - bolt.spd;
+  s.m.pY[p] = y;
+  return p;
+}
+
+/** Seat 0 holds `buttons` (and aims at -x, away from everybody); everybody else idles. */
+const seatZero = (buttons: number, extra: Partial<GameInput> = {}) => (seat: number): GameInput => (seat === 0 ? holding(buttons, { aim: fx.ANGLE_HALF, ...extra }) : IDLE);
+
+const firesOf = (s: Scenario, seat: number, since: number) => s.events(Ev.Fire, since).filter((e) => e.a === seat);
+const speedOf = (w: World, seat: number) => Math.hypot(w.m.plVX[seat], w.m.plVY[seat]);
 const throwsRange = (fn: () => unknown): boolean => {
   try {
     fn();
@@ -49,6 +69,19 @@ section('definitions: the speed rule and the weight rules are enforced when cont
   check('the heavier the machine the slower it turns: FORTRESS < PALADIN < TEMPEST', fortress.bodyTurn < paladin.bodyTurn && paladin.bodyTurn < tempest.bodyTurn);
   check('lighter robots can take less damage per window: GALE < VANGUARD < JUGGERNAUT',
     FRAME_STATS[Frame.Gale].windowCap < FRAME_STATS[Frame.Vanguard].windowCap && FRAME_STATS[Frame.Vanguard].windowCap < FRAME_STATS[Frame.Juggernaut].windowCap);
+  check('every primary weapon refires sooner than energy starts to refill, so a pilot who keeps firing never refills',
+    PRIMARY_WEAPONS.every((weapon) => weapon.interval < ENERGY_REGEN_DELAY), PRIMARY_WEAPONS.map((weapon) => weapon.interval).join(' / '));
+  for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
+    const { interval, cost } = PRIMARY_WEAPONS[frame];
+    const seconds = (Math.floor(ENERGY_MAX / cost) * interval) / TICK_RATE;
+    check(`${FRAME_NAMES[frame]}: a full pool buys ${SUSTAINED_FIRE_SECONDS.join(' to ')} s of continuous primary fire`, seconds >= SUSTAINED_FIRE_SECONDS[0] && seconds <= SUSTAINED_FIRE_SECONDS[1], `${seconds.toFixed(2)} s`);
+    const boost = FRAME_STATS[frame].boost;
+    check(`${FRAME_NAMES[frame]}: its boost is at least twice its top speed, dodges for part of it, and cools down for longer than it lasts`,
+      boost.speed >= 2 * FRAME_STATS[frame].speed && boost.dodge > 0 && boost.dodge < boost.ticks && boost.cooldown > boost.ticks,
+      `${boost.speed / fx.ONE} u/tick for ${boost.ticks} ticks (${(boost.speed * boost.ticks) / fx.ONE} units), dodge ${boost.dodge}, cooldown ${boost.cooldown}`);
+  }
+  check('the heavier the robot the shorter its boost reaches and the longer it cools down: GALE > VANGUARD > JUGGERNAUT',
+    [Frame.Gale, Frame.Vanguard, Frame.Juggernaut].every((frame, i, order) => i === 0 || (FRAME_STATS[order[i - 1]].boost.speed * FRAME_STATS[order[i - 1]].boost.ticks > FRAME_STATS[frame].boost.speed * FRAME_STATS[frame].boost.ticks && FRAME_STATS[order[i - 1]].boost.cooldown < FRAME_STATS[frame].boost.cooldown)));
 }
 
 section('movement: robots stop and reverse quickly, never gain speed from a turn; colossi keep their weight');
@@ -124,6 +157,80 @@ section('the GALE dash leaves its echo where the dash began, and the echo bursts
   check('the echo appears where the dash began, stays there through its fuse, and bursts on that spot',
     dash !== undefined && placed && stayed && burst !== undefined && burst.x === startX && burst.y === startY,
     `placed ${placed}, stayed ${stayed}, burst at ${burst ? ((burst.x - startX) / fx.ONE).toFixed(1) : 'none'}`);
+}
+
+section('boost: a burst of speed where the pilot presses (or aims), whose first ticks dodge');
+for (const frame of FRAMES) {
+  const name = FRAME_NAMES[frame];
+  const boost = FRAME_STATS[frame].boost;
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [frame, Frame.Vanguard] }).battle().exposed().place(0, -200, -150).place(1, 300, 300);
+  const x0 = s.m.plX[0];
+  const y0 = s.m.plY[0];
+  const since = s.tick + 1;
+  s.step(1, seatZero(Button.Boost, { moveY: MOVE_MAX }));
+  s.step(boost.ticks - 1);
+  const started = s.events(Ev.Boost, since);
+  const travelled = s.m.plY[0] - y0;
+  check(`${name}: pressing up and boosting flies ${boost.ticks} ticks x ${boost.speed / fx.ONE} = ${(boost.ticks * boost.speed) / fx.ONE} units straight up, then drops to top speed`,
+    started.length === 1 && started[0].b === fx.ANGLE_QUARTER && started[0].c === frame && s.m.plX[0] === x0 && travelled === boost.ticks * boost.speed && speedOf(s.w, 0) <= FRAME_STATS[frame].speed,
+    `${(travelled / fx.ONE).toFixed(2)} units, then ${(speedOf(s.w, 0) / fx.ONE).toFixed(2)} u/tick`);
+
+  const aimed = new Scenario({ mode: Mode.Deathmatch, frames: [frame, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 300);
+  aimed.step(1, seatZero(Button.Boost));
+  const aimedBoost = aimed.events(Ev.Boost)[0];
+  check(`${name}: pressing no direction, it boosts where it aims`, aimedBoost !== undefined && aimedBoost.b === fx.ANGLE_HALF && aimed.m.plVX[0] < 0 && aimed.m.plVY[0] === 0);
+
+  const held = new Scenario({ mode: Mode.Deathmatch, frames: [frame, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 300);
+  const heldSince = held.tick + 1;
+  held.step(boost.cooldown * 3, seatZero(Button.Boost, { moveX: MOVE_MAX }));
+  const starts = held.events(Ev.Boost, heldSince).map((e) => e.tick);
+  check(`${name}: held, it boosts again exactly every ${boost.cooldown} ticks (its cooldown)`, starts.length === 3 && starts[1] - starts[0] === boost.cooldown && starts[2] - starts[1] === boost.cooldown, starts.join(', '));
+}
+{
+  // A bolt lands on the robot's core on each tick of a boost (shields are down: exposed()). The first `dodge` ticks it passes.
+  const boost = FRAME_STATS[Frame.Vanguard].boost;
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, -200, -150).place(1, 300, 300);
+  const outcome: string[] = [];
+  for (let k = 0; k <= boost.dodge; k++) {
+    const vy = k === 0 ? boost.speed : s.m.plVY[0];
+    boltOnto(s, s.m.plX[0], s.m.plY[0] + vy);
+    const hp = s.m.plHp[0];
+    const since = s.tick + 1;
+    s.step(1, k === 0 ? seatZero(Button.Boost, { moveY: MOVE_MAX }) : () => IDLE);
+    outcome.push(s.m.plHp[0] < hp ? 'hit' : s.events(Ev.Graze, since).some((e) => e.a === 0) ? 'graze' : 'none');
+  }
+  const dodged = outcome.slice(0, boost.dodge);
+  check(`a boost dodges for its first ${boost.dodge} ticks: a bolt on the core passes and only grazes; on the next tick it hurts again`,
+    dodged.every((o) => o === 'graze') && outcome[boost.dodge] === 'hit', outcome.join(' '));
+}
+{
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 500, 300).transform(0, GAUGE_MAX);
+  const since = s.tick + 1;
+  s.step(120, seatZero(Button.Boost, { moveX: MOVE_MAX }));
+  check('a colossus never boosts, and canBoost (what the HUD and bots read) says so', s.events(Ev.Boost, since).length === 0 && s.m.plBoost[0] === 0 && !canBoost(s.w, 0));
+
+  const dash = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Gale, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 500, 300);
+  const readyBefore = canBoost(dash.w, 0);
+  dash.step(1, seatZero(Button.Alt, { moveX: MOVE_MAX }));
+  const heldByDash = dash.m.plDash[0] > 0 && !canBoost(dash.w, 0);
+  const pressedAt = dash.tick + 1;
+  dash.step(1, seatZero(Button.Boost, { moveY: MOVE_MAX }));
+  check('canBoost is false during a phase dash, and a boost pressed then does not start',
+    readyBefore && heldByDash && dash.events(Ev.Boost, pressedAt).length === 0 && dash.m.plBoost[0] === 0);
+
+  const gale = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Gale, Frame.Vanguard] }).battle().exposed().place(0, -200, 0).place(1, 300, 300);
+  gale.step(2, seatZero(Button.Boost, { moveY: MOVE_MAX }));
+  const dashSince = gale.tick + 1;
+  gale.step(1, seatZero(Button.Alt | Button.Boost, { moveX: MOVE_MAX }));
+  const dashed = gale.events(Ev.Dash, dashSince).length === 1 && gale.m.plBoost[0] === 0 && gale.m.plVX[0] === GALE.dash.speed && gale.m.plVY[0] === 0;
+  const boostSince = gale.tick + 1;
+  gale.step(GALE.dash.ticks - 1, seatZero(Button.Boost, { moveY: MOVE_MAX }));
+  check('a GALE phase dash cancels a running boost, and no boost starts while the dash runs', dashed && gale.events(Ev.Boost, boostSince).length === 0);
+
+  const firing = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 300);
+  const fireSince = firing.tick + 1;
+  firing.step(1, seatZero(Button.Fire | Button.Boost, { moveY: MOVE_MAX }));
+  check('a robot boosts and fires on the same tick: movement and aim stay independent', firing.events(Ev.Boost, fireSince).length === 1 && firesOf(firing, 0, fireSince).length === 1);
 }
 
 section('arena-scale distances compare exactly, even in the largest arena the fixed-point range allows');
@@ -202,7 +309,7 @@ section('graze, teams and protection');
   check('a freshly spawned ship is protected: bullets pass through it harmlessly', guarded.m.plHp[0] === FRAME_STATS[Frame.Vanguard].hp && guarded.m.pAlive[shield] === 1);
 }
 
-section('bulwark: the heavy bunker swallows bullets into energy');
+section('bulwark: the heavy bunker swallows bullets into its boss gauge');
 {
   const s = new Scenario({ frames: [Frame.Juggernaut, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 0);
   s.step(1, (seat) => (seat === 0 ? holding(Button.Alt, { aim: 0 }) : IDLE));
@@ -212,11 +319,184 @@ section('bulwark: the heavy bunker swallows bullets into energy');
   s.m.pX[behind] = fx.fromInt(-20) + bolt.spd;
   const hp = s.m.plHp[0];
   s.step();
-  check('a bullet inside the wedge in front is absorbed and pays energy, without harm', s.m.pAlive[front] === 0 && s.events(Ev.Absorb).length === 1 && s.m.plHp[0] === hp && s.m.plGauge[0] > 0);
+  check('a bullet inside the wedge in front is absorbed and pays the boss gauge, without harm', s.m.pAlive[front] === 0 && s.events(Ev.Absorb).length === 1 && s.m.plHp[0] === hp && s.m.plGauge[0] > 0);
   check('a bullet behind the ship is not absorbed', s.m.pAlive[behind] === 1);
 }
 
-section('energy: graze, damage dealt and taken and orbs fill the gauge; a boss form burns it and does not earn it');
+section('energy: every shot pays from one pool, which refills once nothing has been spent for a moment');
+for (const frame of FRAMES) {
+  const name = FRAME_NAMES[frame];
+  const { interval, cost } = PRIMARY_WEAPONS[frame];
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [frame, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 300);
+  check(`${name}: a robot comes into the round with a full pool`, s.m.plEnergy[0] === ENERGY_MAX);
+  const since = s.tick + 1;
+  const affordable = Math.floor(ENERGY_MAX / cost);
+  s.step(affordable * interval + 2, seatZero(Button.Fire));
+  const fired = firesOf(s, 0, since);
+  const remainder = ENERGY_MAX - affordable * cost;
+  check(`${name}: held fire takes ${affordable} shots of ${cost} (no refill while firing), then the gun falls silent with ${remainder} left`,
+    fired.length === affordable && s.m.plEnergy[0] === remainder, `${fired.length} shots, ${s.m.plEnergy[0]} left`);
+  const last = fired[fired.length - 1].tick;
+  const refillTicks = Math.ceil((cost - remainder) / ENERGY_REGEN_PER_TICK);
+  // The refill resumes on the delay's last tick, and a refill lands before the weapons act in the same tick.
+  const expected = ENERGY_REGEN_DELAY + refillTicks - 1;
+  s.step(expected + 1, seatZero(Button.Fire));
+  const next = firesOf(s, 0, last + 1)[0];
+  check(`${name}: still held, it fires again ${expected} ticks after its last shot: the refill resumes after ${ENERGY_REGEN_DELAY}, and ${refillTicks} refill(s) pay for a shot`,
+    next !== undefined && next.tick - last === expected, `${next ? next.tick - last : 'no'} ticks`);
+}
+{
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 300);
+  s.step(1, seatZero(Button.Fire));
+  const after = s.m.plEnergy[0];
+  s.step(ENERGY_REGEN_DELAY - 1);
+  const waited = s.m.plEnergy[0];
+  s.step(1);
+  check(`energy refills ${ENERGY_REGEN_PER_TICK} per tick, starting ${ENERGY_REGEN_DELAY} ticks after the last shot`, after === ENERGY_MAX - VANGUARD.rifle.cost && waited === after && s.m.plEnergy[0] === after + ENERGY_REGEN_PER_TICK);
+  s.step(Math.ceil(ENERGY_MAX / ENERGY_REGEN_PER_TICK));
+  check('and never beyond a full pool', s.m.plEnergy[0] === ENERGY_MAX);
+  const alt = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 300);
+  alt.step(1, seatZero(Button.Alt));
+  check('VANGUARD\'s seekers are a weapon too: they pay their own cost', alt.m.plEnergy[0] === ENERGY_MAX - VANGUARD.seekers.cost);
+
+  const poor = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 300);
+  poor.m.plEnergy[0] = VANGUARD.seekers.cost - 1;
+  poor.m.plRegenWait[0] = ENERGY_REGEN_DELAY;
+  const poorReady = canUseAlt(poor.w, 0);
+  const poorSince = poor.tick + 1;
+  poor.step(1, seatZero(Button.Alt));
+  const poorFired = poor.events(Ev.Fire, poorSince).length;
+  poor.m.plEnergy[0] = VANGUARD.seekers.cost;
+  const paidReady = canUseAlt(poor.w, 0);
+  poor.step(1, seatZero(Button.Alt));
+  check('canUseAlt (what the HUD reads) matches the sim: the seekers wait for the energy they cost, then go off',
+    !poorReady && poorFired === 0 && paidReady && poor.events(Ev.Fire, poorSince).length === 1 && !canUseAlt(poor.w, 0));
+}
+
+section('shield: up whenever the pilot is not attacking; it stops whatever reaches it and energy pays for it');
+{
+  const fresh = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Gale, Frame.Juggernaut] }).battle();
+  check('every robot comes into the round with its shield up', [0, 1, 2].every((seat) => fresh.m.plShield[seat] === 1));
+
+  const stats = FRAME_STATS[Frame.Vanguard];
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().shields().place(0, 0, 0).place(1, 300, 300);
+  s.step();
+  check('once shields are allowed again the shield comes straight up, with a ShieldUp event', s.m.plShield[0] === 1 && s.events(Ev.ShieldUp).some((e) => e.a === 0));
+  const band = (stats.grazeR + stats.hurtR) / 2;
+  const hp = s.m.plHp[0];
+  const gauges = [s.m.plGauge[0], s.m.plGauge[1]];
+  const since = s.tick + 1;
+  const stopped = boltOnto(s, band, 0);
+  s.step();
+  const hit = s.events(Ev.ShieldHit, since)[0];
+  check(`a bolt that would only have grazed (${(band / fx.ONE).toFixed(1)} units out) is stopped at the shield's radius, the graze radius`,
+    s.m.pAlive[stopped] === 0 && hit !== undefined && hit.a === 0 && hit.b === bolt.dmg && hit.c === 1 && s.events(Ev.Graze, since).length === 0);
+  check(`the pool pays ${SHIELD_COST_PER_DAMAGE} per point of damage (${bolt.dmg * SHIELD_COST_PER_DAMAGE}), the robot is unharmed`, s.m.plEnergy[0] === ENERGY_MAX - bolt.dmg * SHIELD_COST_PER_DAMAGE && s.m.plHp[0] === hp);
+  check('the shooter\'s boss gauge earns for the stopped shot as for a hit; the shielded pilot took no damage and earns nothing', s.m.plGauge[0] === gauges[0] && s.m.plGauge[1] - gauges[1] === bolt.dmg * GAUGE_PER_DAMAGE_DEALT);
+
+  s.m.plEnergy[0] = bolt.dmg * SHIELD_COST_PER_DAMAGE + 1;
+  boltOnto(s, 0, 0);
+  s.step();
+  const heldUp = s.m.plShield[0] === 1 && s.m.plEnergy[0] === 1;
+  const breakSince = s.tick + 1;
+  boltOnto(s, 0, 0);
+  s.step();
+  const broke = s.events(Ev.ShieldBreak, breakSince)[0];
+  check('a pool that can pay keeps the shield up; one that cannot still stops that shot, then the shield shatters and the pool is empty',
+    heldUp && broke !== undefined && broke.a === 0 && s.m.plShield[0] === 0 && s.m.plEnergy[0] === 0 && s.m.plShieldBreak[0] === SHIELD_BREAK_TICKS && s.m.plHp[0] === hp);
+  const brokeAt = s.tick;
+  const exposedHp = s.m.plHp[0];
+  boltOnto(s, 0, 0);
+  s.step();
+  check('while it is broken the core is bare: a bolt on it hurts', s.m.plHp[0] === exposedHp - bolt.dmg);
+  s.stepTo(brokeAt + SHIELD_BREAK_TICKS - 1);
+  const stillDown = s.m.plShield[0] === 0;
+  s.step();
+  check(`it comes back ${SHIELD_BREAK_TICKS} ticks after it shattered (the pool refilled meanwhile)`, stillDown && s.m.plShield[0] === 1 && s.m.plEnergy[0] >= SHIELD_RAISE_ENERGY);
+}
+{
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().shields().place(0, 0, 0).place(1, 300, 300);
+  s.step();
+  const hp = s.m.plHp[0];
+  boltOnto(s, 0, 0);
+  s.step(1, seatZero(Button.Fire));
+  check('attacking drops the shield on that very tick: a bolt reaching the core hurts', s.m.plShield[0] === 0 && s.m.plHp[0] === hp - bolt.dmg);
+  s.step(SHIELD_RAISE_TICKS - 1, seatZero(Button.Fire));
+  const lastHeld = s.tick;
+  s.step(SHIELD_RAISE_TICKS - 1);
+  const notYet = s.m.plShield[0] === 0;
+  s.step();
+  check(`it comes back ${SHIELD_RAISE_TICKS} ticks after the last tick the button was held`, notYet && s.m.plShield[0] === 1 && s.tick - lastHeld === SHIELD_RAISE_TICKS);
+
+  const low = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().shields().place(0, 0, 0).place(1, 300, 300);
+  low.m.plEnergy[0] = SHIELD_RAISE_ENERGY - 1;
+  low.m.plRegenWait[0] = ENERGY_REGEN_DELAY;
+  low.step(ENERGY_REGEN_DELAY - 1);
+  const waiting = low.m.plShield[0] === 0;
+  low.step();
+  check(`a shield needs ${SHIELD_RAISE_ENERGY} energy to come up: it rises on the tick the refill reaches it`, waiting && low.m.plShield[0] === 1 && low.m.plEnergy[0] === SHIELD_RAISE_ENERGY - 1 + ENERGY_REGEN_PER_TICK);
+
+  const gale = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Gale, Frame.Vanguard] }).battle().exposed().shields().place(0, 0, 0).place(1, 300, 300);
+  gale.step(1);
+  gale.step(3, seatZero(Button.Alt, { moveX: MOVE_MAX }));
+  check('GALE\'s alt (phase dash) is not an attack: the shield stays up and nothing is paid', gale.m.plShield[0] === 1 && gale.m.plEnergy[0] === ENERGY_MAX);
+  const bunker = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Juggernaut, Frame.Vanguard] }).battle().exposed().shields().place(0, 0, 0).place(1, 300, 300);
+  bunker.step(1);
+  bunker.step(1, seatZero(Button.Alt));
+  const raised = bunker.m.plBulwark[0] > 0 && bunker.m.plShield[0] === 0 && bunker.m.plEnergy[0] === ENERGY_MAX;
+  const lastRaised = bunker.tick + bunker.m.plBulwark[0] - 1;
+  bunker.stepTo(lastRaised + SHIELD_RAISE_TICKS - 1);
+  const stillDown = bunker.m.plShield[0] === 0;
+  bunker.step();
+  check('JUGGERNAUT\'s bulwark costs nothing but takes the shield\'s place while raised (it covers the front only); the shield returns after it',
+    raised && stillDown && bunker.m.plShield[0] === 1, `bulwark ${JUGGERNAUT.bulwark.ticks} ticks, shield back ${SHIELD_RAISE_TICKS} ticks after`);
+  const vanguard = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().shields().place(0, 0, 0).place(1, 300, 300);
+  vanguard.step(1);
+  vanguard.step(1, seatZero(Button.Alt));
+  check('VANGUARD\'s alt (seekers) is an attack: it drops the shield', vanguard.m.plShield[0] === 0);
+
+  const boss = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().shields().place(0, 0, 0).place(1, 500, 300);
+  boss.step();
+  const upBefore = boss.m.plShield[0] === 1;
+  boss.m.plGauge[0] = GAUGE_MAX;
+  boss.step(1, seatZero(Button.Boss));
+  const morphing = boss.m.plForm[0] === Form.Morph && boss.m.plShield[0] === 0;
+  while (boss.m.plForm[0] !== Form.Boss) boss.step();
+  boss.step(30);
+  check('transforming drops the shield, and a colossus has none', upBefore && morphing && boss.m.plShield[0] === 0);
+
+  // The colossus folds back while the pool is full: the shield returns at once, even if the pilot was firing when it
+  // transformed (its raise delay ran out during the boss form).
+  const back = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().shields().place(0, 0, 0).place(1, 500, 300);
+  back.step(1, seatZero(Button.Fire));
+  back.transform(0, GAUGE_MAX);
+  back.step(SHIELD_RAISE_TICKS);
+  back.m.plGauge[0] = 1;
+  back.step();
+  const folded = back.events(Ev.BossEnd).length === 1 && back.m.plForm[0] === Form.Normal;
+  back.step();
+  check('a colossus that folds back has its shield up on its first tick as a robot', folded && back.m.plShield[0] === 1, `shield ${back.m.plShield[0]}, wait ${back.m.plShieldWait[0]}`);
+}
+{
+  const top = FRAME_STATS[Frame.Vanguard].speed;
+  const boosting = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 500, 300);
+  boosting.m.plGauge[0] = GAUGE_MAX;
+  boosting.step(2, seatZero(Button.Boost, { moveX: MOVE_MAX }));
+  boosting.step(1, seatZero(Button.Boss));
+  check('transforming mid-boost ends the boost: the robot unfolds at no more than its top speed',
+    boosting.m.plForm[0] === Form.Morph && boosting.m.plBoost[0] === 0 && speedOf(boosting.w, 0) <= top, `${(speedOf(boosting.w, 0) / fx.ONE).toFixed(2)} u/tick`);
+
+  const dashing = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Gale, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 500, 300);
+  dashing.step(1, seatZero(Button.Alt, { moveX: MOVE_MAX }));
+  const dashed = dashing.m.plDash[0] > 0;
+  dashing.transform(0, GAUGE_MAX);
+  dashing.m.plGauge[0] = 1;
+  dashing.step(2);
+  check('transforming mid-dash ends the phase dash: the robot that folds back does not finish a stale dash',
+    dashed && dashing.m.plForm[0] === Form.Normal && dashing.m.plDash[0] === 0 && speedOf(dashing.w, 0) <= FRAME_STATS[Frame.Gale].speed);
+}
+
+section('boss gauge: graze, damage dealt and taken and orbs fill it; a boss form burns it and does not earn it');
 {
   const s = new Scenario({ frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 300, 0);
   s.shootAt(bolt, 1, 1, 0, 0);
@@ -282,8 +562,11 @@ section('neutral units and orbs');
 section('a pilot who leaves takes their ship out of the match');
 {
   const s = new Scenario({ frames: [Frame.Vanguard, Frame.Gale] }).battle();
+  s.step(1, (seat) => (seat === 1 ? holding(Button.Boost, { moveX: MOVE_MAX }) : IDLE));
+  const busy = s.m.plBoost[1] > 0 && s.m.plShield[1] === 1;
   s.step(1, undefined, [true, false]);
   check('the departed seat becomes inactive and the round goes to the remaining team', s.m.plActive[1] === 0 && s.m.plAlive[1] === 0 && s.events(Ev.Left).length === 1 && s.m.teamWins[0] === 1 && s.m.world[W.Phase] === Phase.RoundEnd);
+  check('a pilot who leaves mid-boost leaves no robot state behind (no shield, no boost, no dash)', busy && s.m.plShield[1] === 0 && s.m.plBoost[1] === 0 && s.m.plDash[1] === 0);
 }
 
 info(`${JUGGERNAUT.bulwark.ticks} tick bulwark, ${GALE.dash.ticks} tick dash`);

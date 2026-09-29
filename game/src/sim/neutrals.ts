@@ -1,6 +1,6 @@
 import { fx } from '@metronome/engine';
 import { Attack, FLASH_TICKS, GAUGE_PER_DAMAGE_DEALT, NO_SEAT, ORB_VALUE, WARDEN_INTERVAL_TICKS } from './constants.ts';
-import { earn } from './energy.ts';
+import { earn } from './gauge.ts';
 import { Ev } from './events.ts';
 import { inside, radial, within } from './geometry.ts';
 import { W } from './layout.ts';

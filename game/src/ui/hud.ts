@@ -10,7 +10,10 @@ import {
   Banner,
   BOSS_DRAIN_PER_TICK,
   BOSS_MIN_GAUGE,
+  canBoost,
+  canUseAlt,
   DEATHMATCH_TICKS,
+  ENERGY_MAX,
   Ev,
   FORMS,
   FRAME_STATS,
@@ -23,9 +26,11 @@ import {
   NO_WINNER,
   NeutralType,
   Phase,
+  PRIMARY_WEAPONS,
   radial,
   Role,
   ROUNDS_TO_WIN,
+  SHIELD_BREAK_TICKS,
   SHRINK_TICKS,
   SUDDEN_DEATH_TICKS,
   TICK_RATE,
@@ -117,7 +122,7 @@ const LOCAL_TOP_LABEL_SIZE = 11;
 const LOCAL_VALUE_SIZE = 11;
 const LOCAL_TITLE_SIZE = 12;
 const LOCAL_LABEL_TO_BAR = 4;
-/** Threshold markers under the energy bar: how far below the bar's top their labels sit, and how tall those labels are. */
+/** Threshold markers under the boss gauge bar: how far below the bar's top their labels sit, and how tall those labels are. */
 const LOCAL_MARKER_LABEL_DROP = 24;
 const LOCAL_MARKER_LABEL_HEIGHT = 6;
 const LOCAL_COMPACT_CHIP_PITCH = 22;
@@ -176,6 +181,13 @@ const ATTACK_LABELS = ['—', 'SALVO', 'SIEGE', 'ULTIMA'] as const;
 const PHASE_LABELS = ['READY', 'WIND-UP', 'RELEASING', 'RECOVERY'] as const;
 const NORMAL_ALT_LABELS = ['SEEKERS', 'PHASE DASH', 'BULWARK'] as const;
 const NORMAL_ALT_COOLDOWNS = [VANGUARD.seekers.cooldown, GALE.dash.cooldown, JUGGERNAUT.bulwark.cooldown] as const;
+/** The energy meter turns amber below this share of a full pool. */
+const ENERGY_LOW_SHARE = 0.3;
+const ENERGY_SHIELD_COLOR = '#8ff3ff';
+const ENERGY_OPEN_COLOR = '#b9c6d8';
+const ENERGY_LOW_COLOR = '#ffc765';
+/** How fast the dry-gun warning blinks (per second). */
+const ENERGY_DRY_BLINK = 7;
 
 interface KillFeedItem {
   readonly kind: 'kill' | 'left';
@@ -218,6 +230,9 @@ interface SeatMotionState {
   altReadyAt: number;
   transformReady: boolean;
   transformReadyAt: number;
+  poolFill: number;
+  boostReady: boolean;
+  boostReadyAt: number;
   attackReady: boolean[];
   attackReadyAt: number[];
 }
@@ -293,14 +308,18 @@ interface LocalPanelLayout {
   readonly hpBar: number;
   readonly windowLabel: number;
   readonly windowBar: number;
-  readonly energyLabel: number;
-  readonly energyBar: number;
+  /** The energy pool (shield and weapons): robots only, null for a colossus. */
+  readonly poolLabel: number | null;
+  readonly poolBar: number | null;
+  readonly gaugeLabel: number;
+  readonly gaugeBar: number;
   readonly formLine: number;
   readonly tellLine: number;
   readonly diagram: number;
   readonly diagramHeight: number;
   readonly attackChips: number;
   readonly cooldownChip: number;
+  readonly boostChip: number;
   readonly transformChip: number;
 }
 
@@ -431,6 +450,9 @@ export class Hud {
         altReadyAt: 0,
         transformReady: false,
         transformReadyAt: 0,
+        poolFill: 1,
+        boostReady: true,
+        boostReadyAt: 0,
         attackReady: Array.from({ length: ATTACK_CHIP_COUNT }, () => false),
         attackReadyAt: Array.from({ length: ATTACK_CHIP_COUNT }, () => 0),
       });
@@ -460,12 +482,17 @@ export class Hud {
       if (gauge - state.lastGauge >= ENERGY_SHIMMER_GAIN) state.energyShimmerUntil = time + ENERGY_SHIMMER_SECONDS;
       state.lastGauge = gauge;
 
-      const altReady = m.plAltCd[seat] === 0;
+      const altReady = canUseAlt(world, seat);
       if (altReady && !state.altReady) state.altReadyAt = time;
       state.altReady = altReady;
       const transformReady = gauge >= BOSS_MIN_GAUGE;
       if (transformReady && !state.transformReady) state.transformReadyAt = time;
       state.transformReady = transformReady;
+      const poolTarget = clamp(m.plEnergy[seat] / ENERGY_MAX, 0, 1);
+      state.poolFill = dt === 0 ? poolTarget : this.smoothStep(state.poolFill, poolTarget, dt, METER_SMOOTH_RATE);
+      const boostReady = canBoost(world, seat);
+      if (boostReady && !state.boostReady) state.boostReadyAt = time;
+      state.boostReady = boostReady;
       BOSS_ATTACKS.forEach((attack, index) => {
         const ready = m.plForm[seat] === Form.Boss && canStartAttack(world, seat, attack);
         if (ready && !state.attackReady[index]) state.attackReadyAt[index] = time;
@@ -867,9 +894,11 @@ export class Hud {
     const hpBar = hpLabel + this.s(LOCAL_LABEL_TO_BAR);
     const windowLabel = hpBar + barHeight + sectionGap + labelLine;
     const windowBar = windowLabel + this.s(LOCAL_LABEL_TO_BAR);
-    const energyLabel = windowBar + minorBarHeight + sectionGap + labelLine;
-    const energyBar = energyLabel + this.s(LOCAL_LABEL_TO_BAR);
-    const markerBottom = energyBar + this.s(LOCAL_MARKER_LABEL_DROP) + this.s(LOCAL_MARKER_LABEL_HEIGHT);
+    const poolLabel = boss ? null : windowBar + minorBarHeight + sectionGap + labelLine;
+    const poolBar = poolLabel === null ? null : poolLabel + this.s(LOCAL_LABEL_TO_BAR);
+    const gaugeLabel = (poolBar === null ? windowBar : poolBar) + minorBarHeight + sectionGap + labelLine;
+    const gaugeBar = gaugeLabel + this.s(LOCAL_LABEL_TO_BAR);
+    const markerBottom = gaugeBar + this.s(LOCAL_MARKER_LABEL_DROP) + this.s(LOCAL_MARKER_LABEL_HEIGHT);
 
     const formLine = markerBottom + sectionGap + titleLine;
     const tellLine = formLine + this.s(LOCAL_ROW_GAP) + titleLine;
@@ -879,7 +908,8 @@ export class Hud {
     const attackChips = diagram + diagramHeight + sectionGap;
     const attackChipsBottom = attackChips + this.s(LOCAL_COMPACT_CHIP_PITCH) * (ATTACK_CHIP_COUNT - 1) + this.s(LOCAL_COMPACT_CHIP_HEIGHT);
     const cooldownChip = titleBaseline + sectionGap;
-    const transformChip = cooldownChip + this.s(LOCAL_CHIP_HEIGHT) + sectionGap;
+    const boostChip = cooldownChip + this.s(LOCAL_CHIP_HEIGHT) + sectionGap;
+    const transformChip = boostChip + this.s(LOCAL_CHIP_HEIGHT) + sectionGap;
     const normalChipsBottom = transformChip + this.s(LOCAL_CHIP_HEIGHT);
 
     const leftBottom = boss ? tellLine : markerBottom;
@@ -887,8 +917,8 @@ export class Hud {
     return {
       boss, height: Math.max(leftBottom, rightBottom) + pad,
       leftX: pad, leftWidth, rightX: pad + leftWidth + gap, rightWidth,
-      titleBaseline, hpLabel, hpBar, windowLabel, windowBar, energyLabel, energyBar,
-      formLine, tellLine, diagram, diagramHeight, attackChips, cooldownChip, transformChip,
+      titleBaseline, hpLabel, hpBar, windowLabel, windowBar, poolLabel, poolBar, gaugeLabel, gaugeBar,
+      formLine, tellLine, diagram, diagramHeight, attackChips, cooldownChip, boostChip, transformChip,
     };
   }
 
@@ -933,12 +963,14 @@ export class Hud {
     this.drawMetricRow(ctx, 'DAMAGE WINDOW', `${Math.round(this.windows[seat].amount)} / ${stats.windowCap}`, leftX, y + layout.windowLabel, leftWidth, windowColor, windowColor);
     this.drawMeter(ctx, leftX, y + layout.windowBar, leftWidth, minorBarHeight, windowRatio, blocked ? UI_WARNING : '#ffcf69', 'rgba(255,255,255,0.08)', { flash: blockFlash });
 
-    this.drawMetricRow(ctx, 'ENERGY', `${Math.floor(m.plGauge[seat] / GAUGE_SCALE)} / ${GAUGE_MAX / GAUGE_SCALE}`, leftX, y + layout.energyLabel, leftWidth, UI_TEXT_DIM, UI_TEXT);
-    this.drawMeter(ctx, leftX, y + layout.energyBar, leftWidth, barHeight, motion.energyFill, '#7ae4ff', 'rgba(255,255,255,0.08)', {
+    if (layout.poolLabel !== null && layout.poolBar !== null) this.drawEnergyRow(ctx, world, seat, leftX, y + layout.poolLabel, y + layout.poolBar, leftWidth, time);
+
+    this.drawMetricRow(ctx, layout.boss ? 'FUEL' : 'BOSS GAUGE', `${Math.floor(m.plGauge[seat] / GAUGE_SCALE)} / ${GAUGE_MAX / GAUGE_SCALE}`, leftX, y + layout.gaugeLabel, leftWidth, UI_TEXT_DIM, UI_TEXT);
+    this.drawMeter(ctx, leftX, y + layout.gaugeBar, leftWidth, barHeight, motion.energyFill, '#7ae4ff', 'rgba(255,255,255,0.08)', {
       shimmer: clamp((motion.energyShimmerUntil - time) / ENERGY_SHIMMER_SECONDS, 0, 1),
       sheen: (time * 0.28 + view.beat.phase * 0.18) % 1,
     });
-    this.drawGaugeMarkers(ctx, leftX, y + layout.energyBar, leftWidth, frame, m.plForm[seat], motion.transformReady, view.beat.pulse);
+    this.drawGaugeMarkers(ctx, leftX, y + layout.gaugeBar, leftWidth, frame, m.plForm[seat], motion.transformReady, view.beat.pulse);
 
     if (layout.boss) {
       const seconds = m.plGauge[seat] / BOSS_DRAIN_PER_TICK / TICK_RATE;
@@ -955,6 +987,7 @@ export class Hud {
     } else {
       const ready = m.plGauge[seat] >= BOSS_MIN_GAUGE;
       this.drawNormalCooldown(ctx, rightX, y + layout.cooldownChip, layout.rightWidth, world, seat, time);
+      this.drawBoostChip(ctx, rightX, y + layout.boostChip, layout.rightWidth, world, seat, time);
       const missing = Math.ceil((BOSS_MIN_GAUGE - m.plGauge[seat]) / GAUGE_SCALE);
       const pop = this.readyPop(time, motion.transformReadyAt);
       this.drawAbilityChip(ctx, rightX, y + layout.transformChip, layout.rightWidth, this.s(LOCAL_CHIP_HEIGHT), {
@@ -1213,16 +1246,58 @@ export class Hud {
     ctx.restore();
   }
 
+  /**
+   * Energy powers the shield and the guns: the row says what the shield is doing (up, down because the pilot is attacking,
+   * broken and for how long) and the meter warns when the pool is low, and blinks when it cannot pay for one more shot.
+   */
+  private drawEnergyRow(ctx: CanvasRenderingContext2D, world: World, seat: number, x: number, labelY: number, barY: number, width: number, time: number): void {
+    const { m } = world;
+    const energy = m.plEnergy[seat];
+    const broken = m.plShieldBreak[seat] > 0;
+    const up = m.plShield[seat] === 1;
+    const dry = energy < PRIMARY_WEAPONS[m.plFrame[seat]].cost;
+    const low = energy < ENERGY_MAX * ENERGY_LOW_SHARE;
+    const state = broken ? `SHIELD BROKEN ${formatCompactSeconds(m.plShieldBreak[seat] / TICK_RATE)}` : up ? 'SHIELD UP' : 'SHIELD DOWN';
+    const stateColor = broken ? UI_WARNING : up ? ENERGY_SHIELD_COLOR : UI_TEXT_DIM;
+    this.drawMetricRow(ctx, 'ENERGY', `${state}  ${energy}`, x, labelY, width, UI_TEXT_DIM, stateColor);
+    const color = broken || dry ? UI_WARNING : low ? ENERGY_LOW_COLOR : up ? ENERGY_SHIELD_COLOR : ENERGY_OPEN_COLOR;
+    const blink = dry ? 0.5 + 0.5 * Math.sin(time * ENERGY_DRY_BLINK * Math.PI * 2) : 0;
+    const breakFlash = broken ? m.plShieldBreak[seat] / SHIELD_BREAK_TICKS : 0;
+    this.drawMeter(ctx, x, barY, width, this.s(LOCAL_MINOR_BAR_HEIGHT), this.seatMotion[seat].poolFill, color, 'rgba(255,255,255,0.08)', { flash: Math.max(blink, breakFlash) });
+  }
+
+  /**
+   * SHIFT: the boost's cooldown, with a pop when it is ready again. Ready is the sim's own test (canBoost), so the chip never
+   * says READY while a phase dash or the round's intro holds the boost.
+   */
+  private drawBoostChip(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, world: World, seat: number, time: number): void {
+    const { m } = world;
+    const remaining = m.plBoostCd[seat];
+    const total = FRAME_STATS[m.plFrame[seat]].boost.cooldown;
+    const ready = canBoost(world, seat);
+    const color = ready ? UI_SUCCESS : UI_ACCENT;
+    const waiting = remaining > 0 ? formatCompactSeconds(remaining / TICK_RATE) : 'STANDBY';
+    this.drawAbilityChip(ctx, x, y, width, this.s(LOCAL_CHIP_HEIGHT), {
+      title: 'BOOST',
+      hint: 'SHIFT',
+      status: m.plBoost[seat] > 0 ? 'BOOSTING' : ready ? 'READY' : waiting,
+      color,
+      alpha: 1,
+      progress: { fill: 1 - remaining / total, color },
+    }, this.readyPop(time, this.seatMotion[seat].boostReadyAt));
+  }
+
+  /** RMB: the alt's cooldown; READY only when the sim would let it go off now (canUseAlt: cooled down and paid for). */
   private drawNormalCooldown(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, world: World, seat: number, time: number): void {
     const frame = world.m.plFrame[seat];
     const remaining = world.m.plAltCd[seat];
     const total = NORMAL_ALT_COOLDOWNS[frame];
-    const ready = remaining === 0;
+    const ready = canUseAlt(world, seat);
     const color = ready ? UI_SUCCESS : UI_ACCENT;
     this.drawAbilityChip(ctx, x, y, width, this.s(LOCAL_CHIP_HEIGHT), {
       title: NORMAL_ALT_LABELS[frame],
       hint: 'RMB',
-      status: ready ? 'READY' : formatCompactSeconds(remaining / TICK_RATE),
+      status: ready ? 'READY' : remaining > 0 ? formatCompactSeconds(remaining / TICK_RATE) : 'NO ENERGY',
       color,
       alpha: 1,
       progress: { fill: 1 - remaining / total, color },

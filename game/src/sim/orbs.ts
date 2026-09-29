@@ -3,7 +3,7 @@ import {
   KILL_ORB_BASE, KILL_ORB_GAUGE_PCT, KILL_ORBS, BOSS_KILL_ORBS, Form, ORB_ACCEL, ORB_DRAG_PCT, ORB_LIFETIME, ORB_MAGNET_DELAY,
   ORB_MAGNET_RADIUS, ORB_MAX_SPEED, ORB_SCATTER_SPEED,
 } from './constants.ts';
-import { refuel } from './energy.ts';
+import { refuel } from './gauge.ts';
 import { Ev } from './events.ts';
 import { within } from './geometry.ts';
 import { isFighting, pickupRadius } from './query.ts';

@@ -2,7 +2,9 @@ import {
   BOSS_KILL_SCORE, GAUGE_PER_DAMAGE_DEALT, GAUGE_PER_DAMAGE_TAKEN, FLASH_TICKS, Form, KILL_CREDIT_TICKS, KILL_SCORE, NO_SEAT, RESPAWN_TICKS,
 } from './constants.ts';
 import { clearBoss } from './boss.ts';
-import { earn } from './energy.ts';
+import { stopBursts } from './boost.ts';
+import { dropShield } from './energy.ts';
+import { earn } from './gauge.ts';
 import { Ev } from './events.ts';
 import { FRAME_STATS } from './frames.ts';
 import { W } from './layout.ts';
@@ -65,6 +67,8 @@ export function killShip(w: World, seat: number, killer: number): void {
   dropKillOrbs(w, seat, wasBoss);
   if (wasBoss) w.emit(Ev.BossEnd, m.plX[seat], m.plY[seat], seat);
   clearBoss(w, seat);
+  dropShield(w, seat);
+  stopBursts(w, seat);
   m.plGauge[seat] = 0;
   m.plRespawn[seat] = w.isDeathmatch ? RESPAWN_TICKS : 0;
   w.emit(Ev.Death, m.plX[seat], m.plY[seat], seat, credit, wasBoss ? 1 : 0);

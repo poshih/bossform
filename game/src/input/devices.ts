@@ -6,7 +6,7 @@ import type { GameInput } from '../sim/index.ts';
 const KEYS = {
   left: ['KeyA'], right: ['KeyD'], up: ['KeyW'], down: ['KeyS'],
   aimLeft: ['ArrowLeft'], aimRight: ['ArrowRight'], aimUp: ['ArrowUp'], aimDown: ['ArrowDown'],
-  fire: ['KeyJ'], alt: ['KeyK'], transform: ['Space'], ultima: ['KeyE'],
+  fire: ['KeyJ'], alt: ['KeyK'], transform: ['Space'], ultima: ['KeyE'], boost: ['ShiftLeft', 'ShiftRight'],
 } as const;
 
 const GAME_KEYS = new Set<string>(Object.values(KEYS).flat());
@@ -157,9 +157,10 @@ export class Devices {
     let buttons = 0;
     const mouse = this.mouseButtons | this.mouseTapped;
     if (this.key(KEYS.fire) || (mouse & MOUSE_BUTTON.left) !== 0 || button(PAD.a) || button(PAD.rt) || button(PAD.rb)) buttons |= Button.Fire;
-    if (this.key(KEYS.alt) || (mouse & MOUSE_BUTTON.right) !== 0 || button(PAD.b) || button(PAD.lt) || button(PAD.lb)) buttons |= Button.Alt;
+    if (this.key(KEYS.alt) || (mouse & MOUSE_BUTTON.right) !== 0 || button(PAD.b) || button(PAD.lt)) buttons |= Button.Alt;
     if (this.key(KEYS.transform) || button(PAD.y)) buttons |= Button.Boss;
     if (this.key(KEYS.ultima) || button(PAD.x)) buttons |= Button.Ultima;
+    if (this.key(KEYS.boost) || button(PAD.lb)) buttons |= Button.Boost;
 
     const keyX = (this.key(KEYS.aimRight) ? 1 : 0) - (this.key(KEYS.aimLeft) ? 1 : 0);
     const keyY = (this.key(KEYS.aimUp) ? 1 : 0) - (this.key(KEYS.aimDown) ? 1 : 0);

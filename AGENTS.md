@@ -37,6 +37,10 @@ This file is what is easy to get wrong.
 - Distance maths: `fx.hypot` needs components under ~700 units, and `fx.len2` of raw fixed point stops being exact past
   ~1400 units apart. Compare arena-scale distances with `span2()` (shifted squares, exact up to the 4000-unit arena radius
   limit) and `inside()`; `within()` is for small radii (hitboxes, ranges) only.
+- Two resources, never mixed up: the **boss gauge** (`plGauge`, `sim/gauge.ts`: transforms the robot, then is the colossus's
+  fuel) and **energy** (`plEnergy`, `sim/energy.ts`: one pool for the shield and the weapons; boost is in `sim/boost.ts`).
+  In rule evals `Scenario.exposed()` also keeps shields down (damage rules are checked on bare robots); `.shields()` turns
+  them back on.
 
 ## Gotchas
 

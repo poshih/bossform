@@ -1,5 +1,7 @@
-import { BOSS_MIN_GAUGE, Form, Phase, SPAWN_PROTECT_TICKS } from './constants.ts';
+import { BOSS_MIN_GAUGE, ENERGY_MAX, Form, Phase, SPAWN_PROTECT_TICKS } from './constants.ts';
 import { clearBoss, startMorph, updateBoss, updateMorph } from './boss.ts';
+import { canBoost, continueBoost, startBoost, stopBursts } from './boost.ts';
+import { dropShield, regenEnergy, updateShield } from './energy.ts';
 import { Ev } from './events.ts';
 import { FRAME_STATS, JUGGERNAUT } from './frames.ts';
 import type { Vec } from './geometry.ts';
@@ -8,7 +10,7 @@ import type { GameInput } from './input.ts';
 import { W } from './layout.ts';
 import { coast, driveRobot, keepInside } from './movement.ts';
 import { respawnPoint } from './spawn.ts';
-import { fireNormal } from './weapons.ts';
+import { fireNormal, shieldBlocked } from './weapons.ts';
 import type { World } from './world.ts';
 
 /** Puts a ship (back) into play at full health, in its normal form, at a spawn point. */
@@ -35,6 +37,13 @@ export function resetShip(w: World, seat: number, at: Vec, aim: number, protecti
   m.plUltCd[seat] = 0;
   m.plDash[seat] = 0;
   m.plBulwark[seat] = 0;
+  m.plEnergy[seat] = ENERGY_MAX;
+  m.plRegenWait[seat] = 0;
+  m.plShield[seat] = 0;
+  m.plShieldWait[seat] = 0;
+  m.plShieldBreak[seat] = 0;
+  m.plBoost[seat] = 0;
+  m.plBoostCd[seat] = 0;
   m.plLastHit[seat] = -1;
   m.plEpoch[seat]++;
 }
@@ -43,6 +52,8 @@ export function resetShip(w: World, seat: number, at: Vec, aim: number, protecti
 function retire(w: World, seat: number): void {
   const { m } = w;
   clearBoss(w, seat);
+  dropShield(w, seat);
+  stopBursts(w, seat);
   m.plActive[seat] = 0;
   m.plAlive[seat] = 0;
   m.plRespawn[seat] = 0;
@@ -57,6 +68,9 @@ function tickTimers(w: World, seat: number): void {
   if (m.plAltCd[seat] > 0) m.plAltCd[seat]--;
   if (m.plUltCd[seat] > 0) m.plUltCd[seat]--;
   if (m.plBulwark[seat] > 0) m.plBulwark[seat]--;
+  if (m.plShieldBreak[seat] > 0) m.plShieldBreak[seat]--;
+  if (m.plShieldWait[seat] > 0) m.plShieldWait[seat]--;
+  if (m.plBoostCd[seat] > 0) m.plBoostCd[seat]--;
 }
 
 function respawnCountdown(w: World, seat: number): void {
@@ -79,13 +93,20 @@ function updateNormal(w: World, seat: number, buttons: number, moveX: number, mo
     return;
   }
   fireNormal(w, seat, buttons, moveX, moveY);
+  updateShield(w, seat, shieldBlocked(w, seat, buttons));
   if (m.plDash[seat] > 0) {
     m.plDash[seat]--;
     coast(w, seat);
   } else {
-    const bulwark = m.plBulwark[seat] > 0;
-    const top = bulwark ? Math.floor((stats.speed * JUGGERNAUT.bulwark.slowPct) / 100) : stats.speed;
-    driveRobot(w, seat, moveX, moveY, top, stats.accel, stats.brake);
+    // Held, not pressed (like the transform button): a pilot holding boost boosts again the moment the cooldown allows.
+    if ((buttons & Button.Boost) !== 0 && canBoost(w, seat)) startBoost(w, seat, moveX, moveY);
+    if (m.plBoost[seat] > 0) {
+      continueBoost(w, seat);
+    } else {
+      const bulwark = m.plBulwark[seat] > 0;
+      const top = bulwark ? Math.floor((stats.speed * JUGGERNAUT.bulwark.slowPct) / 100) : stats.speed;
+      driveRobot(w, seat, moveX, moveY, top, stats.accel, stats.brake);
+    }
   }
   keepInside(w, seat, stats.bodyR);
 }
@@ -102,6 +123,7 @@ function updateShip(w: World, seat: number, input: GameInput, present: boolean):
     respawnCountdown(w, seat);
     return;
   }
+  regenEnergy(w, seat);
   const fighting = m.world[W.Phase] === Phase.Battle;
   const buttons = fighting ? input.buttons : 0;
   const moveX = fighting ? input.moveX : 0;

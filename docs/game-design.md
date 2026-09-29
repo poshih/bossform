@@ -26,11 +26,16 @@ scheduled for removal (§13).
 3. **Boss form:** a large, heavy, **Gradius V style** boss with multiple attacks (§5.5).
 4. **Arena:** **large scrolling arena with a follow camera** (§4).
 5. **Lethality:** each robot can take at most **X damage per time window**, a per-robot balance value (§5.3).
+6. **Boost dodge [SET]:** `Shift` bursts the robot toward where the pilot steers; its first instant dodges through
+   bullets (§5.1).
+7. **Shield and energy [SET]:** a robot that is not firing has its **energy shield** up; attacks and the shield share
+   **one energy pool**, sized and refilled to keep the game fast (§5.4).
 
 ## 2. Vision and pillars
 
-*You are a mech in a huge arena full of slow, beautiful, lethal bullets. Read the patterns, thread the gaps, graze
-for energy, and when you are charged, become the boss: a colossus that the others must take apart piece by piece.*
+*You are a mech in a huge arena full of slow, beautiful, lethal bullets. Read the patterns, thread the gaps, fire or
+shield, boost through the gap, graze to fill your gauge, and when you are charged, become the boss: a colossus that the
+others must take apart piece by piece.*
 
 1. **Dodging is the game.** Every projectile is slow, visible and readable. Skill is positioning and pattern reading.
 2. **Duel-dance PvP.** Independent move and aim, graze for reward, transform. The environment only adds pressure.
@@ -77,6 +82,18 @@ Robots are responsive but not weightless: they brake twice as hard as they accel
 `FRAME_STATS`), so letting go stops a robot in 5 to 7 ticks with 4 or 5 units of slide, reversing at full speed takes 13 to
 19 ticks, and a turn never adds speed. Boss forms keep one slow limit for every change of velocity: that is their weight.
 
+**Boost [SET]** (`Shift`, pad `LB`; `FRAME_STATS[frame].boost`). A robot bursts toward the direction its pilot presses
+(pressing nothing, toward where it aims) at 2.5 to 3.5 times its top speed for 12 ticks, then drops back to its top speed.
+The **first 6 ticks are a dodge**: projectiles pass through the robot, and one that touches its core only grazes (so a
+well-timed boost through a bullet fills the boss gauge). Held, it boosts again whenever the cooldown allows. Boss forms
+never boost. A GALE phase dash cancels a running boost. Movement and aim stay independent: a robot fires while it boosts.
+
+| Robot | Boost speed | Reach (12 ticks) | Cooldown |
+|---|---|---|---|
+| GALE | 7.5 | 90 units | 36 ticks (0.6 s) |
+| VANGUARD | 6.5 | 78 units | 45 ticks (0.75 s) |
+| JUGGERNAUT | 5.5 | 66 units | 54 ticks (0.9 s) |
+
 ### 5.2 Projectiles: the normal-speed rule [SET]
 - **Every projectile, whoever fires it, travels at 1.2 to 3.2 units/tick** (72 to 192 units/s), enforced by one cap in
   the code that spawns projectiles. The one exception is a harmless inert fuse, which may stand still (the GALE dash leaves
@@ -88,6 +105,8 @@ Robots are responsive but not weightless: they brake twice as hard as they accel
 - **Weight through size, not speed:** heavy weapons fire larger, slower, harder-hitting projectiles.
 
 ### 5.3 Being hit: the damage window [SET]
+- In order, a hostile bullet meets: JUGGERNAUT's bulwark wedge; protection (spawn, phase dash, a boost's dodge ticks),
+  which lets it pass; the **shield** at the graze radius, if raised (§5.4), which stops it; then the core.
 - Tiny **core hurtbox** inside a larger body; bullets hurt only on touching the core.
 - **A robot can only take X damage per window.** Damage is applied normally until the running total inside the current
   window reaches the robot's cap; further hits in that window do nothing (the bullet is still consumed and flashes).
@@ -97,18 +116,44 @@ Robots are responsive but not weightless: they brake twice as hard as they accel
 
   | Frame | hp | cap per window (60 ticks) | Windows to die | Fastest possible death |
   |---|---|---|---|---|
-  | VANGUARD | 120 | 24 | 5 | 4.0 s |
-  | GALE | 88 | 16 | 6 | 5.0 s |
-  | JUGGERNAUT | 220 | 44 | 5 | 4.0 s |
+  | VANGUARD | 120 | 30 | 4 | 3.0 s |
+  | GALE | 88 | 20 | 5 | 4.0 s |
+  | JUGGERNAUT | 220 | 55 | 4 | 3.0 s |
   The window is anchored: it opens on the first hit and closes `windowTicks` later, so relentless fire kills in exactly
   `(windows - 1) x windowTicks` ticks.
 - In boss form the same rule applies to the **core**, which carries the robot's own hp and cap; armour and cannon parts
   have their own hit points and are not windowed (§5.5).
 
-### 5.4 Graze and energy [SET: gauge and transformation; PROPOSED: sources]
-Energy is a gauge of 1000 points. It fills from: grazing hostile bullets (near miss, once per bullet), damaging
-opponents, destroying neutral units (they drop orbs), and being damaged (comeback). At or above the transform threshold
-(500) the boss button transforms the frame. **In boss form, energy is fuel** (§5.5.3).
+### 5.4 Energy, the shield and the boss gauge [SET]
+Two resources, never to be confused:
+
+**Energy (the pool) [SET]** — 1000 per robot, one pool that powers **both the shield and every weapon** (`energy.ts`).
+- **Weapons pay per shot** (`cost` in `frames.ts`): each primary weapon drains a full pool in about **7 s of continuous
+  fire** (VANGUARD rifle 20 per volley, GALE darts 11, JUGGERNAUT mortar 80; VANGUARD's seekers 100). A weapon whose
+  cost the pool cannot pay stays silent.
+- **It refills fast**: 20 per tick (empty to full in 0.8 s), starting 0.6 s after the last spend (a shot or a stopped
+  bullet). That delay is longer than any weapon's refire, so a pilot who keeps firing never refills: bursts, then breathe.
+- **The shield is up whenever the pilot is not attacking.** Holding a weapon's button (fire; VANGUARD's seekers) drops it
+  on that very tick; it returns 12 ticks (0.2 s) after the button is released, if the pool holds at least 100. GALE's phase
+  dash is not an attack; JUGGERNAUT's bulwark takes the shield's place while raised (it covers the front only).
+- **The shield is a bubble at the graze radius** (18 / 16 / 22 units): whatever hostile reaches it is stopped and
+  smothered (a shell does not burst), and the pool pays **20 per point of damage**, so a full pool stops 50 damage. A pool
+  that cannot pay still stops that bullet, then the shield **shatters**: the pool is empty and the shield stays down for
+  2 s. Stopped bullets pay the shooter's boss gauge as a hit would; the shielded pilot earns nothing (no damage taken).
+- Boss forms and transforming robots have no shield and spend no energy (their attacks burn the boss gauge); the pool
+  keeps refilling for when the colossus folds back.
+- JUGGERNAUT's bulwark swallows bullets in its wedge for the same price per point of damage (it catches only what the
+  pool can pay for) and still pays the boss gauge per bullet.
+- Pace (bot matches, `tools/verify/balance.ts`): robots have their shield up about 10 to 15% of the time (bots attack
+  most of the time), boost 10 to 13 times a minute and first transform after about 35 to 37 s; pilots die 0.5 (elimination)
+  to 0.7 (deathmatch) times a minute, against about 1.0 in deathmatch before the shield existed. The window caps were
+  raised from 24 / 16 / 44 to the values above to win part of that back; fights are more about breaking a shield, then
+  punishing the pilot who has to attack without one.
+
+**Boss gauge [SET: gauge and transformation; PROPOSED: sources]** — 1000 points. It fills from: grazing hostile
+bullets (near miss, once per bullet, 4 points), damaging opponents or their shields (0.35 per point), destroying
+neutral units (they drop orbs), and being damaged (0.4 per point: comeback). At or above the transform threshold (500)
+the boss button transforms the frame. **In boss form, the gauge is fuel** (§5.5.3).
 
 ### 5.5 Boss form: "become the boss" [SET]
 
@@ -205,7 +250,7 @@ Every weapon obeys the normal-speed rule.
 |---|---|---|---|---|
 | **VANGUARD** | versatile hero | 3-bullet fan rifle | two slow seeker orbs | 2.1 |
 | **GALE** | fast striker | twin darts, high rate | phase dash with brief protection, leaves a delayed ring | 3.0 |
-| **JUGGERNAUT** | heavy bunker | big slow mortar shell that bursts into shrapnel | bulwark arc: absorbs bullets into energy | 1.5 |
+| **JUGGERNAUT** | heavy bunker | big slow mortar shell that bursts into shrapnel | bulwark arc: swallows bullets into its boss gauge (paid from energy) | 1.5 |
 
 ### 5.7 Neutral units [SET: exist; PROPOSED: behaviour]
 Hostile to everyone: pressure and an energy source, never a substitute for PvP.
@@ -220,7 +265,8 @@ Hostile to everyone: pressure and an energy source, never a substitute for PvP.
 | Move | `W A S D` | left stick |
 | Aim | mouse cursor (or arrows) | right stick |
 | Fire / **Salvo** | left click, `J` | `RT`, `RB`, `A` |
-| Alt / **Siege shot** | right click, `K` | `LT`, `LB`, `B` |
+| Alt / **Siege shot** | right click, `K` | `LT`, `B` |
+| **Boost** (robot) | `Shift` | `LB` |
 | Transform | `Space` | `Y` |
 | **Ultima** (boss form) | `E` | `X` |
 | Pause | `Esc`, `P` | `Start` |
@@ -306,7 +352,7 @@ partly done (audio and E2E and the cross-engine proof exist; balance still needs
 
 1. Design sign-off (this document).
 2. Engine v2: N-seat wire format, broadcast frames, multi-seat machines. Verified with the toy game first.
-3. Simulation v1: arena, ships, unified projectiles, damage window, graze, energy, boss form, neutrals, modes, bots.
+3. Simulation v1: arena, ships, unified projectiles, damage window, graze, boss gauge, boss form, neutrals, modes, bots; v4 adds energy, the shield and the boost.
 4. Vector renderer, camera, radar, robots and boss forms, neutral units, effects.
 5. Interface, lobby and relay for up to 8 players and bots.
 6. Audio retune, balance passes, browser E2E, cross-engine proof.
@@ -314,7 +360,7 @@ partly done (audio and E2E and the cross-engine proof exist; balance still needs
 ## 11. Risks
 
 - **Readability in a big arena:** mitigated by radar, edge arrows, ghosted allied bullets and a projectile budget.
-- **Encounters:** a large arena can be empty; neutral waves, energy orbs, the Warden objective and sudden death drive
+- **Encounters:** a large arena can be empty; neutral waves, gauge orbs, the Warden objective and sudden death drive
   contact. Arena size is a single tunable.
 - **Boss form balance:** a heavy colossus must be threatening but takeable: the parts system and wind-ups are the
   counterplay. Needs human playtests; v0 was only exercised by an autopilot.

@@ -5,7 +5,7 @@ import { fx } from '@metronome/engine';
  * to their definitions (frames.ts, forms.ts, neutrals.ts). All values are fixed-point (fx.lit / fx.fromInt) or
  * plain integers (ticks, hit points, counts). Presentation constants live in ../config.ts, never here.
  */
-export const SIM_VERSION = 3;
+export const SIM_VERSION = 4;
 export const TICK_RATE = 60;
 
 // ---- Match rules -----------------------------------------------------------------------------------
@@ -89,16 +89,34 @@ export const SEEK_RANGE = fx.fromInt(360);
 /** Ticks a hit flash lasts (ships, boss parts, neutral units). */
 export const FLASH_TICKS = 8;
 
-// ---- Energy gauge (fixed point of 1/100 point) -------------------------------------------------------
+// ---- Boss gauge: transforms the robot, then burns as the colossus's fuel (fixed point of 1/100 point) -----
 export const GAUGE_SCALE = 100;
 export const GAUGE_MAX = 1000 * GAUGE_SCALE;
 export const BOSS_MIN_GAUGE = 500 * GAUGE_SCALE;
-export const GAUGE_PER_GRAZE = 3 * GAUGE_SCALE;
-export const GAUGE_PER_DAMAGE_DEALT = 25;
+export const GAUGE_PER_GRAZE = 4 * GAUGE_SCALE;
+export const GAUGE_PER_DAMAGE_DEALT = 35;
 export const GAUGE_PER_DAMAGE_TAKEN = 40;
 export const GAUGE_PER_ABSORB = 3 * GAUGE_SCALE;
 /** Damage dealt to boss-form parts refuels the attacker at this percent of the normal rate. */
 export const BOSS_PART_GAIN_PCT = 200;
+
+// ---- Energy: one pool per robot powers its shield and its weapons (energy.ts) ------------------------
+export const ENERGY_MAX = 1000;
+/** Refill per tick once nothing was spent for ENERGY_REGEN_DELAY ticks: 1200 per second, empty to full in about 0.8 s. */
+export const ENERGY_REGEN_PER_TICK = 20;
+/**
+ * Ticks after a shot or an absorbed hit before energy refills. Longer than every weapon's refire interval, so a pilot who
+ * keeps firing never refills (frames.ts: a weapon's `cost` buys about 7 s of continuous fire from a full pool).
+ */
+export const ENERGY_REGEN_DELAY = 36;
+/** Ticks after the attack button is released before the shield comes back up. */
+export const SHIELD_RAISE_TICKS = 12;
+/** The shield comes up only with at least this much energy; once up it holds until the pool runs dry. */
+export const SHIELD_RAISE_ENERGY = 100;
+/** Energy the shield spends per point of damage it stops: a full pool stops 50 damage. */
+export const SHIELD_COST_PER_DAMAGE = 20;
+/** A shield that runs dry shatters and cannot come up again for this long. */
+export const SHIELD_BREAK_TICKS = 120;
 
 // ---- Boss form ----------------------------------------------------------------------------------------
 /** Damage percent taken by parts that just fired (recovery is the punish window). */
@@ -117,7 +135,7 @@ export const AttackPhase = { Idle: 0, Windup: 1, Release: 2, Recovery: 3 } as co
 /** The tell: no boss-attack projectile may exist before its wind-up has run at least this long. Indexed by Attack. */
 export const MIN_WINDUP_TICKS: readonly number[] = [0, 12, 36, 90];
 
-// ---- Energy orbs ----------------------------------------------------------------------------------------
+// ---- Gauge orbs ------------------------------------------------------------------------------------------
 export const ORB_VALUE = 8 * GAUGE_SCALE;
 export const ORB_LIFETIME = 15 * TICK_RATE;
 export const ORB_MAGNET_DELAY = 30;
