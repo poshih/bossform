@@ -22,6 +22,19 @@ const KIND_ARC = 2;
 const KIND_DISC = 3;
 const KIND_DASH = 4;
 const KIND_MARKER = 5;
+const PUNCH_DECAY_SECONDS = 0.3;
+const PUNCH_DECAY_RATE = 1 / PUNCH_DECAY_SECONDS;
+const BIG_EVENT_PUNCH_RADIUS = 360;
+const BIG_EVENT_PUNCH_RADIUS_SQ = BIG_EVENT_PUNCH_RADIUS * BIG_EVENT_PUNCH_RADIUS;
+const COLOSSUS_DEATH_SECONDARIES = 9;
+const ROBOT_DEATH_SHARDS = 26;
+const COLOSSUS_DEATH_SHARDS = 54;
+const GRAZE_COMBO_DECAY = 5.8;
+const GRAZE_STREAK_LENGTH = 34;
+const PART_DOWN_SHARDS_MIN = 6;
+const PART_DOWN_SHARDS_SPAN = 7;
+const STORM_CRACKLES = 5;
+const GRAZE_SEAT_CAP = 256;
 
 const VERTEX = /* glsl */ `
 attribute vec3 iCenter;
@@ -148,6 +161,7 @@ export class FxView implements StageView {
   private readonly phaseAttr: THREE.InstancedBufferAttribute;
   private readonly tellPosition = { x: 0, y: 0 };
   private readonly tellBurst = { x: 0, y: 0 };
+  private readonly grazeCombo = new Float32Array(GRAZE_SEAT_CAP);
 
   constructor() {
     this.geometry = new THREE.InstancedBufferGeometry();
@@ -184,66 +198,100 @@ export class FxView implements StageView {
 
   handleEvents(world: World, focusSeat: number): void {
     const focusTeam = focusSeat >= 0 && focusSeat < world.seats ? world.m.plTeam[focusSeat] : -999;
+    const focusX = focusSeat >= 0 && focusSeat < world.seats ? toWorld(world.m.plX[focusSeat]) : 0;
+    const focusY = focusSeat >= 0 && focusSeat < world.seats ? toWorld(world.m.plY[focusSeat]) : 0;
     for (let i = 0; i < world.events.count; i++) {
       const type = world.events.type[i];
       const x = toWorld(world.events.x[i]);
       const y = toWorld(world.events.y[i]);
       const a = world.events.a[i];
       const b = world.events.b[i];
-      const attackerTeam = b >= 0 && b < world.seats ? world.m.plTeam[b] : -1;
+      const c = world.events.c[i];
+      const attackerTeam = c >= 0 && c < world.seats ? world.m.plTeam[c] : -1;
       switch (type) {
         case Ev.Hit:
-          this.ring(x, y, 12, 0.28, this.hostileColor(attackerTeam, focusTeam), 0.9);
-          this.burst(x, y, 5, 10, 0.22, this.hostileColor(attackerTeam, focusTeam), 1.2);
+          this.disc(x, y, 9, 0.08, new THREE.Color(1.6, 1.7, 1.9), 0.26);
+          this.ring(x, y, 12, 0.22, this.hostileColor(attackerTeam, focusTeam), 0.9);
+          this.burst(x, y, 9, 18, 0.22, this.hostileColor(attackerTeam, focusTeam), 1.2);
           break;
         case Ev.Blocked:
-          this.arc(x, y, 18, 0.24, this.teamColor(world.m.plTeam[a]), 0.85);
+          this.arc(x, y, 20, 0.22, this.teamColor(world.m.plTeam[a]), 0.95);
+          this.ring(x, y, 25, 0.28, new THREE.Color(0.45, 1.1, 1.45), 0.42);
           break;
         case Ev.Graze:
-          this.arc(x, y, 9, 0.18, new THREE.Color(1.2, 1.2, 1.3), 0.75);
+          this.grazeCombo[a] = Math.min(1, this.grazeCombo[a] + 0.18);
+          this.graze(world, x, y, a);
           break;
         case Ev.PartHit:
-          this.burst(x, y, 7, 12, 0.28, this.teamColor(world.m.plTeam[a]), 1.2);
+          this.burst(x, y, 8, 20, 0.28, this.teamColor(world.m.plTeam[a]), 1.15);
+          this.burst(x, y, 4, 12, 0.36, new THREE.Color(1.2, 0.9, 0.52), 0.65);
           break;
         case Ev.PartDown:
-          this.ring(x, y, 28, 0.55, this.teamColor(world.m.plTeam[a]), 0.82);
-          this.burst(x, y, 12, 20, 0.58, this.teamColor(world.m.plTeam[a]), 1.0);
+          this.ring(x, y, 32, 0.48, this.teamColor(world.m.plTeam[a]), 0.82);
+          this.burst(x, y, PART_DOWN_SHARDS_MIN + (b % PART_DOWN_SHARDS_SPAN), 34, 0.62, this.teamColor(world.m.plTeam[a]), 1.0);
+          this.disc(x, y, 17, 0.12, new THREE.Color(1.35, 1.28, 1.1), 0.24);
           break;
         case Ev.Death:
-          this.ring(x, y, 42, 0.85, new THREE.Color(1.15, 1.15, 1.2), 0.85);
-          this.burst(x, y, 18, 34, 0.82, new THREE.Color(1.15, 1.15, 1.2), 1.35);
-          this.disc(x, y, 36, 0.18, new THREE.Color(1.5, 1.5, 1.6), 0.35);
-          this.screenFlash = Math.min(1, this.screenFlash + 0.28);
+          if (c === 1) this.colossusDeath(x, y, this.teamColor(world.m.plTeam[a]));
+          else this.robotDeath(x, y, this.teamColor(world.m.plTeam[a]));
+          if (a === focusSeat || (c === 1 && this.nearFocus(x, y, focusX, focusY))) this.screenFlash = Math.min(1, this.screenFlash + (c === 1 ? 0.92 : 0.55));
           break;
         case Ev.MorphStart:
+          this.spiral(x, y, 7, 42, this.teamColor(world.m.plTeam[a]), 0.58);
+          this.ring(x, y, 30, 0.6, this.teamColor(world.m.plTeam[a]), 0.72);
+          break;
         case Ev.MorphDone:
-          this.ring(x, y, type === Ev.MorphStart ? 30 : 38, 0.6, this.teamColor(world.m.plTeam[a]), 0.72);
-          this.disc(x, y, type === Ev.MorphStart ? 20 : 26, 0.18, this.teamColor(world.m.plTeam[a]), 0.24);
+          this.ring(x, y, 42, 0.55, this.teamColor(world.m.plTeam[a]), 0.76);
+          this.disc(x, y, 27, 0.14, this.teamColor(world.m.plTeam[a]), 0.26);
           break;
         case Ev.BossEnd:
-          this.ring(x, y, 56, 1.0, new THREE.Color(1.0, 0.8, 0.5), 0.58);
+          this.ring(x, y, 64, 0.9, new THREE.Color(1.0, 0.8, 0.5), 0.58);
+          this.spiral(x, y, 10, 54, new THREE.Color(1.0, 0.75, 0.48), 0.45);
           break;
         case Ev.Respawn:
           this.ring(x, y, 32, 0.55, new THREE.Color(0.4, 1.2, 1.5), 0.85);
           this.streak(x, y, Math.PI / 2, 6, 38, 0.34, new THREE.Color(0.6, 1.3, 1.8), 0.7);
+          this.ring(x, y, 18, 0.32, new THREE.Color(0.9, 1.5, 1.8), 0.7);
           break;
         case Ev.OrbPickup:
           this.disc(x, y, world.events.b[i] === 1 ? 18 : 12, 0.2, new THREE.Color(0.6, 1.4, 1.8), 0.26);
+          this.burst(x, y, 6, 20, 0.24, new THREE.Color(0.55, 1.35, 1.8), 0.68);
           break;
         case Ev.Absorb:
           this.ring(x, y, 22, 0.32, new THREE.Color(0.8, 1.3, 1.6), 0.7);
+          this.spiral(x, y, 6, 28, new THREE.Color(0.55, 1.25, 1.6), 0.5);
           break;
         case Ev.Burst:
           this.ring(x, y, 24, 0.32, new THREE.Color(1.1, 0.95, 0.8), 0.75);
+          this.burst(x, y, Math.min(24, Math.max(8, b)), 38, 0.32, new THREE.Color(1.2, 0.92, 0.58), 0.75);
           break;
         case Ev.Dash:
           this.streak(x, y, (world.events.b[i] / 65536) * Math.PI * 2, 10, 44, 0.32, this.teamColor(world.m.plTeam[a]), 0.55);
+          this.streak(x, y, (world.events.b[i] / 65536) * Math.PI * 2 + Math.PI, 4, 26, 0.22, this.teamColor(world.m.plTeam[a]), 0.35);
           break;
         case Ev.BulwarkUp:
           this.arc(x, y, 28, 0.45, this.teamColor(world.m.plTeam[a]), 0.95);
+          this.ring(x, y, 36, 0.38, new THREE.Color(0.45, 1.15, 1.45), 0.45);
+          break;
+        case Ev.NeutralKilled:
+          this.ring(x, y, 30, 0.46, this.neutralColor, 0.76);
+          this.burst(x, y, 14, 30, 0.44, this.neutralColor, 0.9);
+          break;
+        case Ev.NeutralHit:
+          this.burst(x, y, 5, 16, 0.22, this.neutralColor, 0.65);
+          break;
+        case Ev.StormHit:
+          this.crackle(x, y);
           break;
         case Ev.Release:
-          if (b === Attack.Siege || b === Attack.Ultima) this.screenFlash = Math.min(1, this.screenFlash + (b === Attack.Ultima ? 0.22 : 0.1));
+          if (b === Attack.Siege) {
+            this.ring(x, y, 35, 0.28, this.teamColor(world.m.plTeam[a]), 0.55);
+            this.burst(x, y, 10, 34, 0.24, this.teamColor(world.m.plTeam[a]), 0.68);
+          } else if (b === Attack.Ultima) {
+            this.ring(x, y, 86, 0.58, this.teamColor(world.m.plTeam[a]), 0.72);
+            this.spiral(x, y, 16, 70, this.teamColor(world.m.plTeam[a]), 0.62);
+            if (this.nearFocus(x, y, focusX, focusY)) this.screenFlash = Math.min(1, this.screenFlash + 0.75);
+          }
           break;
         default:
       }
@@ -252,7 +300,10 @@ export class FxView implements StageView {
 
   update(_previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
     const { world, dt: dtSeconds, time: timeSeconds } = frame;
-    this.screenFlash *= Math.exp(-6 * dtSeconds);
+    this.screenFlash *= Math.exp(-PUNCH_DECAY_RATE * dtSeconds);
+    for (let seat = 0; seat < current.seats && seat < GRAZE_SEAT_CAP; seat++) {
+      this.grazeCombo[seat] *= Math.exp(-GRAZE_COMBO_DECAY * dtSeconds);
+    }
     this.ultimaDim = 0;
     let count = 0;
     for (let i = 0; i < FX_CAPACITY; i++) {
@@ -407,6 +458,62 @@ export class FxView implements StageView {
       const angle = (Math.PI * 2 * i) / count + (i % 2) * 0.17;
       this.spawn(KIND_DASH, x, y, 2.1, Math.cos(angle) * speed, Math.sin(angle) * speed, angle, (i % 2 === 0 ? -1 : 1) * 1.5, 8, 2.1, life, color, alpha, 0);
     }
+  }
+
+  private graze(world: World, x: number, y: number, seat: number): void {
+    const combo = seat >= 0 && seat < GRAZE_SEAT_CAP ? this.grazeCombo[seat] : 0;
+    const shipX = seat >= 0 && seat < world.seats ? toWorld(world.m.plX[seat]) : x;
+    const shipY = seat >= 0 && seat < world.seats ? toWorld(world.m.plY[seat]) : y;
+    const angle = Math.atan2(shipY - y, shipX - x);
+    const sparkColor = new THREE.Color(1.35, 1.48, 1.75);
+    this.arc(x, y, 10 + combo * 9, 0.16, sparkColor, 0.72 + combo * 0.28);
+    this.streak((x + shipX) * 0.5, (y + shipY) * 0.5, angle, 2.4 + combo * 2.2, GRAZE_STREAK_LENGTH, 0.18, sparkColor, 0.58 + combo * 0.28);
+    this.burst(x, y, 4 + Math.floor(combo * 8), 28 + combo * 24, 0.16, sparkColor, 0.75);
+  }
+
+  private robotDeath(x: number, y: number, color: THREE.Color): void {
+    this.disc(x, y, 34, 0.12, new THREE.Color(1.55, 1.5, 1.35), 0.32);
+    this.ring(x, y, 48, 0.72, new THREE.Color(1.15, 1.15, 1.2), 0.82);
+    this.burst(x, y, ROBOT_DEATH_SHARDS, 42, 0.78, color, 1.05);
+    this.burst(x, y, 12, 25, 0.95, new THREE.Color(1.0, 0.56, 0.28), 0.62);
+  }
+
+  private colossusDeath(x: number, y: number, color: THREE.Color): void {
+    this.disc(x, y, 72, 0.14, new THREE.Color(1.65, 1.55, 1.35), 0.34);
+    this.ring(x, y, 150, 1.05, new THREE.Color(1.25, 1.2, 1.12), 0.9);
+    this.burst(x, y, COLOSSUS_DEATH_SHARDS, 72, 1.05, color, 1.08);
+    for (let i = 0; i < COLOSSUS_DEATH_SECONDARIES; i++) {
+      const angle = (Math.PI * 2 * i) / COLOSSUS_DEATH_SECONDARIES + (i % 2) * 0.19;
+      const radius = 18 + (i % 4) * 10;
+      const sx = x + Math.cos(angle) * radius;
+      const sy = y + Math.sin(angle) * radius;
+      this.disc(sx, sy, 16 + (i % 3) * 4, 0.16 + i * 0.018, new THREE.Color(1.35, 0.85, 0.48), 0.18);
+      this.burst(sx, sy, 8, 36 + i * 3, 0.42, color, 0.62);
+    }
+  }
+
+  private spiral(x: number, y: number, count: number, radius: number, color: THREE.Color, alpha: number): void {
+    for (let i = 0; i < count; i++) {
+      const t = i / Math.max(1, count - 1);
+      const angle = t * Math.PI * 4.6;
+      const px = x + Math.cos(angle) * radius * (1 - t);
+      const py = y + Math.sin(angle) * radius * (1 - t);
+      this.streak(px, py, angle + Math.PI * 0.5, 3.5, 18 + 18 * (1 - t), 0.34 + t * 0.18, color, alpha * (1 - t * 0.35));
+    }
+  }
+
+  private crackle(x: number, y: number): void {
+    const color = new THREE.Color(1.0, 0.42, 0.34);
+    for (let i = 0; i < STORM_CRACKLES; i++) {
+      const angle = (Math.PI * 2 * i) / STORM_CRACKLES + 0.31;
+      this.streak(x, y, angle, 2.2, 24, 0.18, color, 0.62);
+    }
+  }
+
+  private nearFocus(x: number, y: number, focusX: number, focusY: number): boolean {
+    const dx = x - focusX;
+    const dy = y - focusY;
+    return dx * dx + dy * dy <= BIG_EVENT_PUNCH_RADIUS_SQ;
   }
 
   private spawn(kind: number, x: number, y: number, z: number, vx: number, vy: number, angle: number, spin: number, sx: number, sy: number, life: number, color: THREE.Color, alpha: number, phase: number): void {

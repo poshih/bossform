@@ -22,6 +22,17 @@ export function easeOutCubic(t: number): number {
   return 1 - x * x * x;
 }
 
+export function easeOutExpo(t: number): number {
+  const x = clamp01(t);
+  return x >= 1 ? 1 : 1 - 2 ** (-10 * x);
+}
+
+export function easeOutBack(t: number): number {
+  const x = clamp01(t) - 1;
+  const overshoot = 1.70158;
+  return 1 + (overshoot + 1) * x * x * x + overshoot * x * x;
+}
+
 export function easeOutQuad(t: number): number {
   const x = clamp01(t);
   return 1 - (1 - x) * (1 - x);
