@@ -24,9 +24,20 @@ Sleek vector meshes: dark translucent faces with crisp glowing edges (`render/ve
 MSAA and a soft bloom (`render/pipeline.ts`). No pixel art, low-res targets, dithering, scanlines or bitmap fonts. Motion
 eases everywhere. Team colours are `TEAM_COLORS` in `config.ts` (neutral units use `NEUTRAL_COLORS`).
 
+Rendering rules:
+- **No NaN may leave a fragment shader.** The scene renders into a half-float target and the bloom blurs it: one NaN pixel
+  is smeared over the whole screen and the arena goes black. Clamp before `pow` (a negative base is NaN on real GPUs), never
+  `normalize` a vector that can be zero (a part scaled flat on one axis has a singular normal matrix), no `atan(0, 0)`.
+  SwiftShader (the default headless renderer) hides these: check on a GPU (`BOSSFORM_GL=gl-egl`, see AGENTS.md).
+- Canvas backing stores use `config.backingScale()`: the device pixel ratio capped by `MAX_DPR` and a 4K pixel budget.
+
 World: ground plane XY, +Z toward the camera, 1 world unit = 1 simulation unit, angles in radians counter-clockwise from +X
 (the simulation's binary angles convert with `fx.toRadians`). Fixed-point values convert with `fx.toFloat`
-(value / 65536). The camera is a perspective camera looking down at the ship it follows, tilted back a little.
+(value / 65536). The camera (`render/camera.ts`) is a perspective camera looking down at the ship it follows, tilted back a
+little. It follows the DRAWN (interpolated) ship with a critically damped spring: no aim lead, no roll, pulled back in boss
+form. Aiming and floor picks use its steady twin, never the drawn camera, so nothing the camera does can move the aim. Only a
+colossus destroyed near the camera shakes it (translation only, falloff in `view/shake.ts`); everything else reacts with
+light and motion, never with camera movement.
 
 ## Ownership and contracts
 
@@ -45,16 +56,23 @@ World: ground plane XY, +Z toward the camera, 1 world unit = 1 simulation unit, 
 class Stage {
   constructor(canvas: HTMLCanvasElement, world: World);
   focus(seat: number): void;                       // the ship the camera follows
-  resize(cssWidth: number, cssHeight: number, devicePixelRatio: number): void;
+  resize(cssWidth: number, cssHeight: number, pixelRatio: number): void;   // pixelRatio = config.backingScale(...)
   tick(world: World): void;                        // once after EVERY simulation tick: snapshot for interpolation
-  handleEvents(world: World): void;                // react to world.events (the caller clears the queue afterwards)
-  render(world: World, alpha: number, dtSeconds: number): void;   // alpha = 0..1 between the last two ticks
+  handleEvents(world: World): void;                // each view reacts to world.events (the caller clears the queue afterwards)
+  render(world: World, alpha: number, dtSeconds: number, beat: Beat): void;   // alpha = 0..1 between the last two ticks
+  seatPoint(seat: number, out: { x: number; y: number }): void;   // where a pilot is DRAWN this frame, world units
+  seatScreen(seat: number, out: { x: number; y: number }): void;  // the same, CSS pixels (overlays glued to the ship)
   project(x: number, y: number, out: { x: number; y: number }): void;  // world units -> CSS pixels on the canvas
-  ground(cssX: number, cssY: number, out: { x: number; y: number }): void;  // CSS pixels -> floor point, world units
-  aimFrom(seat: number, cssX: number, cssY: number): number;      // binary angle from that ship to a cursor position
+  ground(cssX: number, cssY: number, out: { x: number; y: number }): void;  // CSS pixels -> floor point, world units (steady camera)
+  aimFrom(seat: number, cssX: number, cssY: number): number;      // binary angle from that ship to a cursor position (steady camera)
   dispose(): void;
 }
 ```
+
+The Stage draws a list of views (`view/frame.ts`: `StageView` with `handleEvents`, `update(previous, current, frame)` and a
+`root` group), in order: arena floor, orbs, projectiles, neutral units, ships, effects. Each view owns its reactions to
+events; `FrameContext` carries the interpolation alpha, frame time, focus seat and team, and the music's `Beat`
+(`beat.ts`: the App's `BeatClock` follows `AudioEngine.musicPosition()`, so visuals pulse in time with the music).
 
 ### Hud (`ui/hud.ts`)
 
@@ -65,13 +83,19 @@ interface HudView {
   width: number; height: number;                   // overlay size in CSS pixels
   project(x: number, y: number, out: { x: number; y: number }): void;   // Stage.project: WORLD UNITS in (convert sim fixed point with fx.toFloat)
   ground(cssX: number, cssY: number, out: { x: number; y: number }): void;   // Stage.ground: the floor point under a pixel
+  seatScreen(seat: number, out: { x: number; y: number }): void;   // Stage.seatScreen: where a pilot is drawn this frame
+  beat: Beat;                                      // accents pulse in time with the music
   time: number;                                    // seconds
+  cursor: { x: number; y: number } | null;         // the reticle position, CSS pixels
 }
 class Hud {
   handleEvents(world: World): void;                // kill feed, banners, ultima warnings...
   draw(ctx: CanvasRenderingContext2D, view: HudView): void;   // the caller clears the canvas
 }
 ```
+
+Panels report the area they cover (their height depends on the rows drawn); off-screen pointers are placed along the screen
+edges clear of those areas, with their labels on the side facing the screen centre.
 
 ### Menus (`ui/menus.ts`, DOM overlay)
 

@@ -105,8 +105,10 @@ npm run verify            # headless (~2 min): architecture, numerics, engine lo
                           #   boss form (parts, core rule, every attack's tell, cost, cancellation), neutrals, elimination,
                           #   sudden death, deathmatch, full bot matches watched tick by tick, determinism, scale
 npm run verify:browsers   # builds, serves under a strict CSP, then real-browser E2E (menus, keyboard + mouse, gamepad,
-                          #   bots turning into colossi, a whole match to the results, layouts), the cross-engine proof,
-                          #   online Chromium vs WebKit (clean and lossy links) and the audio engine
+                          #   the camera, bots turning into colossi, a whole match to the results, layouts), the
+                          #   cross-engine proof, online Chromium vs WebKit (clean and lossy links) and the audio engine
+BOSSFORM_GL=gl-egl npm run verify:browsers   # the same, drawing the E2E scenarios on this machine's GPU (only a real
+                          #   GPU shows shader NaNs; SwiftShader, the default, never does)
 node tools/verify/balance.ts   # prints the numbers the design is tuned by (time to first transformation, boss-form life...)
 ```
 

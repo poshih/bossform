@@ -56,8 +56,10 @@ for energy, and when you are charged, become the boss: a colossus that the other
 - **Circular arena [PROPOSED]** (exact in fixed point, reads as sleek). Radius scales with players:
   `R(n) = 500 + 100 n` (2 players 700, 8 players 1300). The camera shows about 520 units of height, so the arena is
   several screens across and players must hunt each other.
-- **Follow camera [PROPOSED]:** smooth, leads slightly toward the aim direction, zooms out while the local player is in
-  boss form. Never shows fog: other players are visible whenever they are in view.
+- **Follow camera [SET]:** follows the ship as it is drawn (interpolated) with a critically damped spring: no roll, and
+  no lead toward the aim (the aim is read through the camera, so a camera that moves with the aim feeds back into the
+  aim). It pulls back while the local player is in boss form. It shakes only when a colossus is destroyed near it; every
+  other impact reads through light and motion. Never shows fog: other players are visible whenever they are in view.
 - **Awareness aids [PROPOSED]:** a **radar** (arena circle with team-coloured dots, neutral units, safe zone) and
   **edge arrows** pointing at off-screen players and the boss-form players everyone should know about.
 - **Rim and safe zone:** the rim is solid (ships stop, bullets die). In sudden death everything outside the shrinking
@@ -158,7 +160,7 @@ it can never be triggered by mistake while tapping to transform.
 | Attack | Reason: why a colossus attacks this way | Tell: what everyone sees and hears first | Answer: how it is beaten |
 |---|---|---|---|
 | **Salvo** | Its basic weapons are heavy cannon mounts that must swing round and cycle. They cannot aim precisely, so they fill space: a fan of large slow orbs that denies an area instead of hunting a target. | Pods swing toward the target (visible, slow slew), muzzles glow from dim to bright over 12 ticks, short rising tone. | Step through the gaps of the fan (slow orbs, known angles). Out-turn it: the pods lag. Shoot a pod to remove its share of the fan. |
-| **Siege shot** | A heavy shell needs a planted platform to absorb the recoil, so the machine stops, braces, and spends time charging one huge slow shell that bursts into shrapnel. | Body stops and lowers, main barrel extends and glows white-hot, a soft marker shows the burst point, low rising hum, small camera zoom-out; on release the body is thrown backwards. | It is rooted: this is the window to attack the charging pod or the core, or to leave the burst area (the shell needs seconds to arrive). Destroying the charging pod cancels the shot. |
+| **Siege shot** | A heavy shell needs a planted platform to absorb the recoil, so the machine stops, braces, and spends time charging one huge slow shell that bursts into shrapnel. | Body stops and lowers, main barrel extends and glows white-hot, a soft marker shows the burst point, low rising hum; on release the body is thrown backwards. | It is rooted: this is the window to attack the charging pod or the core, or to leave the burst area (the shell needs seconds to arrive). Destroying the charging pod cancels the shot. |
 | **Ultima** | It dumps the whole reactor through every weapon at once. That is why it needs most of the energy a transformation starts with, why the machine is locked in place while capacitors charge, and why it cannot do anything else. | Whole body lights up, plates unfold, energy lines flow from the core to each live pod (so you can see which pods will fire), the arena dims, a ring collapses inward, a loud tone rises for 1.5 s, and every player's HUD flags it. | Break pods during the charge (each dead pod loses its spiral and its share of the rings; with no ultima pod left it cannot start, and it stops the moment the last one falls), then leave the dense zone: the spirals and rings are slow and full of gaps. Killing the core ends it. |
 
 **Tell rules.** Each is enforced by code and checked by verification (§9), not left to art:
@@ -236,16 +238,29 @@ Hostile to everyone: pressure and an energy source, never a substitute for PvP.
 
 ### 7.2 Motion language
 Everything eases. Hull banking, engine ribbons, springy recoil on small guns and **heavy, slow recoil on boss cannons**,
-transformation as a morph (edges slide and unfold), camera lean and shake scaled to the weight of what just happened.
-Rendering is interpolated between simulation ticks so high-refresh displays are smooth.
+transformation as a morph (edges slide and unfold). Impacts are sold with light (flashes, a bloom punch) and motion,
+not with the camera, which stays steady (§4). Accents pulse on the music's beat. Rendering is interpolated between
+simulation ticks so high-refresh displays are smooth.
 
 ### 7.3 Interface
 Clean sans type with wide tracking and thin vector frames. The local player's panel (health, damage-window meter,
 energy, cooldowns) sits at the bottom; radar in a corner; opponents get compact tags; kill feed and timer on top.
 
-### 7.4 Audio [PROPOSED]
-Keep the procedural engine; retune to clean electronic. Small robots: light, crisp shots. Boss form: deep, slow,
-low-frequency weight on every wind-up, salvo and impact.
+### 7.4 Audio [SET]
+Procedural, no assets. Small robots: light, crisp shots. Boss form: deep, slow, low-frequency weight on every wind-up,
+salvo and impact.
+
+Music is arcade trance, synthesized in the browser (a worker renders 8-bar sections while the previous ones play):
+- **Title** 136 BPM, 16 bars, E minor.
+- **In-match** tracks share 145 BPM, so they switch on the bar grid without a tempo jump:
+  - **battle** is 64 bars in song form: intro, theme, build, drop, breakdown, build, final drop, and a bridge back to the
+    loop start;
+  - **boss form** (32 bars, a darker motif) plays while a colossus is near the local player;
+  - **sudden death** (32 bars, an alarm lead) plays once the storm closes in.
+- **Victory and defeat** stingers.
+
+Loops sit at about -15 LUFS integrated with true peaks under -1 dBTP. Battle's energy follows its form: the intro sits
+at least 3 LU under the drop, builds rise, and the breakdown drops the drums, not the music.
 
 ## 8. Technical design
 
