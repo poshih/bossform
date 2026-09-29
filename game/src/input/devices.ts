@@ -35,8 +35,12 @@ export interface Cursor {
 export class Devices {
   private readonly surface: HTMLElement;
   private readonly held = new Set<string>();
+  /** Keys pressed since the last sample: a tap shorter than one tick still counts for that tick. */
+  private readonly tapped = new Set<string>();
   private readonly actions = new Set<DeviceAction>();
   private mouseButtons = 0;
+  /** Mouse buttons pressed since the last sample (same idea as `tapped`). */
+  private mouseTapped = 0;
   private cursor_: { x: number; y: number } | null = null;
   private aimSource: AimSource = 'mouse';
   private lastAim = fx.ANGLE_QUARTER;
@@ -61,10 +65,14 @@ export class Devices {
     this.cleanup.push(() => target.removeEventListener(type, handler));
   }
 
-  /** While a match is on screen the game keys are captured (no page scrolling); menus and text fields get their keys back. */
+  /**
+   * While a match is being played the game keys are captured (no page scrolling) and presses count as game input; menus and
+   * text fields get their keys back. Changing it forgets every held and tapped button, so a click on a menu can never become
+   * a shot when play resumes.
+   */
   setCapturing(capturing: boolean): void {
     this.capturing = capturing;
-    if (!capturing) this.releaseAll();
+    this.releaseAll();
   }
 
   /** Pointer position in CSS pixels relative to the surface, or null before the mouse has ever moved over it. */
@@ -79,6 +87,7 @@ export class Devices {
     if (!this.capturing || !GAME_KEYS.has(e.code)) return;
     e.preventDefault();
     this.held.add(e.code);
+    this.tapped.add(e.code);
     if ((KEYS.aimLeft as readonly string[]).includes(e.code) || (KEYS.aimRight as readonly string[]).includes(e.code) || (KEYS.aimUp as readonly string[]).includes(e.code) || (KEYS.aimDown as readonly string[]).includes(e.code)) {
       this.aimSource = 'keys';
     }
@@ -87,13 +96,17 @@ export class Devices {
   private onPointer(e: PointerEvent): void {
     const box = this.surface.getBoundingClientRect();
     this.cursor_ = { x: e.clientX - box.left, y: e.clientY - box.top };
+    if (!this.capturing) return;
+    this.mouseTapped |= e.buttons & ~this.mouseButtons;
     this.mouseButtons = e.buttons;
     if (e.type === 'pointermove' || e.type === 'pointerdown') this.aimSource = 'mouse';
   }
 
   releaseAll(): void {
     this.held.clear();
+    this.tapped.clear();
     this.mouseButtons = 0;
+    this.mouseTapped = 0;
   }
 
   /** Once per rendered frame: pad-only actions (Start) and everything queued by the keyboard since the last call. */
@@ -112,8 +125,9 @@ export class Devices {
     return Array.from(navigator.getGamepads()).find((p): p is Gamepad => p !== null && p.connected) ?? null;
   }
 
+  /** Held now, or tapped since the last sample. */
   private key(codes: readonly string[]): boolean {
-    return codes.some((c) => this.held.has(c));
+    return codes.some((c) => this.held.has(c) || this.tapped.has(c));
   }
 
   /**
@@ -141,8 +155,9 @@ export class Devices {
     const scale = length > 1 ? 1 / length : 1;
 
     let buttons = 0;
-    if (this.key(KEYS.fire) || (this.mouseButtons & MOUSE_BUTTON.left) !== 0 || button(PAD.a) || button(PAD.rt) || button(PAD.rb)) buttons |= Button.Fire;
-    if (this.key(KEYS.alt) || (this.mouseButtons & MOUSE_BUTTON.right) !== 0 || button(PAD.b) || button(PAD.lt) || button(PAD.lb)) buttons |= Button.Alt;
+    const mouse = this.mouseButtons | this.mouseTapped;
+    if (this.key(KEYS.fire) || (mouse & MOUSE_BUTTON.left) !== 0 || button(PAD.a) || button(PAD.rt) || button(PAD.rb)) buttons |= Button.Fire;
+    if (this.key(KEYS.alt) || (mouse & MOUSE_BUTTON.right) !== 0 || button(PAD.b) || button(PAD.lt) || button(PAD.lb)) buttons |= Button.Alt;
     if (this.key(KEYS.transform) || button(PAD.y)) buttons |= Button.Boss;
     if (this.key(KEYS.ultima) || button(PAD.x)) buttons |= Button.Ultima;
 
@@ -160,6 +175,8 @@ export class Devices {
       this.lastAim = aimFromCursor(this.cursor_.x, this.cursor_.y);
     }
 
+    this.tapped.clear();
+    this.mouseTapped = 0;
     return { moveX: Math.round(moveX * scale * MOVE_MAX), moveY: Math.round(moveY * scale * MOVE_MAX), aim: this.lastAim, buttons };
   }
 

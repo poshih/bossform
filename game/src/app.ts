@@ -10,7 +10,7 @@ import type { OnlineStart } from './net/lobby.ts';
 import { MatchRun } from './run.ts';
 import { freeForAllTeams, FRAME_NAMES } from './setup.ts';
 import type { MatchSetup } from './setup.ts';
-import { Attack, AttackPhase, FORMS, FRAME_COUNT, isFighting, Mode, NO_SEAT, Phase, TICK_RATE, W } from './sim/index.ts';
+import { Attack, AttackPhase, Ev, FORMS, FRAME_COUNT, isFighting, Mode, NEUTRAL_INPUT, NO_SEAT, Phase, TICK_RATE, W } from './sim/index.ts';
 import type { World } from './sim/index.ts';
 import { Hud } from './ui/hud.ts';
 import { Menus, MenuScreen } from './ui/menus.ts';
@@ -140,7 +140,7 @@ export class App {
 
   private joinLobby(room: string): void {
     this.lobby?.leave();
-    this.screen = 'lobby';
+    this.setScreen('lobby');
     this.menus.show(MenuScreen.Lobby);
     this.lobby = new RelayLobby(
       { relayUrl: this.options.relayUrl, room, name: this.options.playerName, frame: 0 },
@@ -151,14 +151,14 @@ export class App {
   private pause(): void {
     if (this.screen !== 'play' || this.run === null) return;
     if (this.run.canPause) this.run.setPaused(true);
-    this.screen = 'paused';
+    this.setScreen('paused');
     this.menus.show(MenuScreen.Pause);
   }
 
   private resume(): void {
     if (this.screen !== 'paused' || this.run === null) return;
     if (this.run.canPause) this.run.setPaused(false);
-    this.screen = 'play';
+    this.setScreen('play');
     this.menus.hide();
   }
 
@@ -192,7 +192,8 @@ export class App {
     const run = new MatchRun(
       setup,
       {
-        sampleHuman: () => this.devices.sample((x, y) => this.stage!.aimFrom(this.run!.localSeat, x, y)),
+        // Only a pilot who is playing flies: in the pause menu (which an online match does not stop) the ship idles.
+        sampleHuman: () => (this.screen === 'play' ? this.devices.sample((x, y) => this.stage!.aimFrom(this.run!.localSeat, x, y)) : NEUTRAL_INPUT),
         onTick: (world) => this.stage?.tick(world),
       },
       online === undefined ? undefined : { transport: online.transport, self: online.self, seatOwners: online.seatOwners, inputDelay: online.inputDelay },
@@ -201,12 +202,18 @@ export class App {
     this.stage = new Stage(this.parts.stageCanvas, run.world);
     this.stage.resize(this.cssWidth, this.cssHeight, this.pixelRatio);
     this.focusSeat = Math.max(0, run.localSeat);
+    this.shotsBySeat.length = 0;
     this.stagedFocus = -1;
     this.spectateSeconds = 0;
     this.resultsAtTick = -1;
+    this.setScreen(screen);
+    this.audio.stopMusic();
+  }
+
+  /** The one place the screen changes: game input is captured exactly while a match is being played. */
+  private setScreen(screen: Screen): void {
     this.screen = screen;
     this.devices.setCapturing(screen === 'play');
-    this.audio.stopMusic();
   }
 
   private leaveRun(): void {
@@ -277,6 +284,7 @@ export class App {
       this.hud.handleEvents(world);
       this.director.handleEvents(world, this.focusSeat);
     }
+    this.countShots(world);
     world.events.clear();
     this.freezeIfRequested(run, world);
     this.beatClock.advance(dtSeconds, this.audio.musicPosition());
@@ -339,8 +347,7 @@ export class App {
     const tick = world.m.world[W.Tick];
     if (this.resultsAtTick < 0) this.resultsAtTick = tick + RESULTS_DELAY_TICKS;
     if (tick < this.resultsAtTick) return;
-    this.screen = 'results';
-    this.devices.setCapturing(false);
+    this.setScreen('results');
     this.menus.showResults(world, run.setup.pilots.map((pilot) => pilot.name));
   }
 
@@ -350,6 +357,18 @@ export class App {
   setViewVisible(index: number, visible: boolean): void {
     if (this.stage === null) throw new Error('no match is running');
     this.stage.setViewVisible(index, visible);
+  }
+
+  /** Tools only: weapon firings per seat in the current match (Ev.Fire), for input checks. */
+  private readonly shotsBySeat: number[] = [];
+
+  private countShots(world: World): void {
+    const events = world.events;
+    for (let i = 0; i < events.count; i++) {
+      if (events.type[i] !== Ev.Fire) continue;
+      const seat = events.a[i];
+      this.shotsBySeat[seat] = (this.shotsBySeat[seat] ?? 0) + 1;
+    }
   }
 
   private focusScreen(stage: Stage): { x: number; y: number; width: number; height: number } {
@@ -396,6 +415,7 @@ export class App {
         y: m.plY[seat] / 65536,
         kills: m.plKills[seat],
         deaths: m.plDeaths[seat],
+        fired: this.shotsBySeat[seat] ?? 0,
       })),
       stats: { ...run.session.stats },
       camera: this.stage?.cameraState ?? null,

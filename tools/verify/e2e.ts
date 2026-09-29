@@ -18,6 +18,9 @@ const HEIGHT = Number(h);
 const outDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), `shots/e2e-${scenario}-${WIDTH}x${HEIGHT}`);
 fs.mkdirSync(outDir, { recursive: true });
 
+/** Input checks hold a key or button for this many simulated ticks, and wait this long for a tap to register. */
+const HOLD_TICKS = 45;
+const TAP_SETTLE_TICKS = 10;
 const PHASE_BATTLE = 1;
 const PHASE_OVER = 3;
 const FORM_BOSS = 2;
@@ -46,6 +49,7 @@ interface SeatInfo {
   y: number;
   kills: number;
   deaths: number;
+  fired: number;
 }
 
 interface Snapshot {
@@ -100,6 +104,12 @@ const open = async (query: string): Promise<void> => {
   await page.waitForFunction('window.__bossformStarted === true', null, { timeout: 60000 });
 };
 const click = (selector: string) => page.locator(selector).first().click();
+/** Waits until the simulation has advanced `ticks` ticks (input checks measure game time: a software renderer can be slow). */
+const ticksPass = async (ticks: number, timeoutMs = 60000): Promise<void> => {
+  const start = (await snapshot()).tick ?? 0;
+  const done = await until((s) => (s.tick ?? 0) >= start + ticks, timeoutMs);
+  if (done === null) throw new Error(`the simulation did not advance ${ticks} ticks in ${timeoutMs} ms`);
+};
 const visible = (selector: string) => page.locator(selector).first().isVisible();
 
 /**
@@ -178,12 +188,12 @@ async function playScenario(): Promise<void> {
   await until((s) => s.phase === PHASE_BATTLE, 15000);
   const before = (await snapshot()).seats![0];
   await page.keyboard.down('KeyD');
-  await page.waitForTimeout(900);
+  await ticksPass(HOLD_TICKS);
   await page.keyboard.up('KeyD');
   const afterD = (await snapshot()).seats![0];
   check('holding D moves the ship to the right', afterD.x > before.x + 20, `${before.x.toFixed(0)} -> ${afterD.x.toFixed(0)}`);
   await page.keyboard.down('KeyW');
-  await page.waitForTimeout(700);
+  await ticksPass(HOLD_TICKS);
   await page.keyboard.up('KeyW');
   const afterW = (await snapshot()).seats![0];
   check('holding W moves the ship up', afterW.y > afterD.y + 15, `${afterD.y.toFixed(0)} -> ${afterW.y.toFixed(0)}`);
@@ -193,12 +203,32 @@ async function playScenario(): Promise<void> {
   await page.mouse.move(cx + 200, cy - 80);
   const idle = (await snapshot()).projectiles ?? 0;
   await page.mouse.down();
-  await page.waitForTimeout(900);
+  await ticksPass(HOLD_TICKS);
   const firing = await snapshot();
   await page.mouse.up();
   check('holding the left mouse button fires (projectiles appear)', (firing.projectiles ?? 0) > idle + 2, `${idle} -> ${firing.projectiles}`);
   check('the scene and the HUD are drawn', (await litShare(WHOLE_SCREEN)) > 0.05 && (await litShare(HUD_TOP_LEFT)) > 0.01);
   await shot('play');
+
+  section('a tap shorter than one tick still fires; a click in a menu never does');
+  await page.waitForTimeout(600);
+  const beforeTap = (await snapshot()).seats![0].fired;
+  // keydown and keyup in the same task: no simulation tick can run between them.
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyJ', key: 'j' }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyJ', key: 'j' }));
+  });
+  await ticksPass(TAP_SETTLE_TICKS);
+  const afterTap = (await snapshot()).seats![0].fired;
+  check('an instant tap of the fire key fires once', afterTap === beforeTap + 1, `${beforeTap} -> ${afterTap}`);
+  await page.keyboard.press('Escape');
+  await until((s) => s.screen === 'paused', 3000);
+  const beforeMenu = (await snapshot()).seats![0].fired;
+  await click('[data-pause-action="resume"]');
+  await until((s) => s.screen === 'play', 3000);
+  await ticksPass(TAP_SETTLE_TICKS);
+  const afterMenu = (await snapshot()).seats![0].fired;
+  check('clicking Resume in the pause menu does not fire when play resumes', afterMenu === beforeMenu, `${beforeMenu} -> ${afterMenu}`);
 
   section('the pilot can be hurt, dies, and the camera goes on');
   const dead = await until((s) => s.seats![0].alive === false, 90000, 500);
@@ -243,12 +273,12 @@ async function padScenario(): Promise<void> {
   await until((s) => s.phase === PHASE_BATTLE, 15000);
   const before = (await snapshot()).seats![0];
   await page.evaluate(() => { (window as unknown as { __pad: { axes: number[] } }).__pad.axes = [1, 0, 0, 0]; });
-  await page.waitForTimeout(800);
+  await ticksPass(HOLD_TICKS);
   const moved = (await snapshot()).seats![0];
   check('the left stick moves the ship', moved.x > before.x + 20, `${before.x.toFixed(0)} -> ${moved.x.toFixed(0)}`);
   const idle = (await snapshot()).projectiles ?? 0;
   await page.evaluate(() => { const p = (window as unknown as { __pad: { axes: number[]; buttons: Record<number, boolean> } }).__pad; p.axes = [0, 0, 0, -1]; p.buttons[7] = true; });
-  await page.waitForTimeout(800);
+  await ticksPass(HOLD_TICKS);
   check('the right trigger fires and the right stick aims (projectiles appear)', ((await snapshot()).projectiles ?? 0) > idle + 2);
   await page.evaluate(() => { const p = (window as unknown as { __pad: { axes: number[]; buttons: Record<number, boolean> } }).__pad; p.axes = [0, 0, 0, 0]; p.buttons[7] = false; p.buttons[9] = true; });
   const paused = await until((s) => s.screen === 'paused', 3000);
