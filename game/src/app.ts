@@ -279,7 +279,7 @@ export class App {
     }
     world.events.clear();
     this.freezeIfRequested(run, world);
-    this.beatClock.advance(dtSeconds, null);
+    this.beatClock.advance(dtSeconds, this.audio.musicPosition());
     const beat = this.beatClock.state;
     stage.render(world, result.alpha, dtSeconds, beat);
     if (!attract) this.director.update(world, this.focusSeat, dtSeconds);
