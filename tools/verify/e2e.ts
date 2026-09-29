@@ -12,6 +12,10 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { check, finish, info, section } from './lib.ts';
 import { FAR_SHAKE_DISTANCE, NEAR_SHAKE_DISTANCE } from '../../game/src/view/shake.ts';
+import { fx } from '@metronome/engine';
+import { FOLLOW_SMOOTH_SECONDS, NORMAL_VIEW_HEIGHT } from '../../game/src/render/camera.ts';
+import { GALE } from '../../game/src/sim/frames.ts';
+import { TICK_RATE } from '../../game/src/sim/constants.ts';
 
 const [scenario = 'menus', w = '1280', h = '720', base = 'http://127.0.0.1:4427/'] = process.argv.slice(2);
 const WIDTH = Number(w);
@@ -25,16 +29,21 @@ const TAP_SETTLE_TICKS = 10;
 const PHASE_BATTLE = 1;
 const PHASE_OVER = 3;
 const FORM_BOSS = 2;
-/** Camera checks (see render/camera.ts, view/shake.ts): a shake lasts under a second; after a focus change the camera needs about a second to settle; a settled pilot is drawn within this many pixels of the centre (720p: 1.4 px per unit, lag at full speed under ~20 units). */
+/** Camera checks (see render/camera.ts, view/shake.ts): a shake lasts under a second; after a focus change the camera needs about a second to settle. */
 const CAMERA_SHAKE_MS = 1000;
 /** Deaths closer than this shake at half strength or more: long enough to be seen even at a slow headless frame rate. */
 const CAMERA_CLEAR_SHAKE_UNITS = NEAR_SHAKE_DISTANCE + (FAR_SHAKE_DISTANCE - NEAR_SHAKE_DISTANCE) / 2;
 const CAMERA_EVENT_SLACK_MS = 100;
 const CAMERA_SETTLE_MS = 1000;
+const CAMERA_LAG_MARGIN = 1.1;
 /** Simulated ticks to watch: long enough for pilots to fight, and (at timescale 8) for colossi to be built and destroyed. */
 const CAMERA_FOLLOW_TICKS = 900;
 const CAMERA_FIGHT_TICKS = 16000;
-const CAMERA_CENTRE_PX = 45;
+/**
+ * A settled pilot is drawn within this many pixels of the centre: the follow is a critically damped spring, so it trails
+ * a pilot moving at speed v by v x its smoothing time; the fastest movement is Gale's dash. (720p: about 54 px.)
+ */
+const CAMERA_CENTRE_PX = fx.toFloat(GALE.dash.speed) * TICK_RATE * FOLLOW_SMOOTH_SECONDS * (HEIGHT / NORMAL_VIEW_HEIGHT) * CAMERA_LAG_MARGIN;
 /** Frames slower than this (a software renderer) are not used for the centring check. */
 const CAMERA_SMOOTH_FRAME_MS = 50;
 const ANGLE_FULL = 65536;
@@ -345,6 +354,8 @@ type CameraTraceRow = {
   screenOffset: number;
   colossi: Array<{ seat: number; x: number; y: number }>;
   alive: boolean[];
+  /** Every colossus destroyed so far in the match (from the simulation's events), as its distance from the followed pilot. */
+  colossusDeathDistances: number[];
 };
 
 /** Samples the running app once per animation frame, in the page, for `seconds` of real time or until `stop` holds. */
@@ -354,12 +365,13 @@ async function traceCamera(simTicks: number, stopAfterNearColossusDeath: boolean
       tick: number;
       focusSeat: number;
       camera: { shake: number };
+      colossusDeathDistances: number[];
       focusScreen: { x: number; y: number; width: number; height: number };
       seats: Array<{ x: number; y: number; hp: number; form: number; alive: boolean }>;
     };
     const app = (window as unknown as { __bossform: { debug(): Debug } }).__bossform;
     const rows: CameraTraceRowInPage[] = [];
-    type CameraTraceRowInPage = { t: number; focus: number; shake: number; hp: number; focusX: number; focusY: number; screenOffset: number; colossi: Array<{ seat: number; x: number; y: number }>; alive: boolean[] };
+    type CameraTraceRowInPage = { t: number; focus: number; shake: number; hp: number; focusX: number; focusY: number; screenOffset: number; colossi: Array<{ seat: number; x: number; y: number }>; alive: boolean[]; colossusDeathDistances: number[] };
     const firstTick = app.debug().tick;
     let nearDeathAt = -1;
     while (app.debug().tick - firstTick < tickBudget) {
@@ -376,12 +388,10 @@ async function traceCamera(simTicks: number, stopAfterNearColossusDeath: boolean
         screenOffset: Math.hypot(d.focusScreen.x - d.focusScreen.width / 2, d.focusScreen.y - d.focusScreen.height / 2),
         colossi: d.seats.flatMap((seat, index) => (seat.form === 2 && seat.alive ? [{ seat: index, x: seat.x, y: seat.y }] : [])),
         alive: d.seats.map((seat) => seat.alive),
+        colossusDeathDistances: d.colossusDeathDistances,
       };
       const before = rows[rows.length - 1];
-      if (stopEarly && before !== undefined && nearDeathAt < 0) {
-        const died = before.colossi.find((c) => !row.alive[c.seat] && Math.hypot(c.x - before.focusX, c.y - before.focusY) < nearDistance);
-        if (died !== undefined) nearDeathAt = row.t;
-      }
+      if (stopEarly && before !== undefined && nearDeathAt < 0 && row.colossusDeathDistances.slice(before.colossusDeathDistances.length).some((distance) => distance < nearDistance)) nearDeathAt = row.t;
       rows.push(row);
       if (nearDeathAt >= 0 && row.t - nearDeathAt > shakeMs) break;
     }
@@ -425,23 +435,22 @@ async function cameraScenario(): Promise<void> {
   const worst = Math.max(...settled.map((row) => row.screenOffset));
   const frameMs = (follow[follow.length - 1].t - follow[0].t) / (follow.length - 1);
   if (settled.length === 0) info(`centring not measurable: this renderer draws a frame every ${frameMs.toFixed(0)} ms (needs <= ${CAMERA_SMOOTH_FRAME_MS} ms)`);
-  else check('the followed pilot is drawn near the centre of the screen', worst < CAMERA_CENTRE_PX, `largest offset ${worst.toFixed(1)} px over ${settled.length} settled frames`);
+  else check('the followed pilot is drawn near the centre of the screen', worst < CAMERA_CENTRE_PX, `largest offset ${worst.toFixed(1)} px (bound ${CAMERA_CENTRE_PX.toFixed(0)} px: the follow lag at dash speed) over ${settled.length} settled frames`);
 
   await open('index.html?start=1,7,0,42&timescale=8&autoplay=1');
   await until((s) => s.phase === PHASE_BATTLE, 15000);
   const fight = await traceCamera(CAMERA_FIGHT_TICKS, true);
-  const deaths: Array<{ t: number; near: boolean }> = [];
-  for (let i = 1; i < fight.length; i++) {
-    for (const c of fight[i - 1].colossi) {
-      if (fight[i].alive[c.seat]) continue;
-      deaths.push({ t: fight[i].t, near: Math.hypot(c.x - fight[i - 1].focusX, c.y - fight[i - 1].focusY) < CAMERA_CLEAR_SHAKE_UNITS });
-    }
-  }
-  const unexplained = fight.filter((row) => row.shake > 0 && !deaths.some((d) => row.t >= d.t - CAMERA_EVENT_SLACK_MS && row.t - d.t < CAMERA_SHAKE_MS)).length;
-  const near = deaths.filter((d) => d.near);
-  const shookAfterNear = near.some((d) => fight.some((row) => row.shake > 0 && row.t >= d.t - CAMERA_EVENT_SLACK_MS && row.t - d.t < CAMERA_SHAKE_MS));
-  check('a colossus destroyed within reach of the followed pilot shakes the camera', near.length > 0 && shookAfterNear, `${deaths.length} colossus deaths, ${near.length} within ${CAMERA_CLEAR_SHAKE_UNITS} units of the camera`);
-  check('nothing else shakes it', unexplained === 0, `${unexplained} shaken frames without a colossus death`);
+  // Colossus deaths from the simulation's events, with their distance from the followed pilot at that moment (sampled
+  // positions are useless here: a frame is drawn every ~2 s of simulated time on SwiftShader at timescale 8).
+  const deaths = fight.flatMap((row, i) => (i === 0 ? [] : row.colossusDeathDistances.slice(fight[i - 1].colossusDeathDistances.length).map((distance) => ({ t: row.t, distance }))));
+  // A shake decays in presentation time, and a slow renderer caps each frame's step, so its length in wall time says
+  // nothing: every shake must BEGIN at a colossus death.
+  const shakeStarts = fight.filter((row, i) => row.shake > 0 && (i === 0 || fight[i - 1].shake === 0)).map((row) => row.t);
+  const startsAt = (t: number) => shakeStarts.some((start) => Math.abs(start - t) <= CAMERA_EVENT_SLACK_MS);
+  const unexplained = shakeStarts.filter((start) => !deaths.some((d) => Math.abs(start - d.t) <= CAMERA_EVENT_SLACK_MS)).length;
+  const near = deaths.filter((d) => d.distance < CAMERA_CLEAR_SHAKE_UNITS);
+  check('a colossus destroyed within reach of the followed pilot shakes the camera', near.length > 0 && near.every((d) => startsAt(d.t)), `${deaths.length} colossus deaths, ${near.length} within ${CAMERA_CLEAR_SHAKE_UNITS} units of the camera`);
+  check('nothing else shakes it', unexplained === 0, `${unexplained} of ${shakeStarts.length} shakes began without a colossus death`);
   await shot('camera');
 }
 

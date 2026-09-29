@@ -1,4 +1,4 @@
-import { hashToString } from '@metronome/engine';
+import { fx, hashToString } from '@metronome/engine';
 import { AudioEngine } from './audio/audio.ts';
 import { AudioDirector } from './audio/director.ts';
 import { BeatClock } from './beat.ts';
@@ -203,6 +203,7 @@ export class App {
     this.stage.resize(this.cssWidth, this.cssHeight, this.pixelRatio);
     this.focusSeat = Math.max(0, run.localSeat);
     this.shotsBySeat.length = 0;
+    this.colossusDeathDistances.length = 0;
     this.stagedFocus = -1;
     this.spectateSeconds = 0;
     this.resultsAtTick = -1;
@@ -284,7 +285,7 @@ export class App {
       this.hud.handleEvents(world);
       this.director.handleEvents(world, this.focusSeat);
     }
-    this.countShots(world);
+    this.tallyEvents(world);
     world.events.clear();
     this.freezeIfRequested(run, world);
     this.beatClock.advance(dtSeconds, this.audio.musicPosition());
@@ -361,13 +362,23 @@ export class App {
 
   /** Tools only: weapon firings per seat in the current match (Ev.Fire), for input checks. */
   private readonly shotsBySeat: number[] = [];
+  /**
+   * Tools only: every colossus destroyed in the current match (Ev.Death with c = 1), as its distance in world units from
+   * the followed pilot at that moment: the ground truth for camera checks.
+   */
+  private readonly colossusDeathDistances: number[] = [];
 
-  private countShots(world: World): void {
+  /** Tools only: tallies of this tick's events, before the queue is cleared. */
+  private tallyEvents(world: World): void {
     const events = world.events;
     for (let i = 0; i < events.count; i++) {
-      if (events.type[i] !== Ev.Fire) continue;
-      const seat = events.a[i];
-      this.shotsBySeat[seat] = (this.shotsBySeat[seat] ?? 0) + 1;
+      if (events.type[i] === Ev.Fire) {
+        const seat = events.a[i];
+        this.shotsBySeat[seat] = (this.shotsBySeat[seat] ?? 0) + 1;
+      } else if (events.type[i] === Ev.Death && events.c[i] === 1) {
+        const { m } = world;
+        this.colossusDeathDistances.push(Math.hypot(fx.toFloat(events.x[i] - m.plX[this.focusSeat]), fx.toFloat(events.y[i] - m.plY[this.focusSeat])));
+      }
     }
   }
 
@@ -396,6 +407,7 @@ export class App {
       focusSeat: this.focusSeat,
       hash: hashToString(run.sim.memory.hash()),
       dropped: m.world[W.Dropped],
+      colossusDeathDistances: [...this.colossusDeathDistances],
       projectiles: world.cap.projectiles - m.world[W.ProjFree],
       neutrals: world.cap.neutrals - m.world[W.NeutralFree],
       orbs: world.cap.orbs - m.world[W.OrbFree],
@@ -411,8 +423,8 @@ export class App {
         hp: m.plHp[seat],
         gauge: m.plGauge[seat],
         aim: m.plAim[seat],
-        x: m.plX[seat] / 65536,
-        y: m.plY[seat] / 65536,
+        x: fx.toFloat(m.plX[seat]),
+        y: fx.toFloat(m.plY[seat]),
         kills: m.plKills[seat],
         deaths: m.plDeaths[seat],
         fired: this.shotsBySeat[seat] ?? 0,

@@ -8,7 +8,7 @@ const CAMERA_NEAR = 8;
 const CAMERA_FAR = 6000;
 const CAMERA_TILT_DEGREES = 20;
 /** World units of floor from the top to the bottom of the screen around the followed pilot. */
-const NORMAL_VIEW_HEIGHT = 520;
+export const NORMAL_VIEW_HEIGHT = 520;
 /** A colossus is large and slow: its pilot sees more of the arena. */
 const BOSS_VIEW_HEIGHT = 700;
 /**
@@ -16,7 +16,7 @@ const BOSS_VIEW_HEIGHT = 700;
  * and never oscillates, so dodging back and forth does not swing the view. The camera never leads toward the aim: the
  * aim is read through the camera, so leading would feed the aim back into itself.
  */
-const FOLLOW_SMOOTH_SECONDS = 0.1;
+export const FOLLOW_SMOOTH_SECONDS = 0.1;
 /** When the followed point is farther than this (a respawn, or spectating someone else), the camera travels more gently. */
 const TRAVEL_DISTANCE = 360;
 const TRAVEL_SMOOTH_SECONDS = 0.3;
