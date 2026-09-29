@@ -11,7 +11,10 @@ export interface FrameStats {
   readonly windowCap: number;
   readonly windowTicks: number;
   readonly speed: number;
+  /** Most the velocity may change per tick when speeding up or turning. */
   readonly accel: number;
+  /** Most the velocity may change per tick when slowing down along its heading (stopping, reversing): quicker than `accel`. */
+  readonly brake: number;
   /** Radius a projectile must reach to hurt: the small core inside the body. */
   readonly hurtR: number;
   /** Body radius: touches the rim and picks up orbs. */
@@ -20,9 +23,9 @@ export interface FrameStats {
 }
 
 export const FRAME_STATS: readonly FrameStats[] = [
-  { hp: 120, windowCap: 24, windowTicks: 60, speed: fx.lit(2.1), accel: fx.lit(0.22), hurtR: fx.lit(3), bodyR: fx.fromInt(10), grazeR: fx.fromInt(18) },
-  { hp: 88, windowCap: 16, windowTicks: 60, speed: fx.lit(3), accel: fx.lit(0.35), hurtR: fx.lit(2.4), bodyR: fx.fromInt(8), grazeR: fx.fromInt(16) },
-  { hp: 220, windowCap: 44, windowTicks: 60, speed: fx.lit(1.5), accel: fx.lit(0.12), hurtR: fx.lit(4.4), bodyR: fx.fromInt(14), grazeR: fx.fromInt(22) },
+  { hp: 120, windowCap: 24, windowTicks: 60, speed: fx.lit(2.1), accel: fx.lit(0.22), brake: fx.lit(0.44), hurtR: fx.lit(3), bodyR: fx.fromInt(10), grazeR: fx.fromInt(18) },
+  { hp: 88, windowCap: 16, windowTicks: 60, speed: fx.lit(3), accel: fx.lit(0.35), brake: fx.lit(0.7), hurtR: fx.lit(2.4), bodyR: fx.fromInt(8), grazeR: fx.fromInt(16) },
+  { hp: 220, windowCap: 44, windowTicks: 60, speed: fx.lit(1.5), accel: fx.lit(0.12), brake: fx.lit(0.24), hurtR: fx.lit(4.4), bodyR: fx.fromInt(14), grazeR: fx.fromInt(22) },
 ];
 
 /** Shots leave the hull this far along the aim direction. */

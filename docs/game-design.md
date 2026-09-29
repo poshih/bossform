@@ -71,6 +71,10 @@ for energy, and when you are charged, become the boss: a colossus that the other
 Twin-stick: analog movement, independent 360 degree aim. In normal form aim is instantaneous (skill lives in
 movement). In boss form aim and body turning are slew-limited (§5.5).
 
+Robots are responsive but not weightless: they brake twice as hard as they accelerate (`brake` and `accel` in
+`FRAME_STATS`), so letting go stops a robot in 5 to 7 ticks with 4 or 5 units of slide, reversing at full speed takes 13 to
+19 ticks, and a turn never adds speed. Boss forms keep one slow limit for every change of velocity: that is their weight.
+
 ### 5.2 Projectiles: the normal-speed rule [SET]
 - **Every projectile, whoever fires it, travels at 1.2 to 3.2 units/tick** (72 to 192 units/s), enforced by one cap in
   the code that spawns projectiles.

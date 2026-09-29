@@ -49,6 +49,60 @@ section('definitions: the speed rule and the weight rules are enforced when cont
     FRAME_STATS[Frame.Gale].windowCap < FRAME_STATS[Frame.Vanguard].windowCap && FRAME_STATS[Frame.Vanguard].windowCap < FRAME_STATS[Frame.Juggernaut].windowCap);
 }
 
+section('movement: robots stop and reverse quickly, never gain speed from a turn; colossi keep their weight');
+for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
+  const stats = FRAME_STATS[frame];
+  const name = FRAME_NAMES[frame];
+  const runRight = () => {
+    const s = new Scenario({ mode: Mode.Deathmatch, frames: [frame, Frame.Vanguard] }).battle().exposed().place(0, -300, 0).place(1, 300, 300);
+    s.step(90, (seat) => (seat === 0 ? holding(0, { moveX: 127 }) : IDLE));
+    return s;
+  };
+  const toTop = runRight();
+  check(`${name}: full deflection reaches top speed`, toTop.m.plVX[0] === stats.speed && toTop.m.plVY[0] === 0, `${toTop.m.plVX[0] / fx.ONE}`);
+
+  const stop = runRight();
+  const x0 = stop.m.plX[0];
+  let stopTicks = 0;
+  while (stop.m.plVX[0] > 0 && stopTicks < 120) {
+    stop.step(1);
+    stopTicks++;
+  }
+  const slide = (stop.m.plX[0] - x0) / fx.ONE;
+  const brakeTicks = Math.ceil(stats.speed / stats.brake);
+  check(`${name}: letting go stops the robot in ${brakeTicks} ticks (brake ${stats.brake / fx.ONE}/tick), sliding ${slide.toFixed(1)} units`, stopTicks === brakeTicks && stop.m.plVY[0] === 0, `${stopTicks} ticks`);
+
+  const turn = runRight();
+  let fastest = 0;
+  for (let i = 0; i < 40; i++) {
+    turn.step(1, (seat) => (seat === 0 ? holding(0, { moveY: 127 }) : IDLE));
+    fastest = Math.max(fastest, Math.hypot(turn.m.plVX[0], turn.m.plVY[0]));
+  }
+  check(`${name}: a right-angle turn never makes it faster than its top speed`, fastest <= stats.speed + 1, `${(fastest / fx.ONE).toFixed(3)} vs ${stats.speed / fx.ONE}`);
+
+  const reverse = runRight();
+  let reverseTicks = 0;
+  while (reverse.m.plVX[0] > -stats.speed && reverseTicks < 120) {
+    reverse.step(1, (seat) => (seat === 0 ? holding(0, { moveX: -127 }) : IDLE));
+    reverseTicks++;
+  }
+  const expected = Math.ceil(stats.speed / stats.brake) + Math.ceil(stats.speed / stats.accel);
+  check(`${name}: reversing at full speed takes about ${expected} ticks (braking, then accelerating)`, Math.abs(reverseTicks - expected) <= 1, `${reverseTicks} ticks`);
+}
+{
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Vanguard, Frame.Vanguard] }).battle().exposed().place(0, 0, 0).place(1, 500, 300).transform(0, GAUGE_MAX);
+  const form = FORMS[Frame.Vanguard];
+  s.step(200, (seat) => (seat === 0 ? holding(0, { moveX: 127 }) : IDLE));
+  let biggest = 0;
+  for (let i = 0; i < 60; i++) {
+    const vx = s.m.plVX[0];
+    const vy = s.m.plVY[0];
+    s.step(1, (seat) => (seat === 0 ? holding(0, { moveX: -127 }) : IDLE));
+    biggest = Math.max(biggest, Math.hypot(s.m.plVX[0] - vx, s.m.plVY[0] - vy));
+  }
+  check('a colossus still changes its velocity by at most its own acceleration per tick, braking included (its weight)', biggest <= form.accel + 1, `${(biggest / fx.ONE).toFixed(3)} vs ${form.accel / fx.ONE}`);
+}
+
 section('configuration is validated where it enters the simulation');
 {
   const good = encodeConfig({ mode: Mode.Deathmatch, seats: [{ frame: Frame.Gale, team: 0 }, { frame: Frame.Juggernaut, team: 1 }] });

@@ -6,7 +6,7 @@ import type { Vec } from './geometry.ts';
 import { Button } from './input.ts';
 import type { GameInput } from './input.ts';
 import { W } from './layout.ts';
-import { coast, drive, keepInside } from './movement.ts';
+import { coast, driveRobot, keepInside } from './movement.ts';
 import { respawnPoint } from './spawn.ts';
 import { fireNormal } from './weapons.ts';
 import type { World } from './world.ts';
@@ -85,7 +85,7 @@ function updateNormal(w: World, seat: number, buttons: number, moveX: number, mo
   } else {
     const bulwark = m.plBulwark[seat] > 0;
     const top = bulwark ? Math.floor((stats.speed * JUGGERNAUT.bulwark.slowPct) / 100) : stats.speed;
-    drive(w, seat, moveX, moveY, top, stats.accel);
+    driveRobot(w, seat, moveX, moveY, top, stats.accel, stats.brake);
   }
   keepInside(w, seat, stats.bodyR);
 }
