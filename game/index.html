@@ -20,15 +20,21 @@
   #notice[hidden] { display: none; }
   #boot {
     position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 16px;
-    box-sizing: border-box; text-align: center; color: #bfefff; background: #000; z-index: 50;
+    box-sizing: border-box; text-align: center; color: #bfefff; background:
+      radial-gradient(circle at 50% 34%, rgba(29, 78, 110, .38), transparent 38%),
+      linear-gradient(180deg, #02040a, #000); z-index: 50;
     font: 600 13px/1.4 Inter, "Segoe UI", system-ui, sans-serif; letter-spacing: .2em; text-transform: uppercase;
   }
-  #boot h1 { margin: 0; font-size: clamp(22px, 6vw, 44px); letter-spacing: .34em; font-weight: 700; color: #e9fbff; text-shadow: 0 0 14px #35d0ff; }
+  #boot::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, transparent, rgba(53,208,255,.12), transparent); animation: bootwipe 2.6s ease-in-out infinite; }
+  #boot h1 { margin: 0; font-size: clamp(22px, 6vw, 44px); letter-spacing: .34em; font-weight: 700; color: #e9fbff; text-shadow: 0 0 14px #35d0ff; animation: boottitle .8s ease-out both, bootglow 2.2s ease-in-out .8s infinite; }
   #boot .tag { font-size: 11px; color: #7cf0ff; letter-spacing: .32em; }
-  #boot-bar { width: min(320px, 70vw); height: 2px; background: #0b1a26; overflow: hidden; position: relative; }
+  #boot-bar { width: min(320px, 70vw); height: 2px; background: #0b1a26; overflow: hidden; position: relative; box-shadow: 0 0 0 1px rgba(53,208,255,.16), 0 0 22px rgba(53,208,255,.16); }
   #boot-bar::after { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; background: linear-gradient(90deg, transparent, #35d0ff, transparent); animation: bootslide 1.2s linear infinite; }
   @keyframes bootslide { from { left: -30%; } to { left: 100%; } }
-  @media (prefers-reduced-motion: reduce) { #boot-bar::after { animation: none; left: 35%; } }
+  @keyframes bootwipe { from { transform: translateX(-80%); opacity: 0; } 40% { opacity: .7; } to { transform: translateX(80%); opacity: 0; } }
+  @keyframes boottitle { from { opacity: 0; letter-spacing: .48em; } to { opacity: 1; letter-spacing: .34em; } }
+  @keyframes bootglow { 0%, 100% { text-shadow: 0 0 14px #35d0ff; } 50% { text-shadow: 0 0 28px #35d0ff, 0 0 48px #ff5c8a; } }
+  @media (prefers-reduced-motion: reduce) { #boot::before, #boot h1, #boot-bar::after { animation: none; } #boot-bar::after { left: 35%; } }
   #boot-status { min-height: 1.4em; font-size: 12px; color: #8fc9d8; }
   #boot-retry { display: none; min-width: 120px; min-height: 44px; padding: 0 20px; border: 1px solid #35d0ff; background: #04121c; color: #e9fbff; font: inherit; letter-spacing: .2em; cursor: pointer; }
   #boot-retry:focus-visible { outline: 2px solid #ffd23f; outline-offset: 3px; }

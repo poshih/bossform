@@ -21,6 +21,7 @@ import { cssHex, teamColor, teamCss, UI_ACCENT, UI_BACKGROUND, UI_CAPS_SPACING, 
 
 const STYLE_ID = 'bossform-menus-style';
 const TITLE_TAGLINE = 'VECTOR MECH ARENA';
+const RESULT_COUNT_SECONDS = 0.72;
 const SETUP_TEAM_PRESETS = ['free-for-all', 'two-teams', 'four-teams'] as const;
 type SetupTeamPreset = typeof SETUP_TEAM_PRESETS[number];
 const SETUP_VARIANTS = ['quick', 'custom'] as const;
@@ -134,6 +135,7 @@ export class Menus {
     }
     const focusTarget = this.screenEls[screen].querySelector<HTMLElement>('[data-autofocus], button, input, select, [tabindex="0"]');
     focusTarget?.focus({ preventScroll: true });
+    if (screen === MenuScreen.Results) this.animateResultStats();
   }
 
   hide(): void {
@@ -614,10 +616,10 @@ export class Menus {
       <tr style="--team:${teamCss(row.team)}">
         <td><span class="bf-team-dot"></span>${row.name}</td>
         <td>Team ${row.team + 1}</td>
-        <td>${row.kills}</td>
-        <td>${row.deaths}</td>
-        <td>${row.dealt}</td>
-        <td>${row.grazes}</td>
+        <td><span class="bf-stat" data-stat-value="${row.kills}">${row.kills}</span></td>
+        <td><span class="bf-stat" data-stat-value="${row.deaths}">${row.deaths}</span></td>
+        <td><span class="bf-stat" data-stat-value="${row.dealt}">${row.dealt}</span></td>
+        <td><span class="bf-stat" data-stat-value="${row.grazes}">${row.grazes}</span></td>
       </tr>`).join('');
     this.resultsContent.innerHTML = `
       <div class="bf-results-banner">${this.resultsState.title}</div>
@@ -626,6 +628,25 @@ export class Menus {
         <thead><tr><th>Pilot</th><th>Team</th><th>K</th><th>D</th><th>Damage</th><th>Grazes</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
+  }
+
+  private animateResultStats(): void {
+    if (this.screen !== MenuScreen.Results) return;
+    const stats = Array.from(this.resultsContent.querySelectorAll<HTMLElement>('[data-stat-value]'));
+    if (stats.length === 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const started = performance.now();
+    const duration = RESULT_COUNT_SECONDS * 1000;
+    const tick = (now: number) => {
+      if (this.screen !== MenuScreen.Results) return;
+      const t = Math.min(1, (now - started) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      stats.forEach((node) => {
+        const value = Number(node.dataset.statValue);
+        node.textContent = String(Math.round(value * eased));
+      });
+      if (t < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   }
 }
 
@@ -659,17 +680,24 @@ function ensureStyles(): void {
     }
     .bf-menu-root { position: absolute; inset: 0; font-family: var(--bf-font); color: var(--bf-copy); }
     .bf-menu-shell { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: clamp(16px, 4vw, 40px); background: radial-gradient(circle at 50% 20%, rgba(31,62,99,.36), rgba(4,7,15,.92) 58%), linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.44)); }
-    .bf-screen { width: min(100%, 1100px); max-height: 100%; margin: auto; }
-    .bf-card { border: 1px solid var(--bf-edge-soft); background: linear-gradient(180deg, rgba(12,18,32,.92), rgba(7,11,21,.96)); box-shadow: 0 0 0 1px rgba(111,227,255,.08) inset, 0 0 28px rgba(111,227,255,.12); clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); padding: clamp(18px, 3vw, 30px); }
+    .bf-menu-shell::before { content: ""; position: fixed; inset: -20%; pointer-events: none; background: linear-gradient(115deg, transparent 0 42%, rgba(111,227,255,.08) 47%, transparent 52% 100%); animation: bf-scan 4.8s linear infinite; }
+    .bf-menu-shell::after { content: ""; position: fixed; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), radial-gradient(circle at 20% 20%, rgba(255,106,128,.12), transparent 28%); background-size: 100% 5px, auto; mix-blend-mode: screen; opacity: .38; }
+    .bf-screen { width: min(100%, 1100px); max-height: 100%; margin: auto; animation: bf-screen-in .2s ease-out both; }
+    .bf-card { position: relative; border: 1px solid var(--bf-edge-soft); background: linear-gradient(180deg, rgba(12,18,32,.92), rgba(7,11,21,.96)); box-shadow: 0 0 0 1px rgba(111,227,255,.08) inset, 0 0 28px rgba(111,227,255,.12); clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); padding: clamp(18px, 3vw, 30px); overflow: hidden; }
+    .bf-card::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, transparent, rgba(111,227,255,.14), transparent); transform: translateX(-120%); animation: bf-card-sweep 3.6s ease-in-out infinite; }
     .bf-title-card, .bf-pause-card { max-width: min(92vw, 620px); margin: 0 auto; text-align: center; }
-    .bf-title-mark { font-size: clamp(30px, min(8.4vw, 10vh), 78px); font-weight: 780; letter-spacing: clamp(.04em, .45vw, .12em); text-transform: uppercase; text-shadow: 0 0 16px rgba(111,227,255,.28); line-height: .94; white-space: nowrap; }
+    .bf-title-mark { position: relative; display: inline-block; font-size: clamp(30px, min(8.4vw, 10vh), 78px); font-weight: 780; letter-spacing: clamp(.04em, .45vw, .12em); text-transform: uppercase; color: transparent; -webkit-text-stroke: 1px #e9fbff; text-shadow: 0 0 16px rgba(111,227,255,.28); line-height: .94; white-space: nowrap; animation: bf-title-fill .9s ease-out .18s both, bf-title-glow 2.8s ease-in-out 1.1s infinite; }
+    .bf-title-mark::before, .bf-title-mark::after { content: "BOSSFORM"; position: absolute; inset: 0; pointer-events: none; color: rgba(111,227,255,.34); clip-path: inset(0 0 55% 0); animation: bf-title-glitch 4.2s steps(1,end) infinite; }
+    .bf-title-mark::after { color: rgba(255,106,128,.26); clip-path: inset(58% 0 0 0); animation-delay: .12s; }
     .bf-title-tag, .bf-subtitle { margin-top: 10px; color: var(--bf-copy-dim); letter-spacing: var(--bf-track); text-transform: uppercase; font-size: 12px; }
     .bf-title-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 26px; }
     .bf-title-card > .bf-toggle { display: block; margin: 16px auto 0; }
     .bf-single-column { grid-template-columns: 1fr; }
     .bf-action, .bf-ghost, .bf-toggle, .bf-choice-card, .bf-status-chip {
-      min-height: 46px; border: 1px solid var(--bf-edge-soft); background: rgba(8, 16, 29, .9); color: var(--bf-copy); padding: 0 16px; font: 600 clamp(13px, 1.25vw, 14px)/1 var(--bf-font); letter-spacing: .06em; text-transform: uppercase;
+      position: relative; min-height: 46px; border: 1px solid var(--bf-edge-soft); background: rgba(8, 16, 29, .9); color: var(--bf-copy); padding: 0 16px; font: 600 clamp(13px, 1.25vw, 14px)/1 var(--bf-font); letter-spacing: .06em; text-transform: uppercase; overflow: hidden;
     }
+    .bf-action::after, .bf-ghost::after, .bf-toggle::after, .bf-choice-card::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 7px; height: 1px; background: linear-gradient(90deg, transparent, var(--bf-accent), transparent); transform: scaleX(0); transform-origin: left; transition: transform .18s ease; pointer-events: none; }
+    .bf-action:hover::after, .bf-action:focus-visible::after, .bf-ghost:hover::after, .bf-ghost:focus-visible::after, .bf-toggle:hover::after, .bf-toggle:focus-visible::after, .bf-choice-card:hover::after, .bf-choice-card:focus-visible::after, .bf-choice-card[data-active="true"]::after { transform: scaleX(1); }
     .bf-choice-card { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; justify-content: flex-start; min-height: 150px; padding: 18px; text-align: left; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
     .bf-choice-card[data-active="true"], .bf-action:hover, .bf-ghost:hover, .bf-toggle:hover { border-color: var(--bf-edge); box-shadow: 0 0 0 1px rgba(111,227,255,.16) inset, 0 0 18px rgba(111,227,255,.16); }
     .bf-choice-card[data-active="true"] { transform: translateY(-1px); }
@@ -693,7 +721,7 @@ function ensureStyles(): void {
     .bf-setup-info { margin-top: 18px; padding: 16px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.03); min-height: 96px; }
     .bf-setup-summary { display: grid; gap: 8px; }
     .bf-lobby-list { display: grid; gap: 10px; margin-top: 14px; }
-    .bf-lobby-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--team) 36%, transparent); background: color-mix(in srgb, var(--team) 8%, rgba(255,255,255,.02)); }
+    .bf-lobby-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--team) 36%, transparent); background: color-mix(in srgb, var(--team) 8%, rgba(255,255,255,.02)); animation: bf-row-in .22s ease-out both; }
     .bf-lobby-row strong { display: block; color: var(--team); }
     .bf-lobby-row span { color: var(--bf-copy-dim); font-size: 12px; }
     .bf-mini { min-height: 34px; padding: 0 10px; font-size: 12px; }
@@ -702,7 +730,7 @@ function ensureStyles(): void {
     .bf-table th, .bf-table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.08); }
     .bf-table th { color: var(--bf-copy-dim); font-size: 11px; letter-spacing: var(--bf-track); text-transform: uppercase; }
     .bf-help-list { margin: 14px 0 0; padding-left: 18px; display: grid; gap: 10px; color: var(--bf-copy); line-height: 1.6; }
-    .bf-results-banner { font-size: clamp(28px, 6vw, 54px); font-weight: 760; letter-spacing: .12em; text-transform: uppercase; color: var(--bf-accent); }
+    .bf-results-banner { font-size: clamp(28px, 6vw, 54px); font-weight: 760; letter-spacing: .12em; text-transform: uppercase; color: var(--bf-accent); animation: bf-winner-reveal .42s ease-out both; text-shadow: 0 0 24px rgba(111,227,255,.34); }
     .bf-results-table td:first-child { font-weight: 700; color: var(--team); }
     .bf-team-dot { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; background: var(--team); }
     @media (max-width: 900px) {
@@ -714,8 +742,18 @@ function ensureStyles(): void {
       .bf-card { padding: 18px; }
       .bf-title-mark { font-size: clamp(28px, 10vw, 48px); letter-spacing: clamp(.03em, .6vw, .08em); }
     }
+    @keyframes bf-screen-in { from { opacity: 0; transform: translate3d(24px, 0, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
+    @keyframes bf-card-sweep { 0%, 42% { transform: translateX(-120%); opacity: 0; } 55% { opacity: .7; } 72%, 100% { transform: translateX(120%); opacity: 0; } }
+    @keyframes bf-scan { from { transform: translateX(-18%); } to { transform: translateX(18%); } }
+    @keyframes bf-title-fill { 0% { color: transparent; letter-spacing: .28em; } 68% { color: rgba(233,251,255,.18); } 100% { color: #e9fbff; } }
+    @keyframes bf-title-glow { 0%, 100% { text-shadow: 0 0 12px rgba(111,227,255,.24); } 50% { text-shadow: 0 0 28px rgba(111,227,255,.48), 0 0 54px rgba(255,106,128,.18); } }
+    @keyframes bf-title-glitch { 0%, 86%, 100% { transform: translateX(0); opacity: 0; } 88% { transform: translateX(4px); opacity: 1; } 90% { transform: translateX(-3px); opacity: .75; } 92% { transform: translateX(0); opacity: 0; } }
+    @keyframes bf-row-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes bf-winner-reveal { from { opacity: 0; clip-path: inset(0 100% 0 0); transform: scale(.96); } to { opacity: 1; clip-path: inset(0 0 0 0); transform: scale(1); } }
     @media (prefers-reduced-motion: reduce) {
-      .bf-choice-card { transition: none; }
+      .bf-menu-shell::before, .bf-card::before, .bf-title-mark, .bf-title-mark::before, .bf-title-mark::after, .bf-lobby-row, .bf-results-banner, .bf-screen { animation: none; }
+      .bf-choice-card, .bf-action::after, .bf-ghost::after, .bf-toggle::after, .bf-choice-card::after { transition: none; }
+      .bf-screen { opacity: 1; }
     }
   `;
   document.head.append(style);
