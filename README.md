@@ -1,20 +1,22 @@
 # BOSSFORM
 
-> **Design:** the current design is [`docs/game-design.md`](docs/game-design.md) (v0.2: PvP battle arena, slow
-> bullets only, vector-mesh look, up to 8 players). The sections below still describe the **v0 prototype**
-> (tag `v0-prototype`) and are rewritten as the redesign lands.
+A **vector mech battle arena** in the spirit of *Senko no Ronde*: up to eight pilots (players and bots, in teams or
+free-for-all) fight in a large circular arena where **every bullet is slow and readable**. Move and aim separately, graze
+bullets for energy, and when the gauge is charged **become the boss**: a huge, heavy colossus with armour plates and
+cannon pods that everyone else has to take apart piece by piece. Its attacks are told before they land.
 
-An arena mech shoot-'em-up in the spirit of *Senko no Ronde*, built on **METRONOME**, a standalone
-deterministic lockstep engine. Move and aim separately (twin-stick), fill the energy gauge by grazing bullets and
-wrecking enemies, then press the boss button and **transform into your frame's colossal boss form**.
+It is built on **METRONOME**, a standalone deterministic lockstep engine, and the game is kept strictly separate from it.
+Stack: Vite + TypeScript + Three.js (full-resolution MSAA + bloom, sleek vector meshes, procedural audio, no assets).
 
-Stack (same as `retrocause`): Vite + TypeScript + Three.js, a low-res dithered/bloomed post pipeline, a bitmap
-font, and fully procedural meshes, VFX, music and SFX. No asset files.
+- Design: [`docs/game-design.md`](docs/game-design.md) (v0.2, the source of truth for rules and numbers)
+- Client architecture and contracts: [`docs/client-architecture.md`](docs/client-architecture.md)
+- Engine: [`engine/README.md`](engine/README.md)
 
 ```
 engine/   @metronome/engine   deterministic lockstep engine: zero dependencies, no DOM, no Node, no game vocabulary
 game/     @bossform/game      the game: deterministic sim (game/src/sim) + Three.js/DOM presentation
-tools/    verify/ relay/      eval scripts (no test framework) and a dev WebSocket relay
+tools/    verify/ relay/      eval scripts (no test framework) and a dev WebSocket relay + room lobby
+docs/                         game design, client architecture
 ```
 
 ## Play
@@ -22,89 +24,121 @@ tools/    verify/ relay/      eval scripts (no test framework) and a dev WebSock
 ```sh
 npm install
 npm run dev          # http://127.0.0.1:4427
-npm run build        # typecheck everything, then game/dist (relative paths, ~210 KB gzip)
+npm run build        # typecheck everything, then game/dist (relative paths, ~220 KB gzip)
 ```
 
 | | Keyboard + mouse | Gamepad |
 |---|---|---|
 | Move | `W A S D` | left stick |
-| Aim (independent of movement) | mouse cursor, or arrow keys | right stick |
-| Fire | click, `J`, `Z` | `A`, `RT`, `RB` |
-| Alt weapon | right click, `K`, `X`, `Shift` | `B`, `LT`, `LB` |
-| **Boss form** (gauge full) | `Space`, `E` | `Y`, `X` |
+| Aim (independent of movement) | mouse cursor (or arrow keys) | right stick |
+| Fire / boss **Salvo** | left click, `J` | `RT`, `RB`, `A` |
+| Alt / boss **Siege shot** | right click, `K` | `LT`, `LB`, `B` |
+| **Transform** (energy at least 50%) | `Space` | `Y` |
+| Boss **Ultima** | `E` | `X` |
 | Pause / mute | `Esc` `P` / `M` | `Start` |
 
-### The three frames (robot designs)
+**Modes.** *Elimination*: one life per round, last team standing, best of three; after 75 s the safe zone shrinks and the
+storm hurts everything outside it. *Deathmatch*: score kills, respawn after 3 s, 3 minutes. Teams are free labels (2v2,
+4v4, free-for-all). Bots fill any seat and are ordinary input sources.
 
-| Frame | Trope | Fire | Alt | Boss form |
+**The rules that make it this game.** No projectile of any owner is ever faster than 3.2 units per tick: one cap,
+enforced where projectiles are made and moved. Only a tiny core is vulnerable. A robot can take **at most its cap of
+damage per window** (a per-robot balance value: lighter, faster robots take less). Grazing bullets, dealing and taking
+damage, and orbs fill the energy gauge.
+
+### The three robots and their boss forms
+
+| Robot | Trope | Primary | Alt | Boss form |
 |---|---|---|---|---|
-| **VANGUARD** | versatile hero | beam rifle | seeker missiles | **PALADIN**: winged, 5-way spread cannon + hold-to-fire judgement beam |
-| **GALE** | fast striker | twin needles | dash-slash (i-frames) | **TEMPEST**: needles + 4 orbiting blade bits, blade storm |
-| **JUGGERNAUT** | heavy bunker | howitzer (splash) | bulwark shield (absorbs bullets) | **FORTRESS**: twin siege cannons, rocket barrage |
+| **VANGUARD** | versatile hero | 3-bullet fan rifle | two slow seeker orbs | **PALADIN**: plates, wing panels, shoulder cannons, prow lance |
+| **GALE** | fast striker | twin darts | phase dash (protected) leaving a delayed ring | **TEMPEST**: the lightest colossus, four orbiting bit cannons |
+| **JUGGERNAUT** | heavy bunker | slow mortar shell that bursts into shrapnel | bulwark wedge that absorbs bullets into energy | **FORTRESS**: the heaviest, nine parts, a huge mortar |
 
-### Boss mode
-Grazing bullets, hitting enemies and collecting energy orbs fills the gauge. At 100% press the boss button: the
-frame roots for a moment while it transforms (invulnerable), a shockwave clears bullets, then for ~11 s it is huge,
-**absorbs every bullet that touches it** (each burns a little of the timer), crushes small enemies by ramming, doubles
-score and gets a second weapon set. Kills and orbs extend the timer (capped). It ends with another pulse.
+### The boss form (the designer's brief: large, heavy, told)
 
-Three stages of four rounds each, ending in the bosses **BULWARK**, **SERAPH** and **OVERLORD** (three phases each,
-switching at 66% and 33% health). Chained kills raise a score multiplier; a stage without damage doubles the clear
-bonus. Modes: solo, **local co-op** (P2 on a gamepad), **online co-op** (below). Attract-mode demo on the title.
+Transform (46 ticks, safe while it unfolds) into a machine with an armoured body around a small core. Bullets hit plates
+and pods first; **only the core hurts the pilot**, and only where no live plate covers it. Destroyed parts stay
+destroyed until the next transformation. The body and every pod turn slowly and heavily, and **a gun fires where it points**.
+Energy is fuel: it burns steadily and every attack costs some; at zero the machine folds back into the robot.
+
+| Attack | Input | Wind-up (the tell) | Character |
+|---|---|---|---|
+| **Salvo** | left click | 12 to 18 ticks | a fan of large slow orbs from each live cannon |
+| **Siege shot** | right click | 36 to 48 ticks, rooted | one huge slow shell that bursts; aim lines and a burst marker show where |
+| **Ultima** | `E` | 90 to 110 ticks, rooted | spirals and rings; everyone's HUD and speakers announce it |
+
+No boss projectile can exist before its wind-up ends, every shot leaves a live pod's muzzle, and heavier attacks wind up
+longer, recover longer and cost more: these are enforced in code and checked by the evals (see below).
 
 ## Architecture: no leaking between engine and game
 
-* `engine/` imports nothing but itself, is compiled with `lib: ES2023` and **no ambient types** (so it cannot touch
-  DOM or Node), has zero dependencies, and contains no game vocabulary. It knows only three contracts: a
-  `Simulation` (state memory + `step`), an `InputCodec` (fixed-size bytes per seat per tick) and a `Transport`.
-* `game/src/sim/` implements those contracts, imports only `@metronome/engine` (public entry) and itself, and uses no
-  floats outside `fx.lit/deg/turns` constants, no `Math.random/sin/cos/pow/sqrt/hypot`, no `Date`, no `Map/Set`.
-* `game/src/{view,ui,audio,render}` only **read** the sim (through `sim/index.ts`) and never write to its memory.
-  Presentation-only randomness (particles, shake) is allowed there.
-* All of this is enforced mechanically by `tools/verify/boundary.ts`.
+- `engine/` imports nothing but itself, compiles with `lib: ES2023` and **no ambient types** (it cannot touch the DOM or
+  Node), has zero dependencies and no game vocabulary. It knows three contracts: a `Simulation` (state memory + `step`),
+  an `InputCodec` and a `Transport`.
+- `game/src/sim/` implements them, imports only `@metronome/engine` and itself, and uses no floats outside
+  `fx.lit/deg/turns` constants, no `Math.random/sin/cos/pow/sqrt/hypot`, no `Date`, no `Map/Set`. Its memory layout is built
+  from the seat count, so nothing caps the number of pilots (the game rule is 8; verified up to 16 in evals).
+- `game/src/{view,ui,audio,render}` only **read** the simulation (through `sim/index.ts`) and never write to it.
+- All of this is enforced mechanically by `tools/verify/boundary.ts`.
 
 ## How determinism is achieved (and proven)
 
-* **Numbers**: Q16.16 fixed point in `Int32Array`. `sqrt` is a `Math.sqrt` *guess* corrected by an exact integer
-  fix-up; `sin/cos/atan2` use tables built at load from Taylor series that use only `+ - * /` (IEEE-exact), so no
-  reliance on implementation-approximated `Math.*`.
-* **State**: everything that affects a future tick lives in one `ArrayBuffer` (`SimMemory`), RNG included, so
-  snapshot = memcpy, checksum = one pass, and hidden state is detectable.
-* **Lockstep**: input delay, redundant un-acked input resend (works over unreliable/reordering transports), stall
-  until every seat's input is present, 64-bit state checksums exchanged periodically (fail loud on desync),
-  handshake hash covering parameters + input encoding + memory layout, graceful leave, peer timeouts, replays.
+- **Numbers**: Q16.16 fixed point in `Int32Array`; `sqrt` is a `Math.sqrt` guess corrected by an exact integer fix-up;
+  `sin/cos/atan2` come from tables built from IEEE-exact operations. Distances in the big arena use a shifted `radial()`.
+- **State**: everything that affects a future tick lives in one `ArrayBuffer` (`SimMemory`), RNG included.
+- **Lockstep** (engine v2): input delay, redundant un-acked input resend, stall until every seat's input is present, 64-bit
+  checksums (a desync aborts loudly), a handshake hash over parameters + input encoding + memory layout, graceful leave,
+  timeouts, replays. Seat and peer ids are 16-bit, frames are identical for every recipient so one broadcast serves all
+  peers, and the relay fans out; a machine may own many seats (the host owns the bots).
 
-Proof, all run against the real game: same recordings replayed bit-identically on **V8 (Node, Chromium),
-SpiderMonkey (Firefox) and JavaScriptCore (WebKit)**; a Chromium-vs-WebKit online match over a lossy, reordering
-link ends with identical inputs and checksums on both machines; Node reproduces them.
+Proof, all against the real game: replays of 8-pilot deathmatch, a whole 2v2 elimination match and a 12-pilot match are
+bit-identical on **V8 (Node, Chromium), SpiderMonkey (Firefox) and JavaScriptCore (WebKit)**; eight simulated machines over
+a lossy, jittery, duplicating network stay bit-identical (one leaving mid-match); Chromium and WebKit tabs play a real
+online match through the relay.
 
 ## Verify
 
 ```sh
 npm run typecheck
-npm run verify            # headless: architecture, numerics, lockstep/hostile-network/hostile-packet evals,
-                          #           standalone engine build, real-game mechanics + determinism (~15 s)
-npm run verify:browsers   # builds, serves under a strict CSP, then real-browser E2E (solo, boss mode x3 frames,
-                          #   local co-op with a gamepad, layouts), cross-engine proof, online co-op, audio (~3 min)
+npm run verify            # headless (~2 min): architecture, numerics, engine lockstep / hostile network / scale, and the
+                          #   game rules on the real simulation: definitions, damage window, graze, teams, energy,
+                          #   boss form (parts, core rule, every attack's tell, cost, cancellation), neutrals, elimination,
+                          #   sudden death, deathmatch, full bot matches watched tick by tick, determinism, scale
+npm run verify:browsers   # builds, serves under a strict CSP, then real-browser E2E (menus, keyboard + mouse, gamepad,
+                          #   bots turning into colossi, a whole match to the results, layouts), the cross-engine proof,
+                          #   online Chromium vs WebKit (clean and lossy links) and the audio engine
+node tools/verify/balance.ts   # prints the numbers the design is tuned by (time to first transformation, boss-form life...)
 ```
 
 No unit-test framework is used: every check runs the real code path and prints PASS/FAIL. Screenshots land in
 `tools/verify/shots/` (not committed). Browser checks need `npx playwright install chromium firefox webkit`.
 
-## Online co-op
+## Online play
 
 ```sh
-node tools/relay/server.ts            # ws://127.0.0.1:4431  (RELAY_LATENCY_MS / RELAY_JITTER_MS / RELAY_LOSS to test)
-# then open two tabs:
-http://127.0.0.1:4427/?relay=ws://127.0.0.1:4431/&room=abc            # menu: ONLINE CO-OP, pick a frame
-http://127.0.0.1:4427/?relay=ws://127.0.0.1:4431/&room=abc&auto=2     # auto-join with frame 2
+node tools/relay/server.ts                      # ws://127.0.0.1:4431  (RELAY_LATENCY_MS / RELAY_JITTER_MS / RELAY_LOSS to test)
+# open the game in each browser with the relay address, choose ONLINE, enter the same room name:
+http://127.0.0.1:4427/?relay=ws://127.0.0.1:4431/&name=ALPHA
 ```
-The relay only forwards opaque datagrams and matches two players into a room; it never sees game state. A static
-host that forbids outbound connections (e.g. a strict CSP) can run solo and local co-op but not online.
+
+The relay is a dumb room lobby (opaque per-member and room payloads, the lowest peer id is host) plus a datagram forwarder;
+it never sees game state. The host chooses the mode, adds bots (owned by the host's machine) and starts. A static host
+that forbids outbound connections can run everything except online play.
+
+## URL options and dev pages (all optional)
+
+- `?start=<mode>,<opponents>,<frame>,<seed>` (mode 0 elimination / 1 deathmatch) skips the menus; `&autoplay=1` lets a
+  bot fly your seat too; `&timescale=N` (1 to 8) simulates faster on a single machine; `&freeze=N` freezes the simulation
+  halfway through the first wind-up of boss attack N (1 salvo, 2 siege, 3 ultima) so a tell can be inspected;
+  `&relay=` / `&name=` for online play. `window.__bossform.debug()` returns a read-only snapshot of the running match.
+- Dev pages served by `npm run dev`: `viewer.html` (one model, posed from the URL), `stage-demo.html` (the scene with a bot
+  match), `hud-demo.html`, `menus-demo.html`. `node tools/verify/shot.ts "<url>" out.png` takes a screenshot and reports
+  console errors.
 
 ## Known limitations
 
-* The lobby uses a fixed input delay (6 ticks); adaptive delay from measured RTT is future work. Over a very lossy
-  link the game stalls (lockstep waits) rather than desyncs.
-* A crashed peer aborts the session (only a graceful leave is handled deterministically). Online play cannot pause.
-* Robot and enemy models are procedural low-poly designs, readable at gameplay scale but not detailed art.
+- Balance is tuned with bot matches only; the numbers are starting points (see the design doc, §12) and need human play.
+- The lobby uses a fixed input delay (6 ticks); adaptive delay from measured RTT is future work. A very lossy link makes the
+  game stall (lockstep waits) rather than desync. A crashed peer aborts the session (only a graceful leave is handled
+  deterministically); an online match cannot pause; a backgrounded tab stops advancing and stalls the others.
+- Models are procedural vector designs; boss forms are readable at game scale but not detailed art.
