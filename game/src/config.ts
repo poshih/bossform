@@ -1,26 +1,9 @@
-import { fx } from '@metronome/engine';
-import { ARENA_HALF_H, ARENA_HALF_W } from './sim/index.ts';
-
 // Presentation constants (never read by the simulation).
 
-/** The playfield in world units (1 unit == 1 simulation unit). */
-export const PLAY_W = fx.toFloat(ARENA_HALF_W) * 2;
-export const PLAY_H = fx.toFloat(ARENA_HALF_H) * 2;
-
-/** Target low-resolution height of the playfield in "16-bit" pixels. */
-export const LOWRES_TARGET_H = 360;
 export const MAX_DPR = 2;
 
-export const PALETTE = {
-  ink: 0x03040a,
-  navy: 0x0b1a33,
-  cyan: 0x27e1ff,
-  magenta: 0xff2e88,
-  violet: 0x8b5cff,
-  gold: 0xffc34d,
-  amber: 0xff8a2a,
-  white: 0xf2f8ff,
-  steel: 0x5b6b86,
-  jade: 0x2fe0a8,
-  red: 0xff3b4e,
-} as const;
+/** One colour per team id (sRGB hex): distinct hues, all bright enough for near-black. Neutral units never use these. */
+export const TEAM_COLORS: readonly number[] = [0x35d0ff, 0xff4fa3, 0xffd23f, 0x7cff6b, 0xb48cff, 0xff8a3d, 0x3dffc4, 0x4d7cff];
+
+/** Neutral units and their projectiles: steel edges with hostile red accents, never a team hue. */
+export const NEUTRAL_COLORS = { edge: 0xcfd8e8, accent: 0xff2a2a } as const;

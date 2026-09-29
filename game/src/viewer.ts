@@ -1,105 +1,110 @@
 import * as THREE from 'three';
-import { Renderer } from './render/renderer.ts';
-import { ArenaBackground } from './view/background.ts';
-import { createEnemyModel } from './view/models/enemies.ts';
-import { createPlayerMech } from './view/models/mechs.ts';
-import type { EnemyModel, EnemyPose, MechModel, MechPose } from './view/models/types.ts';
+import { TEAM_COLORS } from './config.ts';
+import { Pipeline } from './render/pipeline.ts';
+import { AttackPhase, FORMS, Frame, NeutralType } from './sim/index.ts';
+import { createColossus, createNeutral, createRobot } from './view/models/index.ts';
+import type { ColossusPose, NeutralPose, PartPose, RobotPose } from './view/models/index.ts';
 
-/** Dev-only contact sheet for the procedural robot models (used by tools/verify/models.ts and for design review). */
-interface Entry {
-  kind: 'mech' | 'enemy';
-  id: number;
-  x: number;
-  y: number;
-  scale?: number;
-  /** Extra rotation of the whole model in radians (view it from any side). */
-  spin?: number;
-  pose?: Partial<MechPose & EnemyPose>;
+/**
+ * Dev-only model viewer: renders one model on a grid, posed from URL parameters, through the real render pipeline.
+ * Examples:
+ *   ?model=vanguard&form=robot&fire=1&aim=30
+ *   ?model=gale&form=colossus&assemble=1&attack=1&phase=1&progress=0.6&destroy=1,3
+ *   ?model=warden&team=2
+ * Parameters (all optional): model (vanguard|gale|juggernaut|drone|sentinel|warden), form (robot|colossus), team (0-7),
+ * t (seconds), anim=1 (advance time), aim, move, body, orbit (degrees), speed, fire, alt, hit, charge, shield, morph,
+ * assemble, attack (0-3), phase (0-3), progress, fuel, heat, pod (0..1 charge on every pod), destroy (part indices),
+ * flash (0..1 on every part), zoom (bigger = closer), tilt (degrees from straight down), spin=1.
+ */
+const params = new URLSearchParams(location.search);
+const num = (key: string, fallback: number): number => (params.has(key) ? Number(params.get(key)) : fallback);
+const rad = (degrees: number): number => (degrees * Math.PI) / 180;
+
+const model = params.get('model') ?? 'vanguard';
+const form = params.get('form') ?? 'robot';
+const team = num('team', 1);
+const FRAME_OF: Record<string, number> = { vanguard: Frame.Vanguard, gale: Frame.Gale, juggernaut: Frame.Juggernaut };
+const NEUTRAL_OF: Record<string, number> = { drone: NeutralType.Drone, sentinel: NeutralType.Sentinel, warden: NeutralType.Warden };
+
+const canvas = document.getElementById('c') as HTMLCanvasElement;
+const pipeline = new Pipeline(canvas);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, 1, 1, 6000);
+
+const grid = new THREE.GridHelper(2400, 60, 0x0d3347, 0x0a2433);
+grid.rotation.x = Math.PI / 2;
+scene.add(grid);
+
+const color = new THREE.Color(TEAM_COLORS[team % TEAM_COLORS.length]);
+let update: (time: number) => void;
+let extent = 60;
+
+if (model in NEUTRAL_OF) {
+  const unit = createNeutral(NEUTRAL_OF[model]);
+  scene.add(unit.root);
+  extent = 26;
+  update = (time) => {
+    const pose: NeutralPose = { time, heading: rad(num('aim', 0)), flash: num('hit', 0), hp: num('hp', 1), telegraph: num('fire', 0), speed: num('speed', 0) };
+    unit.update(pose);
+  };
+} else if (model in FRAME_OF && form === 'colossus') {
+  const frame = FRAME_OF[model];
+  const colossus = createColossus(frame);
+  colossus.setTeam(color);
+  scene.add(colossus.root);
+  extent = 90;
+  const destroyed = new Set((params.get('destroy') ?? '').split(',').filter(Boolean).map(Number));
+  update = (time) => {
+    const parts: PartPose[] = FORMS[frame].parts.map((_, k) => ({
+      hp: destroyed.has(k) ? 0 : 1,
+      facing: rad(num('body', 0)) + rad(num('podturn', 0)),
+      flash: num('flash', 0),
+      heat: num('heat', 0),
+      charge: num('pod', 0),
+    }));
+    const pose: ColossusPose = {
+      time, body: rad(num('body', 0)), orbit: rad(num('orbit', 0)) + (params.get('anim') === '1' ? time * 2 : 0), assemble: num('assemble', 1), speed: num('speed', 0),
+      attack: num('attack', 0), phase: num('phase', AttackPhase.Idle), progress: num('progress', 0), fuel: num('fuel', 1), hit: num('hit', 0), parts,
+    };
+    colossus.update(pose);
+  };
+} else if (model in FRAME_OF) {
+  const robot = createRobot(FRAME_OF[model]);
+  robot.setTeam(color);
+  scene.add(robot.root);
+  extent = 22;
+  update = (time) => {
+    const pose: RobotPose = {
+      time, aim: rad(num('aim', 0)), move: rad(num('move', 0)), speed: num('speed', 0), fire: num('fire', 0), alt: num('alt', 0), hit: num('hit', 0),
+      charge: num('charge', 0), shield: num('shield', 0), morph: num('morph', 0),
+    };
+    robot.update(pose);
+  };
+} else {
+  throw new Error(`unknown model "${model}"`);
 }
 
-interface Shown {
-  entry: Entry;
-  model: MechModel | EnemyModel;
+function layout(): void {
+  pipeline.resize(window.innerWidth, window.innerHeight, window.devicePixelRatio);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  const distance = ((extent * 1.3) / Math.tan(rad(camera.fov / 2))) / num('zoom', 1);
+  const tilt = rad(num('tilt', 24));
+  camera.position.set(0, -Math.sin(tilt) * distance, Math.cos(tilt) * distance);
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
 }
+window.addEventListener('resize', layout);
+layout();
 
-const DEFAULT_MECH_POSE: MechPose = { time: 0, moveAngle: Math.PI / 2, speed: 0, aimAngle: Math.PI / 2, fire: 0, transform: 0, alt: 0, hit: 0, charge: 0 };
-const DEFAULT_ENEMY_POSE: EnemyPose = { time: 0, heading: -Math.PI / 2, aim: -Math.PI / 2, flash: 0, telegraph: 0, hp: 1, phase: 0, dying: 0, invulnerable: false, speed: 0 };
-
-const container = document.getElementById('app')!;
-const canvas = document.createElement('canvas');
-canvas.id = 'game';
-container.appendChild(canvas);
-const renderer = new Renderer(canvas);
-const resize = () => {
-  const r = container.getBoundingClientRect();
-  renderer.resize(Math.max(1, Math.floor(r.width)), Math.max(1, Math.floor(r.height)));
-};
-resize();
-new ResizeObserver(resize).observe(container);
-
-// The real arena floor, so contrast is judged against what the game actually draws.
-const floor = new ArenaBackground(renderer);
-renderer.background = floor.material;
-
-let shown: Shown[] = [];
-let frozenTime: number | null = null;
-const group = new THREE.Group();
-renderer.scene.add(group);
-
-function clear(): void {
-  for (const s of shown) {
-    group.remove(s.model.root);
-    s.model.dispose();
-  }
-  shown = [];
+let time = num('t', 0);
+let last = performance.now();
+function frame(now: number): void {
+  if (params.get('anim') === '1') time += (now - last) / 1000;
+  last = now;
+  update(time);
+  scene.rotation.z = params.get('spin') === '1' ? time * 0.4 : 0;
+  pipeline.render(scene, camera);
+  (window as unknown as { ready?: boolean }).ready = true;
+  requestAnimationFrame(frame);
 }
-
-function apply(time: number): void {
-  for (const s of shown) {
-    const e = s.entry;
-    if (e.kind === 'mech') (s.model as MechModel).update({ ...DEFAULT_MECH_POSE, ...e.pose, time });
-    else (s.model as EnemyModel).update({ ...DEFAULT_ENEMY_POSE, ...e.pose, time });
-  }
-}
-
-const viewer = {
-  show(entries: Entry[]): void {
-    clear();
-    for (const entry of entries) {
-      const model = entry.kind === 'mech' ? createPlayerMech(entry.id) : createEnemyModel(entry.id);
-      const holder = new THREE.Group();
-      holder.position.set(entry.x, entry.y, 0);
-      holder.scale.setScalar(entry.scale ?? 1);
-      holder.rotation.z = entry.spin ?? 0;
-      holder.add(model.root);
-      group.add(holder);
-      shown.push({ entry, model: Object.assign(model, { root: model.root }) });
-      (model as { holder?: THREE.Group }).holder = holder;
-    }
-  },
-  freeze(time: number | null): void {
-    frozenTime = time;
-  },
-  metrics: () => ({ ...renderer.metrics }),
-};
-
-declare global {
-  interface Window {
-    __viewer: typeof viewer;
-    __viewerReady: boolean;
-  }
-}
-window.__viewer = viewer;
-window.__viewerReady = true;
-
-const start = performance.now();
-const loop = () => {
-  const time = frozenTime ?? (performance.now() - start) / 1000;
-  apply(time);
-  floor.update(time * 22, 0, 0);
-  renderer.ui.clearRect(0, 0, renderer.uiCanvas.width, renderer.uiCanvas.height);
-  renderer.markUiDirty();
-  renderer.render(time);
-  requestAnimationFrame(loop);
-};
-requestAnimationFrame(loop);
+requestAnimationFrame(frame);
