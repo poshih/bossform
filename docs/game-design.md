@@ -77,7 +77,8 @@ Robots are responsive but not weightless: they brake twice as hard as they accel
 
 ### 5.2 Projectiles: the normal-speed rule [SET]
 - **Every projectile, whoever fires it, travels at 1.2 to 3.2 units/tick** (72 to 192 units/s), enforced by one cap in
-  the code that spawns projectiles.
+  the code that spawns projectiles. The one exception is a harmless inert fuse, which may stand still (the GALE dash leaves
+  one where it began; it bursts into moving shrapnel).
 - No hitscan, no beams, no instant effects. Area effects are slow rings, delayed detonations, or shrapnel.
 - One kind of object for all: owner (a seat or "neutral"), team, radius, damage, heading, speed, optional slow
   acceleration or curvature. Player and neutral bullets follow identical rules.

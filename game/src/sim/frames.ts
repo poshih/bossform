@@ -64,7 +64,7 @@ export const GALE = {
     protect: 14,
     /** Left where the dash began: detonates into a ring once its fuse (its life) is up. */
     echo: shot({
-      kind: Proj.Echo, spd: fx.lit(1.2), rad: fx.lit(5), dmg: 0, life: 30, flags: ShotFlag.Inert,
+      kind: Proj.Echo, spd: 0, rad: fx.lit(5), dmg: 0, life: 30, flags: ShotFlag.Inert,
       burst: { count: 12, shot: shot({ kind: Proj.Shard, spd: fx.lit(2.4), rad: fx.lit(2.4), dmg: 5, life: 90 }) },
     }),
   },

@@ -462,7 +462,8 @@ export class ProjectilesView implements StageView {
       this.ages[count] = current.pAge[p];
       this.lifes[count] = clamp01(ageNorm);
       count++;
-      trailCount = this.appendTrail(trailCount, x, y, angle, def.spd, radius, baseColor, hostile, friendly, timeSeconds, p);
+      // A trail says where a bullet came from: a fuse that stands still has none.
+      if (def.spd > 0) trailCount = this.appendTrail(trailCount, x, y, angle, def.spd, radius, baseColor, hostile, friendly, timeSeconds, p);
     }
     const endCount = this.updateEndFx(dtSeconds);
     this.bulletGeometry.instanceCount = count;

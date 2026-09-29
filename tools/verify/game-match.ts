@@ -210,8 +210,12 @@ class Watch {
           this.shots.boss++;
           const seat = m.pOwner[p];
           const started = this.windup[seat][m.pAttack[p]];
-          if (started < 0 || tick - started < MIN_WINDUP_TICKS[m.pAttack[p]]) this.fail(`tick ${tick}: a boss attack ${m.pAttack[p]} shot appeared ${tick - started} ticks after its wind-up began`);
-          if (!BURST_CHILDREN.has(def.id)) this.checkMuzzle(sim, p, tick);
+          // Shrapnel is born where its shell bursts, possibly during the NEXT wind-up of the same attack: the shell itself was
+          // checked (tell and muzzle) when it was launched.
+          if (!BURST_CHILDREN.has(def.id)) {
+            if (started < 0 || tick - started < MIN_WINDUP_TICKS[m.pAttack[p]]) this.fail(`tick ${tick}: a boss attack ${m.pAttack[p]} shot (blueprint ${def.id}) appeared ${tick - started} ticks after its wind-up began`);
+            this.checkMuzzle(sim, p, tick);
+          }
         } else if (m.pOwner[p] < 0) this.shots.neutral++;
         else this.shots.player++;
         if ((def.flags & 1) !== 0) this.shots.seeker++;

@@ -51,7 +51,7 @@ export const SHOT_DEFS: readonly ShotDef[] = registry;
 
 /**
  * The single place shots are defined. It enforces the game's speed rule at authoring time: every projectile,
- * whoever owns it, launches and accelerates only within (0, PROJECTILE_SPEED_CAP].
+ * whoever owns it, launches and accelerates only within (0, PROJECTILE_SPEED_CAP]; only a harmless inert fuse may stand still.
  */
 export function shot(spec: ShotSpec): ShotDef {
   const def: ShotDef = {
@@ -71,7 +71,9 @@ export function shot(spec: ShotSpec): ShotDef {
     throw new RangeError(`shot #${def.id} (kind ${def.kind}): ${why}`);
   };
   if (!(def.kind >= 0 && def.kind < PROJ_KIND_COUNT)) fail('unknown kind');
-  if (!(def.spd > 0 && def.spd <= PROJECTILE_SPEED_CAP)) fail('launch speed must be in (0, cap]');
+  // An inert fuse may stand still (a mine left behind); anything that can hurt must move.
+  const inert = (def.flags & ShotFlag.Inert) !== 0;
+  if (!((inert ? def.spd >= 0 : def.spd > 0) && def.spd <= PROJECTILE_SPEED_CAP)) fail(inert ? 'an inert fuse needs a speed in [0, cap]' : 'launch speed must be in (0, cap]');
   if (!(def.maxSpd >= def.spd && def.maxSpd <= PROJECTILE_SPEED_CAP)) fail('maxSpd must be in [spd, cap]');
   if (def.acc < 0) fail('acceleration must not be negative');
   if (def.acc > 0 && def.maxSpd <= def.spd) fail('an accelerating shot needs maxSpd above its launch speed');

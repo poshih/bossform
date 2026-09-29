@@ -7,7 +7,7 @@ import { fx } from '@metronome/engine';
 import {
   Attack, Button, decodeConfig, encodeConfig, Ev, FORMS, Form, FRAME_STATS, Frame, GALE, GAUGE_MAX, GAUGE_PER_DAMAGE_DEALT,
   GAUGE_PER_DAMAGE_TAKEN, GAUGE_PER_GRAZE, JUGGERNAUT, MIN_WINDUP_TICKS, Mode, NEUTRAL_DEFS, NeutralType, NO_SEAT, ORB_VALUE, Phase,
-  PROJECTILE_SPEED_CAP, SHOT_DEFS, VANGUARD, W, WAVE_INTERVAL_TICKS, BOSS_DRAIN_PER_TICK,
+  PROJECTILE_SPEED_CAP, SHOT_DEFS, ShotFlag, VANGUARD, W, WAVE_INTERVAL_TICKS, BOSS_DRAIN_PER_TICK,
 } from '../../game/src/sim/index.ts';
 import { shot } from '../../game/src/sim/shots.ts';
 import { holding, IDLE, Scenario } from './game-scenario.ts';
@@ -26,7 +26,9 @@ const throwsRange = (fn: () => unknown): boolean => {
 
 section('definitions: the speed rule and the weight rules are enforced when content is authored');
 {
-  check(`all ${SHOT_DEFS.length} projectile blueprints launch and top out at or below the cap`, SHOT_DEFS.every((d) => d.spd > 0 && d.spd <= PROJECTILE_SPEED_CAP && d.maxSpd <= PROJECTILE_SPEED_CAP));
+  const moves = (d: (typeof SHOT_DEFS)[number]) => ((d.flags & ShotFlag.Inert) !== 0 ? d.spd >= 0 : d.spd > 0);
+  check(`all ${SHOT_DEFS.length} projectile blueprints launch and top out at or below the cap (only a harmless inert fuse may stand still)`, SHOT_DEFS.every((d) => moves(d) && d.spd <= PROJECTILE_SPEED_CAP && d.maxSpd <= PROJECTILE_SPEED_CAP));
+  check('a stationary shot that could hurt is refused', throwsRange(() => shot({ kind: 0, spd: 0, rad: fx.fromInt(2), dmg: 1, life: 10 })));
   check('shrapnel blueprints obey the cap too', SHOT_DEFS.every((d) => d.burst === null || d.burst.shot.maxSpd <= PROJECTILE_SPEED_CAP));
   check('authoring a shot faster than the cap is refused', throwsRange(() => shot({ kind: 0, spd: PROJECTILE_SPEED_CAP + 1, rad: fx.fromInt(2), dmg: 1, life: 10 })));
   check('authoring a shot that accelerates past the cap is refused', throwsRange(() => shot({ kind: 0, spd: fx.lit(2), acc: fx.lit(0.1), maxSpd: PROJECTILE_SPEED_CAP + 1, rad: fx.fromInt(2), dmg: 1, life: 10 })));
@@ -101,6 +103,27 @@ for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
     biggest = Math.max(biggest, Math.hypot(s.m.plVX[0] - vx, s.m.plVY[0] - vy));
   }
   check('a colossus still changes its velocity by at most its own acceleration per tick, braking included (its weight)', biggest <= form.accel + 1, `${(biggest / fx.ONE).toFixed(3)} vs ${form.accel / fx.ONE}`);
+}
+
+section('the GALE dash leaves its echo where the dash began, and the echo bursts there');
+{
+  const s = new Scenario({ mode: Mode.Deathmatch, frames: [Frame.Gale, Frame.Vanguard] }).battle().exposed().place(0, -200, 0).place(1, 300, 300);
+  const startX = s.m.plX[0];
+  const startY = s.m.plY[0];
+  s.step(1, (seat) => (seat === 0 ? holding(Button.Alt, { moveX: 127 }) : IDLE));
+  const dash = s.events(Ev.Dash)[0];
+  const echoDef = GALE.dash.echo;
+  let echo = -1;
+  for (let p = 0; p < s.w.cap.projectiles; p++) if (s.m.pAlive[p] === 1 && s.m.pDef[p] === echoDef.id) echo = p;
+  const placed = echo >= 0 && s.m.pX[echo] === startX && s.m.pY[echo] === startY;
+  // It ages once on the tick it is laid, so its fuse runs out `life - 1` ticks later: look one tick before that.
+  s.step(echoDef.life - 2);
+  const stayed = echo >= 0 && s.m.pAlive[echo] === 1 && s.m.pX[echo] === startX && s.m.pY[echo] === startY;
+  s.step(2);
+  const burst = s.events(Ev.Burst).find((e) => e.a === echoDef.id);
+  check('the echo appears where the dash began, stays there through its fuse, and bursts on that spot',
+    dash !== undefined && placed && stayed && burst !== undefined && burst.x === startX && burst.y === startY,
+    `placed ${placed}, stayed ${stayed}, burst at ${burst ? ((burst.x - startX) / fx.ONE).toFixed(1) : 'none'}`);
 }
 
 section('configuration is validated where it enters the simulation');
