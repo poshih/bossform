@@ -177,6 +177,11 @@ export class Stage {
     this.camera.project(x, y, out);
   }
 
+  /** The floor point, in world units, under a position on the canvas (CSS pixels). */
+  ground(cssX: number, cssY: number, out: { x: number; y: number }): void {
+    this.camera.ground(cssX, cssY, out);
+  }
+
   aimFrom(seat: number, cssX: number, cssY: number): number {
     return this.camera.aimFrom(this.worldRef, seat, cssX, cssY);
   }

@@ -13,6 +13,7 @@ import {
   Form,
   GALE,
   GAUGE_MAX,
+  GAUGE_SCALE,
   JUGGERNAUT,
   NO_SEAT,
   NO_WINNER,
@@ -83,7 +84,52 @@ const SCOREBOARD_WIDTH = 250;
 const FEED_WIDTH = 270;
 const TIMER_WIDTH = 290;
 const SAFE_ZONE_STROKE = 2;
-const RADAR_CAMERA_WORLD = 100;
+const RADAR_VIEW_CORNERS = [[0, 0], [1, 0], [1, 1], [0, 1]] as const;
+const RADAR_VIEW_STROKE = 'rgba(255,255,255,0.36)';
+const LOCAL_PANEL_PAD = 14;
+const LOCAL_PANEL_GAP = 10;
+const LOCAL_BAR_HEIGHT = 12;
+const LOCAL_MINOR_BAR_HEIGHT = 10;
+const LOCAL_CHIP_HEIGHT = 34;
+const LOCAL_COMPACT_CHIP_HEIGHT = 18;
+const LOCAL_BOSS_DIAGRAM_HEIGHT = 82;
+const LOCAL_SECTION_GAP = 8;
+const LOCAL_ROW_GAP = 4;
+const LOCAL_LABEL_SIZE = 10;
+const LOCAL_TOP_LABEL_SIZE = 11;
+const LOCAL_VALUE_SIZE = 11;
+const LOCAL_TITLE_SIZE = 12;
+const LOCAL_LABEL_TO_BAR = 4;
+/** Threshold markers under the energy bar: how far below the bar's top their labels sit, and how tall those labels are. */
+const LOCAL_MARKER_LABEL_DROP = 24;
+const LOCAL_MARKER_LABEL_HEIGHT = 6;
+const LOCAL_COMPACT_CHIP_PITCH = 22;
+/** Tall chip rows, in pixels from the chip's top: key, name (and status), then the optional progress bar. */
+/** Label tracking candidates, widest first, and the least space kept between a row's label and its value. */
+const METRIC_TRACKINGS = [UI_CAPS_SPACING, '0.1em', '0em'] as const;
+const METRIC_ROW_MIN_GAP = 6;
+const COMPACT_CHIP_INSET = 7;
+const COMPACT_CHIP_GAP = 4;
+const COMPACT_HINT_SIZE = 8.5;
+const COMPACT_TITLE_SIZE = 8.8;
+/** The key column is at least this wide so the names of stacked compact chips line up. */
+const COMPACT_HINT_COLUMN = 18;
+const ULTIMA_CHIP_INDEX = 2;
+const CHIP_INSET = 9;
+const CHIP_HINT_SIZE = 8.5;
+const CHIP_TITLE_SIZE = 10;
+const CHIP_STATUS_SIZE = 10.5;
+const CHIP_HINT_BASELINE = 11;
+const CHIP_TITLE_BASELINE = 22;
+const CHIP_PROGRESS_TOP = 26;
+const CHIP_PROGRESS_HEIGHT = 4;
+const ATTACK_CHIP_COUNT = 3;
+const ALERT_FRAME_INSET = 2;
+const ALERT_FRAME_WIDTH = 2.5;
+const SAFE_INDICATOR_GAP = 6;
+/** Room one off-screen pointer needs along its edge: a chevron plus its label, stacked (vertical edges) or side by side. */
+const INDICATOR_SLOT_VERTICAL = 40;
+const INDICATOR_SLOT_HORIZONTAL = 64;
 
 const LABEL_FONT_WEIGHT = 600;
 const BODY_FONT_WEIGHT = 500;
@@ -129,11 +175,68 @@ interface TeamGroup {
   readonly solo: boolean;
 }
 
+/** A point on the inset screen edge; `vertical` is true on the left and right edges. */
+interface EdgeSpot {
+  x: number;
+  y: number;
+  vertical: boolean;
+}
+
+/** One off-screen pointer: its edge spot, the chevron and the label under it. */
+interface EdgeMark extends EdgeSpot {
+  readonly angle: number;
+  readonly size: number;
+  readonly color: string;
+  readonly alpha: number;
+  readonly label: string;
+  readonly labelColor: string;
+}
+
+interface ChipSpec {
+  readonly title: string;
+  readonly hint: string;
+  readonly status: string;
+  /** Used instead of `status` when the chip is too narrow for both the name and the full status. */
+  readonly shortStatus?: string;
+  readonly color: string;
+  readonly alpha: number;
+  readonly progress?: ChipProgress;
+}
+
+interface ChipProgress {
+  readonly fill: number;
+  readonly color: string;
+}
+
 interface Rect {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
+}
+
+/** Row positions of the local pilot's panel, in pixels from the panel's top-left (see measureLocalPanel). */
+interface LocalPanelLayout {
+  readonly boss: boolean;
+  readonly height: number;
+  readonly leftX: number;
+  readonly leftWidth: number;
+  readonly rightX: number;
+  readonly rightWidth: number;
+  readonly titleBaseline: number;
+  readonly hpLabel: number;
+  readonly hpBar: number;
+  readonly windowLabel: number;
+  readonly windowBar: number;
+  readonly energyLabel: number;
+  readonly energyBar: number;
+  readonly formLine: number;
+  readonly tellLine: number;
+  readonly diagram: number;
+  readonly diagramHeight: number;
+  readonly attackChips: number;
+  readonly cooldownChip: number;
+  readonly transformChip: number;
 }
 
 export interface HudView {
@@ -142,7 +245,10 @@ export interface HudView {
   readonly names: readonly string[];
   readonly width: number;
   readonly height: number;
+  /** World units to CSS pixels on the overlay (Stage.project). */
   readonly project: (x: number, y: number, out: { x: number; y: number }) => void;
+  /** CSS pixels on the overlay to the floor point under them, in world units (Stage.ground). */
+  readonly ground: (cssX: number, cssY: number, out: { x: number; y: number }) => void;
   readonly time: number;
   readonly cursor: { x: number; y: number } | null;
 }
@@ -199,8 +305,8 @@ export class Hud {
     const radarSize = this.s(RADAR_BASE);
     const radarRect = this.rect(margin, height - margin - radarSize, radarSize, radarSize);
     const localWidth = clamp(width * (this.scale < 0.85 ? 0.28 : 0.33), this.s(300), this.s(440));
-    const localHeight = this.s(world.m.plForm[view.seat] === Form.Boss ? 156 : 124);
-    const localRect = this.rect(width * 0.5 - localWidth * 0.5, height - margin - localHeight, localWidth, localHeight);
+    const localLayout = this.measureLocalPanel(ctx, world, view.seat, localWidth);
+    const localRect = this.rect(width * 0.5 - localWidth * 0.5, height - margin - localLayout.height, localWidth, localLayout.height);
     this.occluders = [scoreboardRect, feedRect, radarRect, localRect];
     ctx.save();
     ctx.imageSmoothingEnabled = true;
@@ -209,7 +315,7 @@ export class Hud {
     this.drawKillFeed(ctx, view, feedRect.x, feedRect.y, feedRect.width);
     this.drawTimer(ctx, view, timerRect.x, timerRect.y, timerRect.width);
     this.drawRadar(ctx, view, radarRect.x, radarRect.y, radarRect.width);
-    this.drawLocalPanel(ctx, view, localRect.x, localRect.y, localRect.width, localRect.height);
+    this.drawLocalPanel(ctx, view, localRect, localLayout);
     this.drawOffscreenIndicators(ctx, view);
     this.drawUltimaAlert(ctx, view);
     this.drawCenterBanners(ctx, view);
@@ -220,6 +326,11 @@ export class Hud {
 
   private s(value: number): number {
     return value * this.scale;
+  }
+
+  /** Screen position of a simulation coordinate pair (fixed point): the Stage projects world units. */
+  private screenOf(view: HudView, rawX: number, rawY: number, out: { x: number; y: number }): void {
+    view.project(fx.toFloat(rawX), fx.toFloat(rawY), out);
   }
 
   private rect(x: number, y: number, width: number, height: number): Rect {
@@ -546,24 +657,72 @@ export class Hud {
     });
   }
 
-  private drawLocalPanel(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, width: number, height: number): void {
+  /**
+   * Every row of the local pilot's panel, measured once from the fonts that draw it. Offsets are from the panel's top-left, so
+   * the caller can anchor the panel to the bottom of the screen after learning how tall it must be: content never overflows.
+   */
+  private measureLocalPanel(ctx: CanvasRenderingContext2D, world: World, seat: number, width: number): LocalPanelLayout {
+    const boss = world.m.plForm[seat] === Form.Boss;
+    const pad = this.s(LOCAL_PANEL_PAD);
+    const gap = this.s(LOCAL_PANEL_GAP);
+    const sectionGap = this.s(LOCAL_SECTION_GAP);
+    const labelLine = this.lineHeight(ctx, LABEL_FONT_WEIGHT, this.s(LOCAL_LABEL_SIZE));
+    const topLine = this.lineHeight(ctx, LABEL_FONT_WEIGHT, this.s(LOCAL_TOP_LABEL_SIZE));
+    const titleLine = this.lineHeight(ctx, TITLE_FONT_WEIGHT, this.s(LOCAL_TITLE_SIZE));
+    const barHeight = this.s(LOCAL_BAR_HEIGHT);
+    const minorBarHeight = this.s(LOCAL_MINOR_BAR_HEIGHT);
+    const leftWidth = width * (boss ? 0.56 : 0.58) - pad;
+    const rightWidth = width - pad * 2 - gap - leftWidth;
+
+    const titleBaseline = pad + topLine;
+    const hpLabel = titleBaseline + sectionGap + labelLine;
+    const hpBar = hpLabel + this.s(LOCAL_LABEL_TO_BAR);
+    const windowLabel = hpBar + barHeight + sectionGap + labelLine;
+    const windowBar = windowLabel + this.s(LOCAL_LABEL_TO_BAR);
+    const energyLabel = windowBar + minorBarHeight + sectionGap + labelLine;
+    const energyBar = energyLabel + this.s(LOCAL_LABEL_TO_BAR);
+    const markerBottom = energyBar + this.s(LOCAL_MARKER_LABEL_DROP) + this.s(LOCAL_MARKER_LABEL_HEIGHT);
+
+    const formLine = markerBottom + sectionGap + titleLine;
+    const tellLine = formLine + this.s(LOCAL_ROW_GAP) + titleLine;
+    const diagramLabel = pad + labelLine;
+    const diagramHeight = Math.max(this.s(LOCAL_BOSS_DIAGRAM_HEIGHT), rightWidth * 0.62);
+    const diagram = diagramLabel + this.s(LOCAL_LABEL_TO_BAR) + this.s(2);
+    const attackChips = diagram + diagramHeight + sectionGap;
+    const attackChipsBottom = attackChips + this.s(LOCAL_COMPACT_CHIP_PITCH) * (ATTACK_CHIP_COUNT - 1) + this.s(LOCAL_COMPACT_CHIP_HEIGHT);
+    const cooldownChip = titleBaseline + sectionGap;
+    const transformChip = cooldownChip + this.s(LOCAL_CHIP_HEIGHT) + sectionGap;
+    const normalChipsBottom = transformChip + this.s(LOCAL_CHIP_HEIGHT);
+
+    const leftBottom = boss ? tellLine : markerBottom;
+    const rightBottom = boss ? attackChipsBottom : normalChipsBottom;
+    return {
+      boss, height: Math.max(leftBottom, rightBottom) + pad,
+      leftX: pad, leftWidth, rightX: pad + leftWidth + gap, rightWidth,
+      titleBaseline, hpLabel, hpBar, windowLabel, windowBar, energyLabel, energyBar,
+      formLine, tellLine, diagram, diagramHeight, attackChips, cooldownChip, transformChip,
+    };
+  }
+
+  private drawLocalPanel(ctx: CanvasRenderingContext2D, view: HudView, rect: Rect, layout: LocalPanelLayout): void {
     const { world, seat, time } = view;
     const { m } = world;
     const frame = m.plFrame[seat];
     const stats = FRAME_STATS[frame];
-    const team = m.plTeam[seat];
-    const accent = cssHex(teamColor(team));
+    const accent = cssHex(teamColor(m.plTeam[seat]));
     const alive = m.plAlive[seat] === 1;
-    this.drawPanel(ctx, x, y, width, height, accent);
-    const pad = this.s(14);
-    const gap = this.s(10);
-    const leftWidth = width * (m.plForm[seat] === Form.Boss ? 0.54 : 0.58) - pad;
-    const rightWidth = width - pad * 2 - gap - leftWidth;
-    const leftX = x + pad;
-    const rightX = leftX + leftWidth + gap;
-    this.drawSectionLabel(ctx, alive ? 'LOCAL PILOT' : 'SPECTATOR', leftX, y + this.s(18), UI_TEXT_DIM);
-    this.drawMetricHeader(ctx, `HP ${Math.max(0, m.plHp[seat])} / ${stats.hp}`, leftX, y + this.s(32), accent);
-    this.drawMeter(ctx, leftX, y + this.s(38), leftWidth, this.s(12), invLerp(0, stats.hp, m.plHp[seat]), accent);
+    const { x, y } = rect;
+    const barHeight = this.s(LOCAL_BAR_HEIGHT);
+    const minorBarHeight = this.s(LOCAL_MINOR_BAR_HEIGHT);
+    const leftX = x + layout.leftX;
+    const rightX = x + layout.rightX;
+    const leftWidth = layout.leftWidth;
+    const hpBarY = y + layout.hpBar;
+
+    this.drawPanel(ctx, x, y, rect.width, rect.height, accent);
+    this.drawSectionLabel(ctx, alive ? 'LOCAL PILOT' : 'SPECTATOR', leftX, y + layout.titleBaseline, UI_TEXT_DIM);
+    this.drawMetricRow(ctx, 'HP', `${Math.max(0, m.plHp[seat])} / ${stats.hp}`, leftX, y + layout.hpLabel, leftWidth, accent, accent);
+    this.drawMeter(ctx, leftX, hpBarY, leftWidth, barHeight, invLerp(0, stats.hp, m.plHp[seat]), accent);
     const segments = Math.max(1, Math.ceil(stats.hp / stats.windowCap));
     for (let i = 1; i < segments; i++) {
       const sx = leftX + (leftWidth * i) / segments;
@@ -571,112 +730,145 @@ export class Hud {
       ctx.strokeStyle = `rgba(255,255,255,${WINDOW_SEPARATOR_ALPHA})`;
       ctx.lineWidth = this.s(1);
       ctx.beginPath();
-      ctx.moveTo(sx, y + this.s(39));
-      ctx.lineTo(sx, y + this.s(49));
+      ctx.moveTo(sx, hpBarY + this.s(1));
+      ctx.lineTo(sx, hpBarY + barHeight - this.s(1));
       ctx.stroke();
       ctx.restore();
     }
 
     const windowRatio = this.damageWindowRatio(world, seat, time);
-    const blockedFlash = this.windows[seat].blockedUntil > time ? pulse(time, 18, 0.35, 1) : 0;
-    this.drawMetricHeader(ctx, 'DAMAGE WINDOW', leftX, y + this.s(58), blockedFlash > 0 ? UI_WARNING : UI_TEXT_DIM);
-    this.drawMeter(ctx, leftX, y + this.s(64), leftWidth, this.s(10), windowRatio, blockedFlash > 0 ? UI_WARNING : '#ffcf69');
-    ctx.save();
-    ctx.font = `${BODY_FONT_WEIGHT} ${this.s(11)}px ${UI_FONT_STACK}`;
-    ctx.fillStyle = blockedFlash > 0 ? UI_WARNING : UI_TEXT_DIM;
-    ctx.textAlign = 'right';
-    ctx.fillText(`${Math.round(this.windows[seat].amount)} / ${stats.windowCap}`, leftX + leftWidth - this.s(2), y + this.s(82));
-    ctx.textAlign = 'left';
-    ctx.restore();
+    const blocked = this.windows[seat].blockedUntil > time;
+    const windowColor = blocked ? UI_WARNING : UI_TEXT_DIM;
+    this.drawMetricRow(ctx, 'DAMAGE WINDOW', `${Math.round(this.windows[seat].amount)} / ${stats.windowCap}`, leftX, y + layout.windowLabel, leftWidth, windowColor, windowColor);
+    this.drawMeter(ctx, leftX, y + layout.windowBar, leftWidth, minorBarHeight, windowRatio, blocked ? UI_WARNING : '#ffcf69');
 
-    this.drawMetricHeader(ctx, 'ENERGY', leftX, y + this.s(92), UI_TEXT_DIM);
-    this.drawMeter(ctx, leftX, y + this.s(98), leftWidth, this.s(12), m.plGauge[seat] / GAUGE_MAX, '#7ae4ff');
-    this.drawGaugeMarkers(ctx, leftX, y + this.s(98), leftWidth, frame, m.plForm[seat]);
-    ctx.save();
-    ctx.font = `${BODY_FONT_WEIGHT} ${this.s(11)}px ${UI_FONT_STACK}`;
-    ctx.fillStyle = UI_TEXT;
-    ctx.fillText(`${Math.floor(m.plGauge[seat] / 100)} / ${GAUGE_MAX / 100}`, leftX, y + this.s(116));
-    ctx.restore();
+    this.drawMetricRow(ctx, 'ENERGY', `${Math.floor(m.plGauge[seat] / GAUGE_SCALE)} / ${GAUGE_MAX / GAUGE_SCALE}`, leftX, y + layout.energyLabel, leftWidth, UI_TEXT_DIM, UI_TEXT);
+    this.drawMeter(ctx, leftX, y + layout.energyBar, leftWidth, barHeight, m.plGauge[seat] / GAUGE_MAX, '#7ae4ff');
+    this.drawGaugeMarkers(ctx, leftX, y + layout.energyBar, leftWidth, frame, m.plForm[seat]);
 
-    if (m.plForm[seat] === Form.Boss) {
+    if (layout.boss) {
       const seconds = m.plGauge[seat] / BOSS_DRAIN_PER_TICK / TICK_RATE;
-      this.drawMetricHeader(ctx, FORM_NAMES[frame], leftX, y + this.s(128), accent);
+      this.drawMetricHeader(ctx, FORM_NAMES[frame], leftX, y + layout.formLine, accent);
       ctx.save();
-      ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(12)}px ${UI_FONT_STACK}`;
+      ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(LOCAL_TITLE_SIZE)}px ${UI_FONT_STACK}`;
       ctx.fillStyle = UI_TEXT;
-      ctx.fillText(`FUEL ${formatClock(seconds)}`, leftX, y + this.s(142));
+      ctx.textAlign = 'right';
+      ctx.fillText(`FUEL ${formatClock(seconds)}`, leftX + leftWidth, y + layout.formLine);
       ctx.restore();
-      this.drawPartIntegrity(ctx, rightX, y + this.s(28), rightWidth, this.s(52), world, seat);
-      this.drawAttackReadiness(ctx, rightX, y + this.s(88), rightWidth, frame, world, seat, time);
-      this.drawAttackTell(ctx, leftX, y + this.s(128), world, seat);
+      this.drawAttackTell(ctx, leftX, y + layout.tellLine, world, seat);
+      this.drawPartIntegrity(ctx, rightX, y + layout.diagram, layout.rightWidth, layout.diagramHeight, world, seat);
+      this.drawAttackReadiness(ctx, rightX, y + layout.attackChips, layout.rightWidth, frame, world, seat, time);
     } else {
       const ready = m.plGauge[seat] >= BOSS_MIN_GAUGE;
-      this.drawNormalCooldown(ctx, rightX, y + this.s(28), rightWidth, world, seat);
-      this.drawAbilityChip(
-        ctx,
-        rightX,
-        y + this.s(68),
-        rightWidth,
-        this.s(40),
-        'TRANSFORM',
-        'SPACE',
-        ready ? 'READY' : `${Math.ceil((BOSS_MIN_GAUGE - m.plGauge[seat]) / 100)} MORE`,
-        ready ? accent : UI_TEXT_DIM,
-        ready ? pulse(time, 7, 0.74, 1) : 0.62,
-      );
+      this.drawNormalCooldown(ctx, rightX, y + layout.cooldownChip, layout.rightWidth, world, seat);
+      const missing = Math.ceil((BOSS_MIN_GAUGE - m.plGauge[seat]) / GAUGE_SCALE);
+      this.drawAbilityChip(ctx, rightX, y + layout.transformChip, layout.rightWidth, this.s(LOCAL_CHIP_HEIGHT), {
+        title: 'TRANSFORM',
+        hint: 'SPACE',
+        status: ready ? 'READY' : `${missing} MORE`,
+        color: ready ? accent : UI_TEXT_DIM,
+        alpha: ready ? pulse(time, 7, 0.74, 1) : 0.62,
+      });
     }
   }
 
   private drawMetricHeader(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string): void {
     ctx.save();
-    ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(10)}px ${UI_FONT_STACK}`;
+    ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(LOCAL_LABEL_SIZE)}px ${UI_FONT_STACK}`;
     ctx.letterSpacing = UI_CAPS_SPACING;
     ctx.fillStyle = color;
     ctx.fillText(text, x, y);
     ctx.restore();
   }
 
-  private drawAbilityChip(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    title: string,
-    hint: string,
-    status: string,
-    color: string,
-    alpha: number,
-  ): void {
-    const compact = height <= this.s(24);
+  /**
+   * One row of a meter block: a tracked caps label at the left and a value at the right. Both are measured with the fonts that
+   * draw them; when they do not fit side by side the label's tracking is tightened step by step until they do.
+   */
+  private drawMetricRow(ctx: CanvasRenderingContext2D, label: string, value: string, x: number, baseline: number, width: number, labelColor: string, valueColor: string): void {
     ctx.save();
-    ctx.globalAlpha = alpha;
+    ctx.font = `${BODY_FONT_WEIGHT} ${this.s(LOCAL_VALUE_SIZE)}px ${UI_FONT_STACK}`;
+    const valueWidth = ctx.measureText(value).width;
+    ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(LOCAL_LABEL_SIZE)}px ${UI_FONT_STACK}`;
+    let tracking = METRIC_TRACKINGS.find((candidate) => {
+      ctx.letterSpacing = candidate;
+      return ctx.measureText(label).width + valueWidth + this.s(METRIC_ROW_MIN_GAP) <= width;
+    });
+    if (tracking === undefined) tracking = METRIC_TRACKINGS[METRIC_TRACKINGS.length - 1];
+    ctx.letterSpacing = tracking;
+    ctx.fillStyle = labelColor;
+    ctx.fillText(label, x, baseline);
+    ctx.letterSpacing = '0px';
+    ctx.font = `${BODY_FONT_WEIGHT} ${this.s(LOCAL_VALUE_SIZE)}px ${UI_FONT_STACK}`;
+    ctx.fillStyle = valueColor;
+    ctx.textAlign = 'right';
+    ctx.fillText(value, x + width, baseline);
+    ctx.restore();
+  }
+
+  private lineHeight(ctx: CanvasRenderingContext2D, weight: number, size: number): number {
+    ctx.save();
+    ctx.font = `${weight} ${size}px ${UI_FONT_STACK}`;
+    const metrics = ctx.measureText('Hg');
+    ctx.restore();
+    const measured = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+    return measured > 0 ? measured : size;
+  }
+
+  /**
+   * A readout chip. Compact chips (one row) show key, name and status side by side; when they do not fit, the short status is
+   * used. Tall chips stack the key over the name, put the status on the name's row when both fit (else on the key's row) and
+   * keep an optional progress bar on a row of its own, so nothing shares a row.
+   */
+  private drawAbilityChip(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, chip: ChipSpec): void {
+    const compact = height <= this.s(LOCAL_COMPACT_CHIP_HEIGHT + 6);
+    const { title, hint, color, progress } = chip;
+    ctx.save();
+    ctx.globalAlpha = chip.alpha;
     ctx.strokeStyle = color;
     ctx.lineWidth = this.s(1.1);
     drawChamferRect(ctx, x, y, width, height, this.s(8));
     ctx.stroke();
     if (compact) {
-      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(8.5)}px ${UI_FONT_STACK}`;
-      ctx.fillStyle = color;
-      ctx.fillText(hint, x + this.s(7), y + height * 0.62);
-      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(8.8)}px ${UI_FONT_STACK}`;
+      const baseline = y + height * 0.62;
+      const inset = this.s(COMPACT_CHIP_INSET);
+      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(COMPACT_HINT_SIZE)}px ${UI_FONT_STACK}`;
+      const hintWidth = ctx.measureText(hint).width;
+      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(COMPACT_TITLE_SIZE)}px ${UI_FONT_STACK}`;
+      const titleX = x + inset + Math.max(hintWidth, this.s(COMPACT_HINT_COLUMN)) + this.s(COMPACT_CHIP_GAP);
+      const room = x + width - inset - titleX - ctx.measureText(title).width - this.s(COMPACT_CHIP_GAP);
+      const status = ctx.measureText(chip.status).width <= room || chip.shortStatus === undefined ? chip.status : chip.shortStatus;
       ctx.fillStyle = UI_TEXT;
-      ctx.fillText(title, x + this.s(30), y + height * 0.62);
+      ctx.fillText(title, titleX, baseline);
       ctx.textAlign = 'right';
-      ctx.fillText(status, x + width - this.s(8), y + height * 0.62);
+      ctx.fillText(status, x + width - inset, baseline);
+      ctx.textAlign = 'left';
+      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(COMPACT_HINT_SIZE)}px ${UI_FONT_STACK}`;
+      ctx.fillStyle = color;
+      ctx.fillText(hint, x + inset, baseline);
     } else {
-      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(9)}px ${UI_FONT_STACK}`;
+      const inset = this.s(CHIP_INSET);
+      const titleBaseline = y + this.s(CHIP_TITLE_BASELINE);
+      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(CHIP_TITLE_SIZE)}px ${UI_FONT_STACK}`;
+      const titleWidth = ctx.measureText(title).width;
+      ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(CHIP_STATUS_SIZE)}px ${UI_FONT_STACK}`;
+      const statusWidth = ctx.measureText(chip.status).width;
+      const sameRow = titleWidth + statusWidth + this.s(METRIC_ROW_MIN_GAP) <= width - inset * 2;
+      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(CHIP_HINT_SIZE)}px ${UI_FONT_STACK}`;
       ctx.fillStyle = color;
-      ctx.fillText(hint, x + this.s(8), y + this.s(13));
-      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(10)}px ${UI_FONT_STACK}`;
-      ctx.fillText(title, x + this.s(8), y + this.s(23));
-      ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(10.5)}px ${UI_FONT_STACK}`;
+      ctx.fillText(hint, x + inset, y + this.s(CHIP_HINT_BASELINE));
+      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(CHIP_TITLE_SIZE)}px ${UI_FONT_STACK}`;
+      ctx.fillText(title, x + inset, titleBaseline);
+      ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(sameRow ? CHIP_STATUS_SIZE : CHIP_HINT_SIZE)}px ${UI_FONT_STACK}`;
       ctx.textAlign = 'right';
       ctx.fillStyle = UI_TEXT;
-      ctx.fillText(status, x + width - this.s(10), y + height - this.s(8));
+      ctx.fillText(chip.status, x + width - inset, sameRow ? titleBaseline : y + this.s(CHIP_HINT_BASELINE));
     }
     ctx.restore();
-    ctx.textAlign = 'left';
+    if (progress !== undefined) {
+      const inset = this.s(CHIP_INSET);
+      this.drawMeter(ctx, x + inset, y + this.s(CHIP_PROGRESS_TOP), width - inset * 2, this.s(CHIP_PROGRESS_HEIGHT), progress.fill, progress.color, 'rgba(255,255,255,0.05)');
+    }
   }
 
   private damageWindowRatio(world: World, seat: number, time: number): number {
@@ -699,13 +891,13 @@ export class Hud {
       ctx.strokeStyle = color;
       ctx.lineWidth = this.s(1.2);
       ctx.beginPath();
-      ctx.moveTo(mx, y - this.s(3));
-      ctx.lineTo(mx, y + this.s(15));
+      ctx.moveTo(mx, y - this.s(2));
+      ctx.lineTo(mx, y + this.s(16));
       ctx.stroke();
       ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(9)}px ${UI_FONT_STACK}`;
       ctx.fillStyle = color;
       ctx.textAlign = 'center';
-      ctx.fillText(label, mx, y - this.s(7));
+      ctx.fillText(label, mx, y + this.s(24));
       ctx.restore();
     };
     drawMarker(BOSS_MIN_GAUGE, 'B', UI_TEXT_DIM);
@@ -723,10 +915,19 @@ export class Hud {
     const hints = ['LMB', 'RMB', 'E'] as const;
     const colors = [UI_ACCENT, '#ffc76f', UI_WARNING] as const;
     attacks.forEach((cost, index) => {
-      const cy = y + index * this.s(22);
-      const ready = m.plGauge[seat] >= cost && (index !== 2 || m.plUltCd[seat] === 0);
-      const alpha = ready ? pulse(time + index, 6, 0.72, 1) : 0.38;
-      this.drawAbilityChip(ctx, x, cy, width, this.s(18), labels[index], hints[index], ready ? 'READY' : `${Math.ceil((cost - m.plGauge[seat]) / 100)} MORE`, colors[index], alpha);
+      const gauge = m.plGauge[seat];
+      const cooldown = index === ULTIMA_CHIP_INDEX ? m.plUltCd[seat] : 0;
+      const ready = gauge >= cost && cooldown === 0;
+      const missing = Math.ceil((cost - gauge) / GAUGE_SCALE);
+      const status = ready ? 'READY' : gauge < cost ? `${missing} MORE` : formatCompactSeconds(cooldown / TICK_RATE);
+      this.drawAbilityChip(ctx, x, y + index * this.s(LOCAL_COMPACT_CHIP_PITCH), width, this.s(LOCAL_COMPACT_CHIP_HEIGHT), {
+        title: labels[index],
+        hint: hints[index],
+        status,
+        shortStatus: gauge < cost ? `+${missing}` : status,
+        color: colors[index],
+        alpha: ready ? pulse(time + index, 6, 0.72, 1) : 0.38,
+      });
     });
   }
 
@@ -737,7 +938,7 @@ export class Hud {
     ctx.save();
     ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(TELL_LABEL_FONT)}px ${UI_FONT_STACK}`;
     ctx.fillStyle = phase === AttackPhase.Windup ? UI_WARNING : phase === AttackPhase.Recovery ? '#ffc76f' : UI_TEXT;
-    ctx.fillText(`TELL: ${text}`, x, y + this.s(14));
+    ctx.fillText(`TELL: ${text}`, x, y);
     ctx.restore();
   }
 
@@ -754,20 +955,20 @@ export class Hud {
       maxX = Math.max(maxX, part.x + part.rad);
       maxY = Math.max(maxY, part.y + part.rad);
     });
-    const scale = Math.min((width - PART_SCHEMATIC_PAD * 2) / fx.toFloat(maxX - minX), (height - PART_SCHEMATIC_PAD * 2) / fx.toFloat(maxY - minY));
+    const scale = Math.min((width - this.s(PART_SCHEMATIC_PAD) * 2) / fx.toFloat(maxX - minX), (height - this.s(PART_SCHEMATIC_PAD) * 2) / fx.toFloat(maxY - minY));
     const cx = x + width * 0.5;
     const cy = y + height * 0.5;
-    this.drawMetricHeader(ctx, 'ARMOUR', x, y + height + 12, UI_TEXT_DIM);
+    this.drawMetricHeader(ctx, 'ARMOUR', x, y - this.s(4), UI_TEXT_DIM);
     ctx.save();
     form.parts.forEach((part, index) => {
       const hp = world.m.ptHp[base + index];
       const fraction = clamp(hp / part.hp, 0, 1);
       const px = cx + (fx.toFloat(part.x) - fx.toFloat((minX + maxX) * 0.5)) * scale;
       const py = cy + (fx.toFloat(part.y) - fx.toFloat((minY + maxY) * 0.5)) * scale;
-      const radius = Math.max(4, fx.toFloat(part.rad) * scale);
+      const radius = Math.max(this.s(4), fx.toFloat(part.rad) * scale);
       ctx.globalAlpha = lerp(PART_MIN_ALPHA, 1, fraction);
       ctx.strokeStyle = hp <= 0 ? UI_MUTED : fraction > 0.66 ? UI_SUCCESS : fraction > 0.33 ? '#ffc76f' : UI_WARNING;
-      ctx.lineWidth = part.roles & Role.Siege ? 2 : 1.2;
+      ctx.lineWidth = part.roles & Role.Siege ? this.s(2) : this.s(1.2);
       ctx.beginPath();
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.stroke();
@@ -778,7 +979,7 @@ export class Hud {
     });
     ctx.strokeStyle = UI_EDGE_SOFT;
     ctx.beginPath();
-    ctx.arc(cx, cy, Math.max(4, fx.toFloat(form.coreR) * scale), 0, Math.PI * 2);
+    ctx.arc(cx, cy, Math.max(this.s(4), fx.toFloat(form.coreR) * scale), 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -788,8 +989,15 @@ export class Hud {
     const remaining = world.m.plAltCd[seat];
     const total = NORMAL_ALT_COOLDOWNS[frame];
     const ready = remaining === 0;
-    this.drawAbilityChip(ctx, x, y, width, this.s(34), NORMAL_ALT_LABELS[frame], 'RMB', ready ? 'READY' : formatCompactSeconds(remaining / TICK_RATE), ready ? UI_SUCCESS : UI_ACCENT, 1);
-    this.drawMeter(ctx, x + this.s(8), y + this.s(22), width - this.s(16), this.s(6), 1 - remaining / total, ready ? UI_SUCCESS : UI_ACCENT, 'rgba(255,255,255,0.05)');
+    const color = ready ? UI_SUCCESS : UI_ACCENT;
+    this.drawAbilityChip(ctx, x, y, width, this.s(LOCAL_CHIP_HEIGHT), {
+      title: NORMAL_ALT_LABELS[frame],
+      hint: 'RMB',
+      status: ready ? 'READY' : formatCompactSeconds(remaining / TICK_RATE),
+      color,
+      alpha: 1,
+      progress: { fill: 1 - remaining / total, color },
+    });
   }
 
   private drawRadar(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, size: number): void {
@@ -808,7 +1016,8 @@ export class Hud {
     ctx.stroke();
     this.drawSectionLabel(ctx, 'RADAR', x, y - this.s(8), UI_TEXT_DIM);
 
-    const mapPoint = (wx: number, wy: number): { x: number; y: number } => ({ x: cx + (fx.toFloat(wx) / arena) * radius, y: cy - (fx.toFloat(wy) / arena) * radius });
+    const mapUnits = (wx: number, wy: number): { x: number; y: number } => ({ x: cx + (wx / arena) * radius, y: cy - (wy / arena) * radius });
+    const mapPoint = (rawX: number, rawY: number): { x: number; y: number } => mapUnits(fx.toFloat(rawX), fx.toFloat(rawY));
     const safe = fx.toFloat(world.m.world[W.SafeR]) / arena;
     ctx.beginPath();
     ctx.arc(cx, cy, radius * safe, 0, Math.PI * 2);
@@ -816,13 +1025,23 @@ export class Hud {
     ctx.lineWidth = this.s(SAFE_ZONE_STROKE);
     ctx.stroke();
 
-    const localPoint = mapPoint(world.m.plX[seat], world.m.plY[seat]);
-    const viewRect = this.estimateCameraRect(view, localPoint, radius, arena);
-    if (viewRect !== null) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.36)';
-      ctx.lineWidth = this.s(1);
-      ctx.strokeRect(viewRect.x, viewRect.y, viewRect.w, viewRect.h);
-    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.beginPath();
+    const corner = { x: 0, y: 0 };
+    RADAR_VIEW_CORNERS.forEach(([fractionX, fractionY], index) => {
+      view.ground(fractionX * view.width, fractionY * view.height, corner);
+      const at = mapUnits(corner.x, corner.y);
+      if (index === 0) ctx.moveTo(at.x, at.y);
+      else ctx.lineTo(at.x, at.y);
+    });
+    ctx.closePath();
+    ctx.strokeStyle = RADAR_VIEW_STROKE;
+    ctx.lineWidth = this.s(1);
+    ctx.stroke();
+    ctx.restore();
 
     for (let pilot = 0; pilot < world.seats; pilot++) {
       if (world.m.plAlive[pilot] !== 1) continue;
@@ -871,103 +1090,144 @@ export class Hud {
     ctx.restore();
   }
 
-  private estimateCameraRect(view: HudView, local: { x: number; y: number }, radius: number, arena: number): { x: number; y: number; w: number; h: number } | null {
-    const { world, seat, width, height, project } = view;
-    const here = { x: 0, y: 0 };
-    const dx = { x: 0, y: 0 };
-    const dy = { x: 0, y: 0 };
-    project(world.m.plX[seat], world.m.plY[seat], here);
-    project(world.m.plX[seat] + fx.fromInt(RADAR_CAMERA_WORLD), world.m.plY[seat], dx);
-    project(world.m.plX[seat], world.m.plY[seat] + fx.fromInt(RADAR_CAMERA_WORLD), dy);
-    const scaleX = Math.abs(dx.x - here.x);
-    const scaleY = Math.abs(dy.y - here.y);
-    if (scaleX < 0.001 || scaleY < 0.001) return null;
-    const worldW = (width / scaleX) * RADAR_CAMERA_WORLD;
-    const worldH = (height / scaleY) * RADAR_CAMERA_WORLD;
-    return {
-      x: local.x - (worldW / arena) * radius * 0.5,
-      y: local.y - (worldH / arena) * radius * 0.5,
-      w: (worldW / arena) * radius,
-      h: (worldH / arena) * radius,
-    };
-  }
-
   private drawOffscreenIndicators(ctx: CanvasRenderingContext2D, view: HudView): void {
-    const { world, seat, width, height, project, time } = view;
+    const { world, seat, width, height, time } = view;
     const centerX = width * 0.5;
     const centerY = height * 0.5;
     const localX = world.m.plX[seat];
     const localY = world.m.plY[seat];
     const point = { x: 0, y: 0 };
+    const marks: EdgeMark[] = [];
+    const place = (angle: number, size: number, color: string, alpha: number, label: string, labelColor: string): void => {
+      marks.push({ ...this.edgeSpot(angle, width, height, this.s(OFFSCREEN_PAD)), angle, size, color, alpha, label, labelColor });
+    };
     for (let other = 0; other < world.seats; other++) {
       if (other === seat || world.m.plAlive[other] !== 1 || world.m.plTeam[other] === world.m.plTeam[seat]) continue;
-      project(world.m.plX[other], world.m.plY[other], point);
+      this.screenOf(view, world.m.plX[other], world.m.plY[other], point);
       if (pointOnScreen(point.x, point.y, width, height, 20)) continue;
-      const dx = point.x - centerX;
-      const dy = point.y - centerY;
-      const angle = Math.atan2(dy, dx);
-      const bound = this.edgeClamp(angle, width, height, this.s(OFFSCREEN_PAD));
       const boss = world.m.plForm[other] === Form.Boss;
-      const size = boss ? this.s(pulse(time + other, 9, 14, 18)) : this.s(INDICATOR_CHEVRON);
       const color = cssHex(teamColor(world.m.plTeam[other]));
       const distance = Math.hypot(fx.toFloat(world.m.plX[other] - localX), fx.toFloat(world.m.plY[other] - localY));
-      this.drawChevron(ctx, bound.x, bound.y, angle, size, color, boss ? pulse(time, 14, 0.68, 1) : 0.72);
-      ctx.save();
-      ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(10)}px ${UI_FONT_STACK}`;
-      ctx.fillStyle = color;
-      ctx.textAlign = 'center';
-      ctx.fillText(`${Math.round(distance / 10) * 10}U`, bound.x, bound.y + size + this.s(12));
-      ctx.restore();
+      place(
+        Math.atan2(point.y - centerY, point.x - centerX),
+        boss ? this.s(pulse(time + other, 9, 14, 18)) : this.s(INDICATOR_CHEVRON),
+        color,
+        boss ? pulse(time, 14, 0.68, 1) : 0.72,
+        `${Math.round(distance / 10) * 10}U`,
+        color,
+      );
     }
     for (let n = 0; n < world.cap.neutrals; n++) {
       if (world.m.nAlive[n] !== 1 || world.m.nType[n] !== NeutralType.Warden) continue;
-      project(world.m.nX[n], world.m.nY[n], point);
+      this.screenOf(view, world.m.nX[n], world.m.nY[n], point);
       if (pointOnScreen(point.x, point.y, width, height, 20)) continue;
-      const dx = point.x - centerX;
-      const dy = point.y - centerY;
-      const angle = Math.atan2(dy, dx);
-      const bound = this.edgeClamp(angle, width, height, this.s(OFFSCREEN_PAD));
-      this.drawChevron(ctx, bound.x, bound.y, angle, this.s(INDICATOR_CHEVRON + 3), neutralAccent(1), 0.82);
+      place(Math.atan2(point.y - centerY, point.x - centerX), this.s(INDICATOR_CHEVRON + 3), neutralAccent(1), 0.82, 'WARDEN', neutralEdge(1));
+    }
+    this.placeAlongEdges(marks, width, height);
+    for (const mark of marks) {
+      this.drawChevron(ctx, mark.x, mark.y, mark.angle, mark.size, mark.color, mark.alpha);
       ctx.save();
       ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(10)}px ${UI_FONT_STACK}`;
-      ctx.fillStyle = neutralEdge(1);
+      ctx.fillStyle = mark.labelColor;
       ctx.textAlign = 'center';
-      ctx.fillText('WARDEN', bound.x, bound.y + this.s(24));
+      ctx.fillText(mark.label, mark.x, mark.y + mark.size + this.s(12));
       ctx.restore();
     }
   }
 
-  private edgeClamp(angle: number, width: number, height: number, pad: number): { x: number; y: number } {
+  /** Where a ray from the screen centre at `angle` meets the inset screen edge. `vertical` marks a left or right edge. */
+  private edgeSpot(angle: number, width: number, height: number, pad: number): EdgeSpot {
     const cx = width * 0.5;
     const cy = height * 0.5;
     const dx = Math.cos(angle);
     const dy = Math.sin(angle);
     const tx = dx > 0 ? (width - pad - cx) / dx : (pad - cx) / dx;
     const ty = dy > 0 ? (height - pad - cy) / dy : (pad - cy) / dy;
-    const t = Math.min(Math.abs(tx), Math.abs(ty));
-    const point = { x: cx + dx * t, y: cy + dy * t };
-    return this.avoidOccluders(point, pad);
+    if (Math.abs(tx) < Math.abs(ty)) return { x: dx > 0 ? width - pad : pad, y: cy + dy * Math.abs(tx), vertical: true };
+    return { x: cx + dx * Math.abs(ty), y: dy > 0 ? height - pad : pad, vertical: false };
   }
 
-  private avoidOccluders(point: { x: number; y: number }, pad: number): { x: number; y: number } {
-    let out = { ...point };
-    for (const rect of this.occluders) {
-      const rx = rect.x - pad;
-      const ry = rect.y - pad;
-      const rw = rect.width + pad * 2;
-      const rh = rect.height + pad * 2;
-      if (out.x < rx || out.x > rx + rw || out.y < ry || out.y > ry + rh) continue;
-      const left = Math.abs(out.x - rx);
-      const right = Math.abs(out.x - (rx + rw));
-      const top = Math.abs(out.y - ry);
-      const bottom = Math.abs(out.y - (ry + rh));
-      const min = Math.min(left, right, top, bottom);
-      if (min === left) out.x = rx;
-      else if (min === right) out.x = rx + rw;
-      else if (min === top) out.y = ry;
-      else out.y = ry + rh;
+  /** An edge point slid along its edge to the nearest stretch that no HUD panel covers. */
+  private edgeClamp(angle: number, width: number, height: number, pad: number): { x: number; y: number } {
+    const spot = this.edgeSpot(angle, width, height, pad);
+    this.packAlongEdge([spot], width, height, pad, 0);
+    return spot;
+  }
+
+  /**
+   * Off-screen pointers, grouped by the edge they sit on: each is slid along its edge to the free stretch nearest its true
+   * direction, and pointers that would crowd each other are kept `gap` apart, so nothing overlaps a panel or another pointer.
+   */
+  private placeAlongEdges(marks: EdgeMark[], width: number, height: number): void {
+    const pad = this.s(OFFSCREEN_PAD);
+    const groups = new Map<string, EdgeMark[]>();
+    for (const mark of marks) {
+      const key = mark.vertical ? (mark.x > width * 0.5 ? 'right' : 'left') : (mark.y > height * 0.5 ? 'bottom' : 'top');
+      const group = groups.get(key);
+      if (group === undefined) groups.set(key, [mark]);
+      else group.push(mark);
     }
-    return out;
+    for (const group of groups.values()) {
+      this.packAlongEdge(group, width, height, pad, this.s(group[0].vertical ? INDICATOR_SLOT_VERTICAL : INDICATOR_SLOT_HORIZONTAL));
+    }
+  }
+
+  /** Moves marks that share one edge (they must all be vertical or all horizontal) along it; see placeAlongEdges. */
+  private packAlongEdge(marks: EdgeSpot[], width: number, height: number, pad: number, gap: number): void {
+    const vertical = marks[0].vertical;
+    const axis = vertical ? 'y' : 'x';
+    const stretches = this.freeStretches(vertical ? 'vertical' : 'horizontal', vertical ? marks[0].x : marks[0].y, vertical ? height : width, pad);
+    marks.sort((a, b) => a[axis] - b[axis]);
+    let lastStretch = 0;
+    let lastPosition = -Infinity;
+    for (const mark of marks) {
+      const desired = mark[axis];
+      let bestStretch = -1;
+      let bestPosition = desired;
+      let bestDistance = Infinity;
+      for (let k = lastStretch; k < stretches.length; k++) {
+        const [start, end] = stretches[k];
+        const from = k === lastStretch ? Math.max(start, lastPosition + gap) : start;
+        if (from > end) continue;
+        const position = clamp(desired, from, end);
+        if (Math.abs(position - desired) < bestDistance) {
+          bestStretch = k;
+          bestPosition = position;
+          bestDistance = Math.abs(position - desired);
+        }
+      }
+      if (bestStretch < 0) {
+        bestStretch = stretches.length - 1;
+        bestPosition = stretches[bestStretch][1];
+      }
+      mark[axis] = bestPosition;
+      lastStretch = bestStretch;
+      lastPosition = bestPosition;
+    }
+  }
+
+  /**
+   * The stretches of one screen edge that no HUD panel reaches. `axis` is the direction along the edge, `edgeAt` the edge's own
+   * coordinate: only panels near that line block it. The whole edge is returned when panels cover all of it.
+   */
+  private freeStretches(axis: 'horizontal' | 'vertical', edgeAt: number, span: number, pad: number): Array<[number, number]> {
+    const margin = pad + this.s(SAFE_INDICATOR_GAP);
+    const alongX = axis === 'horizontal';
+    const covered = this.occluders
+      .filter((rect) => (alongX ? rect.y - margin <= edgeAt && edgeAt <= rect.y + rect.height + margin : rect.x - margin <= edgeAt && edgeAt <= rect.x + rect.width + margin))
+      .map((rect): [number, number] => (alongX ? [rect.x - margin, rect.x + rect.width + margin] : [rect.y - margin, rect.y + rect.height + margin]))
+      .sort((a, b) => a[0] - b[0]);
+    const free: Array<[number, number]> = [];
+    let cursor = pad;
+    for (const [start, end] of covered) {
+      const from = clamp(start, pad, span - pad);
+      const to = clamp(end, pad, span - pad);
+      if (to <= cursor) continue;
+      if (from > cursor) free.push([cursor, from]);
+      cursor = Math.max(cursor, to);
+    }
+    if (cursor < span - pad) free.push([cursor, span - pad]);
+    return free.length > 0 ? free : [[pad, span - pad]];
   }
 
   private drawChevron(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number, color: string, alpha: number): void {
@@ -987,13 +1247,23 @@ export class Hud {
     ctx.restore();
   }
 
+  private drawEdgeFrame(ctx: CanvasRenderingContext2D, width: number, height: number, color: string, alpha: number): void {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = this.s(ALERT_FRAME_WIDTH);
+    ctx.strokeRect(this.s(ALERT_FRAME_INSET), this.s(ALERT_FRAME_INSET), width - this.s(ALERT_FRAME_INSET) * 2, height - this.s(ALERT_FRAME_INSET) * 2);
+    ctx.restore();
+  }
+
   private drawUltimaAlert(ctx: CanvasRenderingContext2D, view: HudView): void {
     if (this.ultimaAlerts.length === 0) return;
     const alert = this.ultimaAlerts[this.ultimaAlerts.length - 1];
-    const { world, width, project } = view;
+    const { world, width, height } = view;
     const seat = alert.seat;
     const point = { x: 0, y: 0 };
-    project(world.m.plX[seat], world.m.plY[seat], point);
+    this.screenOf(view, world.m.plX[seat], world.m.plY[seat], point);
+    this.drawEdgeFrame(ctx, width, height, UI_WARNING, pulse(view.time, 10, 0.45, 0.82));
     const bannerWidth = this.s(320);
     const x = width * 0.5 - bannerWidth * 0.5;
     const y = this.s(90);
@@ -1005,9 +1275,11 @@ export class Hud {
     ctx.fillStyle = UI_WARNING;
     ctx.fillText(`ULTIMA — ${FORM_NAMES[world.m.plFrame[seat]]}`, x + bannerWidth * 0.5, y + this.s(22));
     ctx.restore();
-    const angle = Math.atan2(point.y - (y + this.s(52)), point.x - width * 0.5);
-    const edge = this.edgeClamp(angle, width, view.height, this.s(ULTIMA_ARROW_PAD));
-    this.drawChevron(ctx, edge.x, edge.y, angle, this.s(18), UI_WARNING, pulse(view.time, 15, 0.65, 1));
+    if (!pointOnScreen(point.x, point.y, width, height, this.s(16))) {
+      const angle = Math.atan2(point.y - (y + this.s(52)), point.x - width * 0.5);
+      const edge = this.edgeClamp(angle, width, height, this.s(ULTIMA_ARROW_PAD));
+      this.drawChevron(ctx, edge.x, edge.y, angle, this.s(18), UI_WARNING, pulse(view.time, 15, 0.65, 1));
+    }
   }
 
   private drawCenterBanners(ctx: CanvasRenderingContext2D, view: HudView): void {
@@ -1043,21 +1315,11 @@ export class Hud {
     const hpFraction = world.m.plHp[seat] / FRAME_STATS[world.m.plFrame[seat]].hp;
     const outside = world.m.plAlive[seat] === 1 && radial(world.m.plX[seat], world.m.plY[seat]) > world.m.world[W.SafeR];
     if (outside) {
-      const alpha = pulse(time, STORM_PULSE_RATE, 0.08, 0.18);
-      const gradient = ctx.createRadialGradient(width * 0.5, height * 0.5, Math.min(width, height) * 0.32, width * 0.5, height * 0.5, Math.max(width, height) * 0.65);
-      gradient.addColorStop(0, 'rgba(255,0,0,0)');
-      gradient.addColorStop(1, `rgba(255, 80, 100, ${alpha})`);
-      ctx.save();
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, width, height);
-      ctx.restore();
+      this.drawEdgeFrame(ctx, width, height, UI_WARNING, pulse(time, STORM_PULSE_RATE, 0.32, 0.62));
     }
     const hitAlpha = clamp((this.windows[seat].hitUntil - time) / HIT_PULSE_SECONDS, 0, 1) * 0.16;
     if (hitAlpha > 0) {
-      ctx.save();
-      ctx.fillStyle = `rgba(255, 110, 130, ${hitAlpha})`;
-      ctx.fillRect(0, 0, width, height);
-      ctx.restore();
+      this.drawEdgeFrame(ctx, width, height, UI_WARNING, hitAlpha * 3.5);
     }
     if (hpFraction > 0 && hpFraction <= HEALTH_WARN_THRESHOLD) {
       ctx.save();
@@ -1089,11 +1351,11 @@ export class Hud {
   }
 
   private drawNameTags(ctx: CanvasRenderingContext2D, view: HudView): void {
-    const { world, seat, project, names, width, height } = view;
+    const { world, seat, names, width, height } = view;
     const point = { x: 0, y: 0 };
     for (let other = 0; other < world.seats; other++) {
       if (other === seat || world.m.plAlive[other] !== 1 || world.m.plTeam[other] === world.m.plTeam[seat]) continue;
-      project(world.m.plX[other], world.m.plY[other], point);
+      this.screenOf(view, world.m.plX[other], world.m.plY[other], point);
       if (!pointOnScreen(point.x, point.y, width, height, 40)) continue;
       ctx.save();
       ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(10)}px ${UI_FONT_STACK}`;

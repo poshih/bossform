@@ -50,6 +50,7 @@ class Stage {
   handleEvents(world: World): void;                // react to world.events (the caller clears the queue afterwards)
   render(world: World, alpha: number, dtSeconds: number): void;   // alpha = 0..1 between the last two ticks
   project(x: number, y: number, out: { x: number; y: number }): void;  // world units -> CSS pixels on the canvas
+  ground(cssX: number, cssY: number, out: { x: number; y: number }): void;  // CSS pixels -> floor point, world units
   aimFrom(seat: number, cssX: number, cssY: number): number;      // binary angle from that ship to a cursor position
   dispose(): void;
 }
@@ -62,7 +63,8 @@ interface HudView {
   world: World; seat: number;                      // whose panel to show
   names: readonly string[];                        // per seat
   width: number; height: number;                   // overlay size in CSS pixels
-  project(x: number, y: number, out: { x: number; y: number }): void;   // Stage.project
+  project(x: number, y: number, out: { x: number; y: number }): void;   // Stage.project: WORLD UNITS in (convert sim fixed point with fx.toFloat)
+  ground(cssX: number, cssY: number, out: { x: number; y: number }): void;   // Stage.ground: the floor point under a pixel
   time: number;                                    // seconds
 }
 class Hud {

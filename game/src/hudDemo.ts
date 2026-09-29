@@ -72,11 +72,19 @@ function lead(): { x: number; y: number; zoom: number; cursor: { x: number; y: n
   };
 }
 
+/** World units to CSS pixels (the Stage's contract), with the demo's simple orthographic camera. */
 function project(worldX: number, worldY: number, out: { x: number; y: number }): void {
   const camera = lead();
   const unitsPerPixel = (WORLD_VIEW_HEIGHT / camera.zoom) / cssHeight;
-  out.x = cssWidth * 0.5 + (fx.toFloat(worldX) - camera.x) / unitsPerPixel;
-  out.y = cssHeight * 0.5 - (fx.toFloat(worldY) - camera.y) / unitsPerPixel;
+  out.x = cssWidth * 0.5 + (worldX - camera.x) / unitsPerPixel;
+  out.y = cssHeight * 0.5 - (worldY - camera.y) / unitsPerPixel;
+}
+
+function ground(cssX: number, cssY: number, out: { x: number; y: number }): void {
+  const camera = lead();
+  const unitsPerPixel = (WORLD_VIEW_HEIGHT / camera.zoom) / cssHeight;
+  out.x = camera.x + (cssX - cssWidth * 0.5) * unitsPerPixel;
+  out.y = camera.y - (cssY - cssHeight * 0.5) * unitsPerPixel;
 }
 
 function stepSim(): void {
@@ -135,7 +143,7 @@ function drawWorld(): void {
   const point = { x: 0, y: 0 };
   for (let seat = 0; seat < sim.world.seats; seat++) {
     if (sim.world.m.plAlive[seat] !== 1) continue;
-    project(sim.world.m.plX[seat], sim.world.m.plY[seat], point);
+    project(fx.toFloat(sim.world.m.plX[seat]), fx.toFloat(sim.world.m.plY[seat]), point);
     const radius = sim.world.m.plForm[seat] === Form.Boss ? 16 : 8;
     ctx.beginPath();
     ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
@@ -162,7 +170,7 @@ function frame(now: number): void {
   drawWorld();
   const cursorWorld = lead().cursor;
   const cursor = { x: 0, y: 0 };
-  project(fx.lit(cursorWorld.x), fx.lit(cursorWorld.y), cursor);
+  project(cursorWorld.x, cursorWorld.y, cursor);
   hud.draw(ctx, {
     world: sim.world,
     seat: localSeat,
@@ -170,6 +178,7 @@ function frame(now: number): void {
     width: cssWidth,
     height: cssHeight,
     project,
+    ground,
     time: performance.now() / 1000,
     cursor,
   });

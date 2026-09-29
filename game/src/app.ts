@@ -217,6 +217,7 @@ export class App {
 
   /** The seat the camera (and the listener) follows: the local pilot; when they are out, whoever hurt them, then anyone still fighting. */
   private updateFocus(world: World, dtSeconds: number, localSeat: number): void {
+    if (this.frozen) return;
     if (localSeat >= 0 && isFighting(world, localSeat)) {
       this.focusSeat = localSeat;
       this.spectateSeconds = 0;
@@ -293,6 +294,8 @@ export class App {
       run.setPaused(true);
       this.frozen = true;
       this.focusSeat = seat;
+      this.stage!.focus(seat);
+      this.stagedFocus = seat;
       return;
     }
   }
@@ -311,6 +314,7 @@ export class App {
       width: this.cssWidth,
       height: this.cssHeight,
       project: (x, y, out) => stage.project(x, y, out),
+      ground: (cssX, cssY, out) => stage.ground(cssX, cssY, out),
       time: this.elapsedSeconds,
       cursor: this.screen === 'play' && run.localSeat >= 0 && isFighting(world, run.localSeat) ? this.devices.cursor : null,
     });

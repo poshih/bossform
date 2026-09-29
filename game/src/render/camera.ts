@@ -47,6 +47,10 @@ export class FollowCamera {
   private lastVY = 0;
   private shake = 0;
   private shakeTime = 0;
+  private readonly ndc = new THREE.Vector2();
+  private readonly origin = new THREE.Vector3();
+  private readonly direction = new THREE.Vector3();
+  private readonly groundPoint = { x: 0, y: 0 };
 
   constructor(world: World) {
     if (world.seats > 0) {
@@ -117,17 +121,21 @@ export class FollowCamera {
     out.y = ((1 - point.y) * 0.5) * this.cssHeight;
   }
 
+  /** The floor point (world units) under a screen position. The fixed tilt and field of view keep every pixel below the horizon. */
+  ground(cssX: number, cssY: number, out: { x: number; y: number }): void {
+    this.ndc.set((cssX / this.cssWidth) * 2 - 1, 1 - (cssY / this.cssHeight) * 2);
+    this.origin.setFromMatrixPosition(this.camera.matrixWorld);
+    this.direction.set(this.ndc.x, this.ndc.y, 0.5).unproject(this.camera).sub(this.origin).normalize();
+    if (!(this.direction.z < 0)) throw new RangeError(`screen position (${cssX}, ${cssY}) does not look at the floor`);
+    const t = -this.origin.z / this.direction.z;
+    out.x = this.origin.x + this.direction.x * t;
+    out.y = this.origin.y + this.direction.y * t;
+  }
+
   aimFrom(world: World, seat: number, cssX: number, cssY: number): number {
     if (seat < 0 || seat >= world.seats) throw new RangeError(`seat ${seat} is out of range`);
-    const ndc = new THREE.Vector2((cssX / this.cssWidth) * 2 - 1, 1 - (cssY / this.cssHeight) * 2);
-    const origin = new THREE.Vector3();
-    const direction = new THREE.Vector3();
-    origin.setFromMatrixPosition(this.camera.matrixWorld);
-    direction.set(ndc.x, ndc.y, 0.5).unproject(this.camera).sub(origin).normalize();
-    const t = -origin.z / direction.z;
-    const hitX = origin.x + direction.x * t;
-    const hitY = origin.y + direction.y * t;
-    return fx.fromRadians(Math.atan2(hitY - toWorld(world.m.plY[seat]), hitX - toWorld(world.m.plX[seat])));
+    this.ground(cssX, cssY, this.groundPoint);
+    return fx.fromRadians(Math.atan2(this.groundPoint.y - toWorld(world.m.plY[seat]), this.groundPoint.x - toWorld(world.m.plX[seat])));
   }
 
   private updateProjection(): void {
