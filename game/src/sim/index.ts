@@ -6,7 +6,7 @@ export { GameSim, createGameSim } from './sim.ts';
 export { World, decodeConfig, encodeConfig } from './world.ts';
 export type { Layout, Mem, MatchConfig, SeatConfig } from './world.ts';
 export { W, layoutFor } from './layout.ts';
-export { Ev, Banner, EventQueue } from './events.ts';
+export { Ev, Banner, EventQueue, FireSlot } from './events.ts';
 export { gameCodec, Button, MOVE_MAX, NEUTRAL_INPUT } from './input.ts';
 export type { GameInput } from './input.ts';
 export * from './constants.ts';

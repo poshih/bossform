@@ -91,7 +91,7 @@ movement). In boss form aim and body turning are slew-limited (§5.5).
   | Frame | hp | cap per window (60 ticks) | Windows to die | Fastest possible death |
   |---|---|---|---|---|
   | VANGUARD | 120 | 24 | 5 | 4.0 s |
-  | GALE | 80 | 14 | 6 | 5.0 s |
+  | GALE | 88 | 16 | 6 | 5.0 s |
   | JUGGERNAUT | 220 | 44 | 5 | 4.0 s |
   The window is anchored: it opens on the first hit and closes `windowTicks` later, so relentless fire kills in exactly
   `(windows - 1) x windowTicks` ticks.

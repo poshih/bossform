@@ -6,7 +6,7 @@
  * Payload: x, y are fixed-point world positions; a, b and c are integers whose meaning is listed per event.
  */
 export const Ev = {
-  /** A ship fired its normal weapon: a = seat, b = frame. */
+  /** A ship fired one of its two weapons: a = seat, b = frame, c = FireSlot. */
   Fire: 1,
   /** A ship's core took bullet damage: a = seat, b = damage applied, c = the shooter's seat or NO_SEAT. */
   Hit: 2,
@@ -51,6 +51,9 @@ export const Ev = {
   /** The storm hurt a ship outside the safe zone: a = seat, b = damage. */
   StormHit: 27,
 } as const;
+
+/** Which of a robot's two weapons an Ev.Fire event is about. */
+export const FireSlot = { Primary: 0, Alt: 1 } as const;
 
 export const Banner = { Round: 1, Fight: 2, RoundWon: 3, Draw: 4, MatchWon: 5, TimeUp: 6 } as const;
 

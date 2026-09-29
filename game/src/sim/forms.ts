@@ -90,11 +90,23 @@ export interface FormDef {
 
 type PartSpec = Omit<PartDef, 'roles' | 'muzzle' | 'turn' | 'orbit'> & Partial<Pick<PartDef, 'roles' | 'muzzle' | 'turn' | 'orbit'>>;
 
+/**
+ * Colossi are drawn to a design scale and built here at COLOSSUS_SCALE_PCT of it: a boss form must dwarf the robot it
+ * comes from (a big, heavy machine), and its armour must take a beating to match its bigger target. Lengths scale
+ * exactly (integer percent); the core, the pilot's hurtbox, scales less so the machine is large without being easy
+ * to finish.
+ */
+const COLOSSUS_SCALE_PCT = 150;
+const CORE_SCALE_PCT = 125;
+const PART_HP_SCALE_PCT = 140;
+const big = (length: number): number => fx.mulDiv(length, COLOSSUS_SCALE_PCT, 100);
+const tough = (hp: number): number => fx.mulDiv(hp, PART_HP_SCALE_PCT, 100);
+
 const armor = (name: string, x: number, y: number, rad: number, hp: number): PartDef =>
-  ({ name, kind: PartKind.Armor, x, y, rad, hp, roles: 0, muzzle: 0, turn: 0, orbit: false });
+  ({ name, kind: PartKind.Armor, x: big(x), y: big(y), rad: big(rad), hp: tough(hp), roles: 0, muzzle: 0, turn: 0, orbit: false });
 
 interface PodSpec { name: string; x: number; y: number; rad: number; hp: number; roles: number; muzzle: number; turn: number; orbit?: boolean }
-const pod = (s: PodSpec): PartDef => ({ ...s, kind: PartKind.Pod, orbit: s.orbit ?? false });
+const pod = (s: PodSpec): PartDef => ({ ...s, x: big(s.x), y: big(s.y), rad: big(s.rad), hp: tough(s.hp), muzzle: big(s.muzzle), kind: PartKind.Pod, orbit: s.orbit ?? false });
 
 export type { PartSpec };
 
@@ -125,6 +137,8 @@ function defineForm(def: Omit<FormDef, 'reach'>): FormDef {
   return Object.freeze({ ...def, reach });
 }
 
+const core = (radius: number): number => fx.mulDiv(radius, CORE_SCALE_PCT, 100);
+
 // ---- PALADIN: the versatile hero's colossus ---------------------------------------------------------
 const PALADIN_SEEKER = shot({
   kind: Proj.Seeker, spd: fx.lit(1.8), acc: fx.lit(0.02), maxSpd: fx.lit(2.6), turn: fx.deg(2), rad: fx.lit(3.4), dmg: 8, life: 160,
@@ -138,8 +152,8 @@ const PALADIN = defineForm({
   accel: fx.lit(0.05),
   bodyTurn: fx.deg(1.5),
   orbitTurn: 0,
-  coreR: fx.fromInt(9),
-  pickupR: fx.fromInt(30),
+  coreR: core(fx.fromInt(9)),
+  pickupR: big(fx.fromInt(30)),
   parts: [
     armor('chest', fx.fromInt(16), 0, fx.fromInt(16), 130),
     armor('wingL', fx.fromInt(-2), fx.fromInt(30), fx.fromInt(16), 90),
@@ -177,8 +191,8 @@ const TEMPEST = defineForm({
   accel: fx.lit(0.08),
   bodyTurn: fx.deg(2.2),
   orbitTurn: fx.deg(2),
-  coreR: fx.fromInt(8),
-  pickupR: fx.fromInt(28),
+  coreR: core(fx.fromInt(8)),
+  pickupR: big(fx.fromInt(28)),
   parts: [
     armor('shield', fx.fromInt(14), 0, fx.fromInt(13), 80),
     armor('back', fx.fromInt(-14), 0, fx.fromInt(12), 60),
@@ -214,8 +228,8 @@ const FORTRESS = defineForm({
   accel: fx.lit(0.03),
   bodyTurn: fx.deg(0.9),
   orbitTurn: 0,
-  coreR: fx.fromInt(11),
-  pickupR: fx.fromInt(44),
+  coreR: core(fx.fromInt(11)),
+  pickupR: big(fx.fromInt(44)),
   parts: [
     armor('front', fx.fromInt(26), 0, fx.fromInt(22), 190),
     armor('frontL', fx.fromInt(14), fx.fromInt(34), fx.fromInt(20), 150),

@@ -21,7 +21,7 @@ export interface FrameStats {
 
 export const FRAME_STATS: readonly FrameStats[] = [
   { hp: 120, windowCap: 24, windowTicks: 60, speed: fx.lit(2.1), accel: fx.lit(0.22), hurtR: fx.lit(3), bodyR: fx.fromInt(10), grazeR: fx.fromInt(18) },
-  { hp: 80, windowCap: 14, windowTicks: 60, speed: fx.lit(3), accel: fx.lit(0.35), hurtR: fx.lit(2.4), bodyR: fx.fromInt(8), grazeR: fx.fromInt(16) },
+  { hp: 88, windowCap: 16, windowTicks: 60, speed: fx.lit(3), accel: fx.lit(0.35), hurtR: fx.lit(2.4), bodyR: fx.fromInt(8), grazeR: fx.fromInt(16) },
   { hp: 220, windowCap: 44, windowTicks: 60, speed: fx.lit(1.5), accel: fx.lit(0.12), hurtR: fx.lit(4.4), bodyR: fx.fromInt(14), grazeR: fx.fromInt(22) },
 ];
 

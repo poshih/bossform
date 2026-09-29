@@ -1,6 +1,6 @@
 import { fx } from '@metronome/engine';
 import { Attack } from './constants.ts';
-import { Ev } from './events.ts';
+import { Ev, FireSlot } from './events.ts';
 import { Frame, GALE, JUGGERNAUT, MUZZLE, VANGUARD } from './frames.ts';
 import { Button } from './input.ts';
 import { fan, launch } from './projectiles.ts';
@@ -37,13 +37,13 @@ function vanguard(w: World, seat: number, who: Shooter, buttons: number): void {
     const rifle = VANGUARD.rifle;
     fan(w, who, rifle.shot, muzzleX(w, seat), muzzleY(w, seat), m.plAim[seat], rifle.count, rifle.spread);
     m.plFireCd[seat] = rifle.interval;
-    w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Vanguard);
+    w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Vanguard, FireSlot.Primary);
   }
   if ((buttons & Button.Alt) !== 0 && m.plAltCd[seat] === 0) {
     const seekers = VANGUARD.seekers;
     fan(w, who, seekers.shot, muzzleX(w, seat), muzzleY(w, seat), m.plAim[seat], seekers.count, seekers.spread);
     m.plAltCd[seat] = seekers.cooldown;
-    w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Vanguard);
+    w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Vanguard, FireSlot.Alt);
   }
 }
 
@@ -57,7 +57,7 @@ function gale(w: World, seat: number, who: Shooter, buttons: number, moveX: numb
     launch(w, who, darts.shot, muzzleX(w, seat) + ox, muzzleY(w, seat) + oy, m.plAim[seat]);
     launch(w, who, darts.shot, muzzleX(w, seat) - ox, muzzleY(w, seat) - oy, m.plAim[seat]);
     m.plFireCd[seat] = darts.interval;
-    w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Gale);
+    w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Gale, FireSlot.Primary);
   }
   if ((buttons & Button.Alt) !== 0 && m.plAltCd[seat] === 0) {
     const dash = GALE.dash;
@@ -78,7 +78,7 @@ function juggernaut(w: World, seat: number, who: Shooter, buttons: number): void
     const mortar = JUGGERNAUT.mortar;
     launch(w, who, mortar.shot, muzzleX(w, seat), muzzleY(w, seat), m.plAim[seat]);
     m.plFireCd[seat] = mortar.interval;
-    w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Juggernaut);
+    w.emit(Ev.Fire, m.plX[seat], m.plY[seat], seat, Frame.Juggernaut, FireSlot.Primary);
   }
   if ((buttons & Button.Alt) !== 0 && m.plAltCd[seat] === 0) {
     m.plBulwark[seat] = JUGGERNAUT.bulwark.ticks;
