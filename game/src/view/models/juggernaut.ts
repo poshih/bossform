@@ -6,22 +6,20 @@ import {
   createAccentMaterial,
   createTeamMaterial,
   diamondGeometry,
-  easeOutCubic,
   lineGeometry,
-  mix,
   polygonGeometry,
   pulse,
   ringGeometry,
   setFlash,
   setOpacity,
-  smooth01,
   tintTeamMaterials,
-  to,
   type TeamMaterialRef,
 } from './kit-enemies.ts';
+import { bodyHullGeometry } from './kit-hull.ts';
+import { easeOutCubic, lerp, smooth01, toWorld } from '../shared.ts';
 import type { VectorMaterial } from '../../render/vector.ts';
 
-const BODY_RADIUS = to(FRAME_STATS[Frame.Juggernaut].bodyR);
+const BODY_RADIUS = toWorld(FRAME_STATS[Frame.Juggernaut].bodyR);
 const FORTRESS = FORMS[Frame.Juggernaut];
 const MORTAR_INDEX = 6;
 const TURRET_LEFT_INDEX = 7;
@@ -30,6 +28,8 @@ const CORE_LIFT = 6.4;
 const PART_HEIGHT = 3.2;
 const PART_STACK = 1.9;
 const ANCHOR_LIFT = -2.2;
+const HULL_MASS_MARGIN = 4;
+const HULL_MASS_DEPTH = 7.5;
 
 interface RobotRig {
   readonly root: THREE.Group;
@@ -149,25 +149,35 @@ function createJuggernautRig(): RobotRig {
   const tracker = new ResourceTracker();
   const teamMaterials: TeamMaterialRef[] = [];
   const materials: VectorMaterial[] = [];
-  const hullMat = createTeamMaterial(tracker, teamMaterials, 0.82, 0.05, 1.55, 1.45);
-  const trimMat = createTeamMaterial(tracker, teamMaterials, 0.64, 0.036, 1.3, 1.15);
+  const hullMat = createTeamMaterial(tracker, teamMaterials, 0.86, 0.22, 1.15, 1.75);
+  hullMat.uniforms.uFillAlpha.value = 0.62;
+  const trimMat = createTeamMaterial(tracker, teamMaterials, 0.68, 0.16, 0.65, 1.05);
+  trimMat.uniforms.uFillAlpha.value = 0.56;
   const shieldMat = createTeamMaterial(tracker, teamMaterials, 1.05, 0.015, 2.25, 1.2);
   const weaponMat = createAccentMaterial(tracker, 0xffd69a, 0x2a1407, 0.24, 2.3, 1.2);
   const engineMat = createAccentMaterial(tracker, 0xff9a58, 0x221108, 0.2, 2.0, 1.1);
   materials.push(hullMat, trimMat, shieldMat, weaponMat, engineMat);
 
-  const hull = addVectorMesh(tracker, body, hullMat, new THREE.BoxGeometry(BODY_RADIUS * 1.82, BODY_RADIUS * 1.25, 5.2), 30);
-  hull.position.z = 3.4;
-  const prow = addVectorMesh(tracker, body, trimMat, polygonGeometry([
-    [-BODY_RADIUS * 0.18, -BODY_RADIUS * 0.48],
-    [BODY_RADIUS * 0.56, -BODY_RADIUS * 0.66],
-    [BODY_RADIUS * 1.0, 0],
-    [BODY_RADIUS * 0.56, BODY_RADIUS * 0.66],
-    [-BODY_RADIUS * 0.18, BODY_RADIUS * 0.48],
-  ], 4.4), 28);
-  prow.position.set(BODY_RADIUS * 0.52, 0, 5.6);
-  const spine = addVectorMesh(tracker, body, trimMat, new THREE.BoxGeometry(BODY_RADIUS * 1.08, BODY_RADIUS * 0.74, 3.2), 32);
-  spine.position.set(-BODY_RADIUS * 0.08, 0, 7.1);
+  const hull = addVectorMesh(tracker, body, hullMat, polygonGeometry([
+    [-BODY_RADIUS * 0.92, -BODY_RADIUS * 0.62],
+    [BODY_RADIUS * 0.26, -BODY_RADIUS * 0.92],
+    [BODY_RADIUS * 1.02, -BODY_RADIUS * 0.52],
+    [BODY_RADIUS * 1.18, 0],
+    [BODY_RADIUS * 1.02, BODY_RADIUS * 0.52],
+    [BODY_RADIUS * 0.26, BODY_RADIUS * 0.92],
+    [-BODY_RADIUS * 0.92, BODY_RADIUS * 0.62],
+  ], 5.6), 70);
+  hull.position.z = 3.6;
+  const deck = addVectorMesh(tracker, body, trimMat, polygonGeometry([
+    [-BODY_RADIUS * 0.45, -BODY_RADIUS * 0.34],
+    [BODY_RADIUS * 0.34, -BODY_RADIUS * 0.52],
+    [BODY_RADIUS * 0.82, -BODY_RADIUS * 0.3],
+    [BODY_RADIUS * 0.92, 0],
+    [BODY_RADIUS * 0.82, BODY_RADIUS * 0.3],
+    [BODY_RADIUS * 0.34, BODY_RADIUS * 0.52],
+    [-BODY_RADIUS * 0.45, BODY_RADIUS * 0.34],
+  ], 3.2), 70);
+  deck.position.set(BODY_RADIUS * 0.08, 0, 6.8);
   const treadL = addVectorMesh(tracker, body, trimMat, new THREE.BoxGeometry(BODY_RADIUS * 1.1, BODY_RADIUS * 0.36, 3.8), 30);
   treadL.position.set(-BODY_RADIUS * 0.12, BODY_RADIUS * 0.85, 2.1);
   const treadR = addVectorMesh(tracker, body, trimMat, new THREE.BoxGeometry(BODY_RADIUS * 1.1, BODY_RADIUS * 0.36, 3.8), 30);
@@ -180,18 +190,20 @@ function createJuggernautRig(): RobotRig {
   generatorR.position.set(-BODY_RADIUS * 0.05, -BODY_RADIUS * 1.07, 5.4);
 
   const cannonHousing = addVectorMesh(tracker, turret, hullMat, polygonGeometry([
-    [-BODY_RADIUS * 0.22, -BODY_RADIUS * 0.25],
-    [BODY_RADIUS * 0.35, -BODY_RADIUS * 0.38],
-    [BODY_RADIUS * 0.64, 0],
-    [BODY_RADIUS * 0.35, BODY_RADIUS * 0.38],
-    [-BODY_RADIUS * 0.22, BODY_RADIUS * 0.25],
-  ], 3.8), 28);
-  cannonHousing.position.set(BODY_RADIUS * 0.28, 0, 8.4);
-  const barrel = addVectorMesh(tracker, turret, weaponMat, lineGeometry(to(JUGGERNAUT.mortar.shot.rad) * 1.9 + 6, 2.2, 2.2), 28);
-  barrel.position.set(BODY_RADIUS * 0.9, 0, 8.7);
+    [-BODY_RADIUS * 0.34, -BODY_RADIUS * 0.28],
+    [BODY_RADIUS * 0.3, -BODY_RADIUS * 0.42],
+    [BODY_RADIUS * 0.72, -BODY_RADIUS * 0.18],
+    [BODY_RADIUS * 0.88, 0],
+    [BODY_RADIUS * 0.72, BODY_RADIUS * 0.18],
+    [BODY_RADIUS * 0.3, BODY_RADIUS * 0.42],
+    [-BODY_RADIUS * 0.34, BODY_RADIUS * 0.28],
+  ], 4.2), 55);
+  cannonHousing.position.set(BODY_RADIUS * 0.34, 0, 8.8);
+  const barrel = addVectorMesh(tracker, turret, weaponMat, lineGeometry(toWorld(JUGGERNAUT.mortar.shot.rad) * 2.3 + 8, 2.7, 2.7), 28);
+  barrel.position.set(BODY_RADIUS * 1.0, 0, 9.1);
   const muzzleFlash = addVectorMesh(tracker, turret, weaponMat, diamondGeometry(6.4, 3.6, 3.6), 28);
-  muzzleFlash.position.set(BODY_RADIUS * 1.55, 0, 8.8);
-  turret.position.set(BODY_RADIUS * 0.15, 0, 0);
+  muzzleFlash.position.set(BODY_RADIUS * 1.78, 0, 9.2);
+  turret.position.set(BODY_RADIUS * 0.12, 0, 0);
   body.add(turret);
 
   const shieldShell = addVectorMesh(tracker, fx, shieldMat, new THREE.OctahedronGeometry(BODY_RADIUS * 1.34, 0), 30);
@@ -215,15 +227,17 @@ function podAssembly(assemble: number, index: number, count: number): number {
 
 function buildPartRig(tracker: ResourceTracker, teamMaterials: TeamMaterialRef[], hullMaterials: VectorMaterial[], accentMaterials: VectorMaterial[], def: (typeof FORTRESS.parts)[number]): PartRig {
   const group = new THREE.Group();
-  const hullMat = createTeamMaterial(tracker, teamMaterials, 0.82, 0.05, 1.5, 1.35);
-  const insetMat = createTeamMaterial(tracker, teamMaterials, 0.66, 0.032, 1.22, 1.05);
+  const hullMat = createTeamMaterial(tracker, teamMaterials, 0.82, 0.12, 0.95, 1.55);
+  hullMat.uniforms.uFillAlpha.value = 0.58;
+  const insetMat = createTeamMaterial(tracker, teamMaterials, 0.58, 0.08, 0.35, 0.9);
+  insetMat.uniforms.uFillAlpha.value = 0.42;
   const ventMat = createAccentMaterial(tracker, 0xffbf72, 0x1f1208, 0.2, 2.1, 1.05);
   hullMaterials.push(hullMat, insetMat);
   accentMaterials.push(ventMat);
 
-  const radius = to(def.rad);
-  const homeX = to(def.x);
-  const homeY = to(def.y);
+  const radius = toWorld(def.rad);
+  const homeX = toWorld(def.x);
+  const homeY = toWorld(def.y);
   const homeZ = def.kind === PartKind.Pod ? CORE_LIFT + 2.4 : CORE_LIFT + 1.2;
   const length = radius * (def.kind === PartKind.Pod ? 1.75 : 1.62);
   const width = radius * (def.kind === PartKind.Pod ? 1.05 : 1.45);
@@ -247,12 +261,12 @@ function buildPartRig(tracker: ResourceTracker, teamMaterials: TeamMaterialRef[]
   let muzzleDiamond: THREE.Mesh | null = null;
   let muzzleRing: THREE.Mesh | null = null;
   if (def.kind === PartKind.Pod) {
-    barrel = addVectorMesh(tracker, group, ventMat, lineGeometry(to(def.muzzle), radius * 0.3, radius * 0.3), 28);
+    barrel = addVectorMesh(tracker, group, ventMat, lineGeometry(toWorld(def.muzzle), radius * 0.3, radius * 0.3), 28);
     barrel.position.set(radius * 0.22, 0, PART_STACK + 0.5);
     muzzleDiamond = addVectorMesh(tracker, group, ventMat, diamondGeometry(radius * 0.9, radius * 0.55, radius * 0.55), 28);
-    muzzleDiamond.position.set(radius * 0.22 + to(def.muzzle), 0, PART_STACK + 0.5);
+    muzzleDiamond.position.set(radius * 0.22 + toWorld(def.muzzle), 0, PART_STACK + 0.5);
     muzzleRing = addVectorMesh(tracker, group, ventMat, ringGeometry(radius * 0.38, radius * 0.18, 0.5), 28);
-    muzzleRing.position.set(radius * 0.22 + to(def.muzzle) + radius * 0.18, 0, PART_STACK + 0.5);
+    muzzleRing.position.set(radius * 0.22 + toWorld(def.muzzle) + radius * 0.18, 0, PART_STACK + 0.5);
     muzzleRing.rotation.x = Math.PI * 0.5;
   }
 
@@ -271,7 +285,7 @@ function buildPartRig(tracker: ResourceTracker, teamMaterials: TeamMaterialRef[]
     homeZ,
     openDirX: homeX / openLength,
     openDirY: homeY / openLength,
-    baseRotation: def.kind === PartKind.Pod ? 0 : Math.atan2(homeY, homeX),
+    baseRotation: 0,
   };
 }
 
@@ -285,27 +299,34 @@ function createFortressRig(): ColossusRig {
   const accentMaterials: VectorMaterial[] = [];
 
   const coreMat = createAccentMaterial(tracker, 0xffd7a6, 0x241109, 0.18, 2.5, 1.25);
-  const haloMat = createAccentMaterial(tracker, 0xffc063, 0x1a0d05, 0.08, 1.95, 1.0);
+  const haloMat = createAccentMaterial(tracker, 0xffc063, 0x1a0d05, 0.06, 1.0, 0.9);
   const lineMat = createAccentMaterial(tracker, 0xffd591, 0x1c1006, 0.14, 2.05, 0.95);
   const anchorMat = createTeamMaterial(tracker, teamMaterials, 0.62, 0.03, 1.15, 1.0);
+  anchorMat.uniforms.uFillAlpha.value = 0.18;
   hullMaterials.push(anchorMat);
   accentMaterials.push(coreMat, haloMat, lineMat);
 
-  const core = addVectorMesh(tracker, body, coreMat, diamondGeometry(to(FORTRESS.coreR) * 1.1, to(FORTRESS.coreR) * 0.86, to(FORTRESS.coreR) * 0.86), 28);
+  const massMat = createTeamMaterial(tracker, teamMaterials, 0.32, 0.22, 0.45, 1.0);
+  massMat.uniforms.uFillAlpha.value = 0.42;
+  hullMaterials.push(massMat);
+  const hullMass = addVectorMesh(tracker, body, massMat, bodyHullGeometry(FORTRESS, HULL_MASS_MARGIN, HULL_MASS_DEPTH), 72);
+  hullMass.position.z = CORE_LIFT - 2.2;
+
+  const core = addVectorMesh(tracker, body, coreMat, diamondGeometry(toWorld(FORTRESS.coreR) * 0.56, toWorld(FORTRESS.coreR) * 0.4, toWorld(FORTRESS.coreR) * 0.4), 28);
   core.position.z = CORE_LIFT;
-  const coreHalo = addVectorMesh(tracker, body, haloMat, ringGeometry(to(FORTRESS.coreR) * 1.55, to(FORTRESS.coreR) * 1.18, 0.9), 28);
+  const coreHalo = addVectorMesh(tracker, body, haloMat, ringGeometry(toWorld(FORTRESS.coreR) * 0.86, toWorld(FORTRESS.coreR) * 0.68, 0.55), 28);
   coreHalo.position.z = CORE_LIFT - 0.4;
-  const coreCollapse = addVectorMesh(tracker, body, coreMat, ringGeometry(to(FORTRESS.coreR) * 2.8, to(FORTRESS.coreR) * 2.2, 0.7), 28);
+  const coreCollapse = addVectorMesh(tracker, body, haloMat, ringGeometry(toWorld(FORTRESS.coreR) * 1.78, toWorld(FORTRESS.coreR) * 1.48, 0.6), 28);
   coreCollapse.position.z = CORE_LIFT - 1.4;
-  const reactorFrame = addVectorMesh(tracker, body, anchorMat, ringGeometry(to(FORTRESS.coreR) * 3.15, to(FORTRESS.coreR) * 2.55, 1.2), 60);
+  const reactorFrame = addVectorMesh(tracker, body, anchorMat, ringGeometry(toWorld(FORTRESS.coreR) * 3.15, toWorld(FORTRESS.coreR) * 2.55, 1.2), 60);
   reactorFrame.position.z = CORE_LIFT + 0.2;
-  const keelFront = addVectorMesh(tracker, body, anchorMat, lineGeometry(to(FORTRESS.parts[MORTAR_INDEX].x) - to(FORTRESS.coreR) * 1.8, 2.6, 1.3), 55);
-  keelFront.position.set(to(FORTRESS.coreR) * 1.8, 0, CORE_LIFT + 0.1);
-  const keelBack = addVectorMesh(tracker, body, anchorMat, lineGeometry(Math.abs(to(FORTRESS.parts[5].x)) - to(FORTRESS.coreR) * 1.1, 2.2, 1.1), 55);
-  keelBack.position.set(-Math.abs(to(FORTRESS.parts[5].x)) + 5, 0, CORE_LIFT - 0.2);
+  const keelFront = addVectorMesh(tracker, body, anchorMat, lineGeometry(toWorld(FORTRESS.parts[MORTAR_INDEX].x) - toWorld(FORTRESS.coreR) * 1.8, 2.6, 1.3), 55);
+  keelFront.position.set(toWorld(FORTRESS.coreR) * 1.8, 0, CORE_LIFT + 0.1);
+  const keelBack = addVectorMesh(tracker, body, anchorMat, lineGeometry(Math.abs(toWorld(FORTRESS.parts[5].x)) - toWorld(FORTRESS.coreR) * 1.1, 2.2, 1.1), 55);
+  keelBack.position.set(-Math.abs(toWorld(FORTRESS.parts[5].x)) + 5, 0, CORE_LIFT - 0.2);
   keelBack.rotation.z = Math.PI;
-  const crossBeam = addVectorMesh(tracker, body, anchorMat, lineGeometry(to(FORTRESS.parts[TURRET_LEFT_INDEX].y) * 2 - 24, 2.2, 1.1), 55);
-  crossBeam.position.set(-2, -to(FORTRESS.parts[TURRET_LEFT_INDEX].y) + 12, CORE_LIFT - 0.25);
+  const crossBeam = addVectorMesh(tracker, body, anchorMat, lineGeometry(toWorld(FORTRESS.parts[TURRET_LEFT_INDEX].y) * 2 - 24, 2.2, 1.1), 55);
+  crossBeam.position.set(-2, -toWorld(FORTRESS.parts[TURRET_LEFT_INDEX].y) + 12, CORE_LIFT - 0.25);
   crossBeam.rotation.z = Math.PI * 0.5;
 
   const head = new THREE.Group();
@@ -330,7 +351,7 @@ function createFortressRig(): ColossusRig {
   });
 
   const plateGirders = parts.map((part) => {
-    const length = Math.max(4, Math.hypot(part.homeX, part.homeY) - to(part.def.rad) * 0.82);
+    const length = Math.max(4, Math.hypot(part.homeX, part.homeY) - toWorld(part.def.rad) * 0.82);
     const girder = addVectorMesh(tracker, body, anchorMat, lineGeometry(length, 1.55, 0.95), 60);
     girder.position.set(0, 0, CORE_LIFT - 0.35);
     girder.rotation.z = Math.atan2(part.homeY, part.homeX);
@@ -339,14 +360,14 @@ function createFortressRig(): ColossusRig {
 
   const turretArms = [TURRET_LEFT_INDEX, TURRET_RIGHT_INDEX].map((index) => {
     const part = parts[index];
-    const arm = addVectorMesh(tracker, body, anchorMat, lineGeometry(Math.hypot(part.homeX, part.homeY) - to(part.def.rad) * 0.95, 2.1, 1.1), 60);
+    const arm = addVectorMesh(tracker, body, anchorMat, lineGeometry(Math.hypot(part.homeX, part.homeY) - toWorld(part.def.rad) * 0.95, 2.1, 1.1), 60);
     arm.position.set(0, 0, CORE_LIFT + 0.5);
     arm.rotation.z = Math.atan2(part.homeY, part.homeX);
     return arm;
   });
 
   const energyLines = parts.filter((part) => part.def.kind === PartKind.Pod).map((part) => {
-    const length = Math.hypot(part.homeX, part.homeY) - to(part.def.rad) * 0.52;
+    const length = Math.hypot(part.homeX, part.homeY) - toWorld(part.def.rad) * 0.52;
     const line = addVectorMesh(tracker, body, lineMat, lineGeometry(length, 0.9, 0.5), 28);
     line.position.set(0, 0, CORE_LIFT - 0.2);
     line.rotation.z = Math.atan2(part.homeY, part.homeX);
@@ -457,21 +478,21 @@ export function createFortress(): ColossusModel {
       rig.crossBeam.scale.y = 1 + openAmount * 0.08;
 
       const assembleCore = easeOutCubic(pose.assemble);
-      rig.core.scale.setScalar((0.25 + assembleCore * 0.95) * mix(0.4, 1.1, pose.fuel));
-      rig.coreHalo.scale.setScalar(0.9 + pulse(pose.time, 2.2, 0, 0.08) + pose.hit * 0.15);
+      rig.core.scale.setScalar((0.2 + assembleCore * 0.8) * lerp(0.5, 0.92, pose.fuel));
+      rig.coreHalo.scale.setScalar(0.82 + pulse(pose.time, 2.2, 0, 0.04) + pose.hit * 0.06);
       rig.coreCollapse.visible = ultimaWindup > 0.001;
-      rig.coreCollapse.scale.setScalar(mix(2.4, 0.9, ultimaWindup));
+      rig.coreCollapse.scale.setScalar(lerp(2.4, 0.9, ultimaWindup));
       rig.coreCollapse.position.z = CORE_LIFT - 1.4;
 
       const coreFlash = pose.hit;
       (rig.core.material as VectorMaterial).uniforms.uFlash.value = coreFlash;
       (rig.coreHalo.material as VectorMaterial).uniforms.uFlash.value = coreFlash * 0.4;
-      (rig.core.material as VectorMaterial).uniforms.uOpacity.value = 0.85;
-      (rig.coreHalo.material as VectorMaterial).uniforms.uOpacity.value = 0.55 + pose.fuel * 0.25;
-      (rig.coreCollapse.material as VectorMaterial).uniforms.uOpacity.value = ultimaWindup * 0.85;
-      (rig.core.material as VectorMaterial).uniforms.uPulse.value = 0.25 + (1 - pose.fuel) * 0.12 + pulse(pose.time, 4.2, 0, 0.12);
-      (rig.coreHalo.material as VectorMaterial).uniforms.uPulse.value = 0.12 + openAmount * 0.25;
-      (rig.coreCollapse.material as VectorMaterial).uniforms.uPulse.value = ultimaWindup * 0.4;
+      (rig.core.material as VectorMaterial).uniforms.uOpacity.value = 0.72;
+      (rig.coreHalo.material as VectorMaterial).uniforms.uOpacity.value = 0.24 + pose.fuel * 0.1;
+      (rig.coreCollapse.material as VectorMaterial).uniforms.uOpacity.value = ultimaWindup * 0.48;
+      (rig.core.material as VectorMaterial).uniforms.uPulse.value = 0.12 + (1 - pose.fuel) * 0.08 + pulse(pose.time, 4.2, 0, 0.08);
+      (rig.coreHalo.material as VectorMaterial).uniforms.uPulse.value = 0.06 + openAmount * 0.14;
+      (rig.coreCollapse.material as VectorMaterial).uniforms.uPulse.value = ultimaWindup * 0.18;
 
       let podLine = 0;
       for (let i = 0; i < rig.parts.length; i++) {
@@ -491,13 +512,13 @@ export function createFortress(): ColossusModel {
           continue;
         }
         rig.plateGirders[i].visible = true;
-        const openPush = openAmount * to(part.def.rad) * 0.18;
+        const openPush = openAmount * toWorld(part.def.rad) * 0.18;
         part.group.position.set(
           part.homeX * assemble + part.openDirX * openPush,
           part.homeY * assemble + part.openDirY * openPush,
           part.homeZ + openAmount * 0.6,
         );
-        part.group.rotation.z = part.def.kind === PartKind.Pod ? partPose.facing - pose.body : part.baseRotation + openAmount * 0.08 * Math.sign(part.homeY || 1);
+        part.group.rotation.z = part.def.kind === PartKind.Pod ? partPose.facing - pose.body : part.baseRotation;
         part.group.rotation.x = brace * 0.03;
         part.group.scale.setScalar(assemble);
         setFlash(part.hullMaterials, partPose.flash);

@@ -33,7 +33,8 @@ const recordings = runs.map((r) => {
 
 section('replaying in every engine');
 const node = checkReplays(recordings);
-const server = await createServer({ root: gameRoot, logLevel: 'error', server: { port: CHECK_PORT, strictPort: true, host: '127.0.0.1' } });
+// No file watching and no HMR: an edit elsewhere in the tree must never reload the page in the middle of a replay.
+const server = await createServer({ root: gameRoot, logLevel: 'error', server: { port: CHECK_PORT, strictPort: true, host: '127.0.0.1', hmr: false, watch: null } });
 await server.listen();
 const reports: Array<[string, EngineReport, number]> = [['Node (V8)', node, 0]];
 for (const [name, type] of [['Chromium (V8)', chromium], ['Firefox (SpiderMonkey)', firefox], ['WebKit (JavaScriptCore)', webkit]] as Array<[string, BrowserType]>) {

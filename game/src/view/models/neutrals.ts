@@ -11,13 +11,13 @@ import {
   pulse,
   ringGeometry,
   setFlash,
-  to,
 } from './kit-enemies.ts';
+import { toWorld } from '../shared.ts';
 import type { VectorMaterial } from '../../render/vector.ts';
 
-const DRONE_RADIUS = to(NEUTRAL_DEFS[NeutralType.Drone].rad);
-const SENTINEL_RADIUS = to(NEUTRAL_DEFS[NeutralType.Sentinel].rad);
-const WARDEN_RADIUS = to(NEUTRAL_DEFS[NeutralType.Warden].rad);
+const DRONE_RADIUS = toWorld(NEUTRAL_DEFS[NeutralType.Drone].rad);
+const SENTINEL_RADIUS = toWorld(NEUTRAL_DEFS[NeutralType.Sentinel].rad);
+const WARDEN_RADIUS = toWorld(NEUTRAL_DEFS[NeutralType.Warden].rad);
 
 interface NeutralRig {
   readonly root: THREE.Group;
@@ -38,9 +38,9 @@ function createNeutralRig(): NeutralRig {
 }
 
 function createNeutralMaterialSet(tracker: ResourceTracker): { hull: VectorMaterial; accent: VectorMaterial; hot: VectorMaterial; list: readonly VectorMaterial[] } {
-  const hull = tracker.ownMaterial(createAccentMaterial(tracker, NEUTRAL_COLORS.edge, 0x0a0f14, 0.3, 1.18, 1.15));
-  const accent = tracker.ownMaterial(createAccentMaterial(tracker, NEUTRAL_COLORS.accent, 0x210607, 0.2, 2.0, 1.05));
-  const hot = tracker.ownMaterial(createAccentMaterial(tracker, 0xffb0b0, 0x1d0808, 0.14, 2.25, 0.95));
+  const hull = tracker.ownMaterial(createAccentMaterial(tracker, NEUTRAL_COLORS.edge, 0x0d1318, 0.62, 0.9, 1.45));
+  const accent = tracker.ownMaterial(createAccentMaterial(tracker, NEUTRAL_COLORS.accent, 0x30090a, 0.42, 1.6, 1.15));
+  const hot = tracker.ownMaterial(createAccentMaterial(tracker, 0xffb0b0, 0x230809, 0.24, 1.8, 1.0));
   return { hull, accent, hot, list: [hull, accent, hot] };
 }
 

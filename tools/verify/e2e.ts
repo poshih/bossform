@@ -80,7 +80,7 @@ const until = async (predicate: (s: Snapshot) => boolean, timeoutMs: number, ste
   return null;
 };
 const open = async (query: string): Promise<void> => {
-  await page.goto(`${base}${query}`);
+  await page.goto(new URL(query, base).toString());
   await page.waitForFunction('window.__bossformStarted === true', null, { timeout: 60000 });
 };
 const click = (selector: string) => page.locator(selector).first().click();

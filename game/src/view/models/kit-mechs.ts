@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createVectorMaterial, vectorMesh, type VectorMaterial } from '../../render/vector.ts';
+import { clamp01, lerp } from '../shared.ts';
 
-export const TURN = Math.PI * 2;
 export const HALF_PI = Math.PI * 0.5;
 
 export interface OwnedMesh {
@@ -28,29 +28,6 @@ export interface MechKit {
   mesh(parent: THREE.Object3D, geometry: THREE.BufferGeometry, material: VectorMaterial, x: number, y: number, z: number, crease?: number): THREE.Mesh;
   setTeam(color: THREE.Color): void;
   dispose(): void;
-}
-
-export function clamp01(value: number): number {
-  return value < 0 ? 0 : value > 1 ? 1 : value;
-}
-
-export function smooth01(value: number): number {
-  const t = clamp01(value);
-  return t * t * (3 - 2 * t);
-}
-
-export function easeOutCubic(value: number): number {
-  const t = clamp01(value);
-  const k = 1 - t;
-  return 1 - k * k * k;
-}
-
-export function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-export function rawToUnits(raw: number): number {
-  return raw / 65536;
 }
 
 export function pulse(time: number, speed: number, amount: number): number {

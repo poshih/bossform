@@ -130,9 +130,11 @@ from that weight and must *tell* the arena what is coming before it lands:
 
 | Input | Attack | Wind-up (tell) | Recovery | Energy cost |
 |---|---|---|---|---|
-| **Left click** (hold) | **Salvo**: basic boss spread, differs per robot | 12 ticks | 22 ticks | 5 |
-| **Right click** | **Siege shot**: slower and heavier | 36 ticks, rooted | 45 ticks | 45 |
-| **`E` / gamepad `X`** | **Ultima**: the final boss attack | 90 ticks, rooted | 120 ticks after a ~4 s barrage | 350 (needs at least that much energy) |
+| **Left click** (hold) | **Salvo**: basic boss spread, differs per robot | 12 to 18 ticks | 18 to 30 ticks | 5 to 8 |
+| **Right click** | **Siege shot**: slower and heavier | 36 to 48 ticks, rooted | 40 to 60 ticks | 45 to 55 |
+| **`E` / gamepad `X`** | **Ultima**: the final boss attack | 90 to 110 ticks, rooted, then a 4 s barrage | 120 to 150 ticks; 10 to 12 s cooldown | 300 to 330 (needs at least that much energy) |
+
+The exact numbers per boss form are in §5.5.4.
 
 *Key choice:* the ultima gets its own key (`E` / gamepad `X`), separate from the transform button (`Space` / `Y`), so
 it can never be triggered by mistake while tapping to transform.
@@ -156,18 +158,29 @@ it can never be triggered by mistake while tapping to transform.
 5. **Same speed cap:** every boss projectile still respects the 3.2 units/tick limit (§5.2).
 
 #### 5.5.3 Energy is fuel [SET]
-The gauge is 1000 points. Transformation needs 500. Boss form drains energy passively (about 21 per second) and **every
+The gauge is 1000 points. Transformation needs 500. Boss form drains energy passively (about 17 per second) and **every
 attack costs energy**: the more powerful the attack, the more it costs. **When energy reaches zero the boss form ends** and
 the robot returns to normal with its remaining health; an expanding ring marks the end. Attackers gain energy for damage
 they deal to a boss form and a bounty for killing one **[PROPOSED]**, so a boss form is a target the whole arena wants.
 
 #### 5.5.4 Per-robot boss forms [PROPOSED: behaviour differs, weight is common]
 
-| Robot | Boss form | Top speed | Body turn | Pod turn | Wind-ups (salvo / siege / ultima) | Character |
-|---|---|---|---|---|---|---|
-| VANGUARD | **PALADIN** | 1.2 | 1.5°/tick | cannons 3.0, prow 2.0 | 14 / 40 / 96 | balanced: wing plates and shoulder cannons; salvo = 5-fan; siege = seeker-bursting shell; ultima = rotating spiral |
-| GALE | **TEMPEST** | 1.7 | 2.2°/tick | bits 4.5 | 12 / 36 / 90 | the lightest colossus: four orbiting bit cannons; salvo = aimed streams; siege = bit swarm of seekers; ultima = blade rings |
-| JUGGERNAUT | **FORTRESS** | 0.8 | 0.9°/tick | turrets 2.0, mortar 1.0 | 18 / 48 / 110 | the heaviest: thickest armour, biggest shells; salvo = wide slow volley; siege = huge mortar; ultima = siege barrage |
+| Robot | Boss form | Top speed | Body turn | Pod turn | Size (reach) | Parts (hit points) | Character |
+|---|---|---|---|---|---|---|---|
+| VANGUARD | **PALADIN** | 1.2 | 1.5°/tick | cannons 3.0, prow 2.0 | 69 units | 7 (854) | balanced: wing plates and shoulder cannons; salvo = 5-fan; siege = seeker-bursting shell; ultima = rotating spiral |
+| GALE | **TEMPEST** | 1.7 | 2.2°/tick | bits 4.5 | 57 units | 6 (504) | the lightest colossus: four orbiting bit cannons; salvo = aimed streams; siege = bit swarm of seekers; ultima = blade rings |
+| JUGGERNAUT | **FORTRESS** | 0.8 | 0.9°/tick | turrets 2.0, mortar 1.0 | 96 units | 9 (1736) | the heaviest: thickest armour, biggest shells; salvo = wide slow volley; siege = huge mortar; ultima = siege barrage |
+
+Colossi are drawn and built at 150% of their design size (core 125%, part hit points 140%) so they dwarf the robot they
+come from. A part is a circle in body space; the model draws each part where and as large as the table says.
+
+Attack numbers per form, as wind-up / recovery ticks / energy cost (the ordering Salvo < Siege < Ultima holds in every column):
+
+| Boss form | Salvo | Siege | Ultima (barrage 4 s, cooldown) |
+|---|---|---|---|
+| PALADIN | 14 / 22 / 5 | 40 / 45 / 45 | 96 / 130 / 300 (10 s) |
+| TEMPEST | 12 / 18 / 5 | 36 / 40 / 45 | 90 / 120 / 300 (10 s) |
+| FORTRESS | 18 / 30 / 8 | 48 / 60 / 55 | 110 / 150 / 330 (12 s) |
 
 ### 5.6 The three robots in normal form [SET: archetypes; PROPOSED: kits]
 Every weapon obeys the normal-speed rule.
@@ -190,11 +203,12 @@ Hostile to everyone: pressure and an energy source, never a substitute for PvP.
 |---|---|---|
 | Move | `W A S D` | left stick |
 | Aim | mouse cursor (or arrows) | right stick |
-| Fire / **Salvo** | left click, `J` | `RT`, `A` |
-| Alt / **Siege shot** | right click, `K` | `LT`, `B` |
+| Fire / **Salvo** | left click, `J` | `RT`, `RB`, `A` |
+| Alt / **Siege shot** | right click, `K` | `LT`, `LB`, `B` |
 | Transform | `Space` | `Y` |
 | **Ultima** (boss form) | `E` | `X` |
-| Pause | `Esc` | `Start` |
+| Pause | `Esc`, `P` | `Start` |
+| Mute | `M` | none |
 
 ## 7. Presentation
 
@@ -257,6 +271,9 @@ multiple pages; visual review of the vector look at gameplay scale.
   the damage window; boss form ends exactly when energy reaches zero.
 
 ## 10. Roadmap
+
+Status: steps 1 to 5 are built and verified (engine v2, simulation v1, vector client, lobby and relay); step 6 is
+partly done (audio and E2E and the cross-engine proof exist; balance still needs human play).
 
 1. Design sign-off (this document).
 2. Engine v2: N-seat wire format, broadcast frames, multi-seat machines. Verified with the toy game first.

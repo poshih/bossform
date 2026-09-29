@@ -1,34 +1,10 @@
 import * as THREE from 'three';
 import { edgeGeometry, type VectorMaterial, createVectorMaterial } from '../../render/vector.ts';
+import { TWO_PI, lerp } from '../shared.ts';
 
-const FX_ONE = 65536;
-export const TAU = Math.PI * 2;
-
-export function to(raw: number): number {
-  return raw / FX_ONE;
-}
-
-export function clamp01(value: number): number {
-  return value < 0 ? 0 : value > 1 ? 1 : value;
-}
-
-export function mix(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-export function smooth01(value: number): number {
-  const t = clamp01(value);
-  return t * t * (3 - 2 * t);
-}
-
-export function easeOutCubic(value: number): number {
-  const t = clamp01(value);
-  const k = 1 - t;
-  return 1 - k * k * k;
-}
 
 export function pulse(time: number, speed: number, min: number, max: number): number {
-  return mix(min, max, 0.5 + 0.5 * Math.sin(time * speed));
+  return lerp(min, max, 0.5 + 0.5 * Math.sin(time * speed));
 }
 
 export interface TeamMaterialRef {
@@ -134,9 +110,9 @@ export function lineGeometry(length: number, width: number, depth: number): THRE
 
 export function ringGeometry(outerRadius: number, innerRadius: number, depth: number): THREE.BufferGeometry {
   const shape = new THREE.Shape();
-  shape.absarc(0, 0, outerRadius, 0, TAU, false);
+  shape.absarc(0, 0, outerRadius, 0, TWO_PI, false);
   const hole = new THREE.Path();
-  hole.absarc(0, 0, innerRadius, 0, TAU, true);
+  hole.absarc(0, 0, innerRadius, 0, TWO_PI, true);
   shape.holes.push(hole);
   const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 24 });
   geometry.translate(0, 0, -depth * 0.5);

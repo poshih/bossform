@@ -5,26 +5,26 @@ import {
   applyColossusVectorState,
   applyRobotVectorState,
   barrelGeometry,
-  clamp01,
   createMechKit,
   diamondGeometry,
-  easeOutCubic,
   finGeometry,
   lineGeometry,
   nozzleGeometry,
   plateGeometry,
-  rawToUnits,
   ringGeometry,
-  smooth01,
   wedgeGeometry,
   type MechKit,
 } from './kit-mechs.ts';
+import { bodyHullGeometry } from './kit-hull.ts';
+import { clamp01, easeOutCubic, smooth01, toWorld } from '../shared.ts';
 import type { ColossusModel, ColossusPose, PartPose, RobotModel, RobotPose } from './types.ts';
 
 const FORM = FORMS[Frame.Gale];
-const ROBOT_RADIUS = rawToUnits(FRAME_STATS[Frame.Gale].bodyR);
-const CORE_RADIUS = rawToUnits(FORM.coreR);
+const ROBOT_RADIUS = toWorld(FRAME_STATS[Frame.Gale].bodyR);
+const CORE_RADIUS = toWorld(FORM.coreR);
 const ASSEMBLE_STEP = 0.11;
+const COLOSSUS_HULL_MARGIN = 2.1;
+const COLOSSUS_HULL_DEPTH = 4.8;
 
 interface PartNode {
   readonly defIndex: number;
@@ -61,8 +61,8 @@ export function createGale(): RobotModel {
   root.add(hull);
   hull.add(moveRig);
 
-  const hullA = kit.teamMaterial(0.42, 0.98, 1.22, 0x0a1118, 0.4);
-  const hullB = kit.teamMaterial(0.58, 0.82, 1.48, 0x0f1319, 0.22, 1.3);
+  const hullA = kit.teamMaterial(0.42, 0.98, 1.22, 0x0a1118, 0.58, 1.7);
+  const hullB = kit.teamMaterial(0.58, 0.82, 1.48, 0x0f1319, 0.56, 1.65);
   const accent = kit.accentMaterial(0xffd59c, 0x160d05, 1.72, 0.12);
   const warm = kit.accentMaterial(0xff9951, 0x180803, 1.55, 0.12);
   const glass = kit.glassMaterial(0xffc29f, 0x13050a);
@@ -196,8 +196,10 @@ export function createTempest(): ColossusModel {
   const accent = kit.accentMaterial(0xffdaa8, 0x180b04, 1.78, 0.12);
   const warm = kit.accentMaterial(0xffa15a, 0x180803, 1.55, 0.12);
   const glass = kit.glassMaterial(0xffc1a9, 0x14070b);
+  const massMat = kit.teamMaterial(0.32, 0.76, 0.38, 0x05080d, 0.4, 1.45);
 
-  const bitOrbit = rawToUnits(FORM.parts[2].x);
+  const bitOrbit = toWorld(FORM.parts[2].x);
+  const massHull = kit.mesh(body, kit.own(bodyHullGeometry(FORM, COLOSSUS_HULL_MARGIN, COLOSSUS_HULL_DEPTH)), massMat, 0, 0, 0.42, 80);
   const core = kit.mesh(body, kit.own(new THREE.OctahedronGeometry(CORE_RADIUS, 0)), accent, 0, 0, 2.25, 30);
   const orbitRing = kit.mesh(body, kit.own(ringGeometry(bitOrbit, 0.12)), glass, 0, 0, 1.75, 28);
   const collapseRing = kit.mesh(body, kit.own(ringGeometry(CORE_RADIUS * 2.4, 0.12)), warm, 0, 0, 2.85, 28);
@@ -215,7 +217,7 @@ export function createTempest(): ColossusModel {
   FORM.parts.forEach((part, index) => {
     const anchor = new THREE.Group();
     body.add(anchor);
-    const radius = rawToUnits(part.rad);
+    const radius = toWorld(part.rad);
     const shells = bitShells(kit, anchor, hullA, hullB, radius);
     const strut = kit.mesh(body, kit.own(lineGeometry(1, 0.34, 0.16)), glass, 0, 0, 1.6, 56);
     if (part.kind === PartKind.Armor) {
@@ -234,8 +236,8 @@ export function createTempest(): ColossusModel {
     const barrel = new THREE.Group();
     barrel.position.z = radius * 0.56;
     anchor.add(barrel);
-    kit.mesh(barrel, kit.own(barrelGeometry(rawToUnits(part.muzzle), radius * 0.14, radius * 0.22)), accent, rawToUnits(part.muzzle) * 0.42, 0, 0, 40);
-    const muzzle = kit.mesh(barrel, kit.own(diamondGeometry(radius * 0.16, radius * 0.08)), warm, rawToUnits(part.muzzle) * 0.88, 0, 0.06, 32);
+    kit.mesh(barrel, kit.own(barrelGeometry(toWorld(part.muzzle), radius * 0.14, radius * 0.22)), accent, toWorld(part.muzzle) * 0.42, 0, 0, 40);
+    const muzzle = kit.mesh(barrel, kit.own(diamondGeometry(radius * 0.16, radius * 0.08)), warm, toWorld(part.muzzle) * 0.88, 0, 0.06, 32);
     muzzle.rotation.x = 0.4;
     const vent = kit.mesh(anchor, kit.own(lineGeometry(radius * 0.48, radius * 0.16, 0.08)), warm, -radius * 0.12, 0, radius * 0.78, 24);
     nodes.push({ defIndex: index, anchor, shells, barrel, muzzle, strut, vent });
@@ -254,6 +256,7 @@ export function createTempest(): ColossusModel {
       body.rotation.z = pose.body;
       body.position.z = Math.sin(pose.time * 1.5) * 0.12 - siegeBrace * 0.56;
       body.scale.set(1, 1 - siegeBrace * 0.03, 1 + ultimaWindup * 0.08);
+      massHull.scale.set(1, 1 - siegeBrace * 0.02, 1 + ultimaWindup * 0.05);
       core.scale.setScalar(0.42 + assemble * (0.34 + pose.fuel * 0.28));
       core.rotation.z = pose.time * 0.6;
       orbitRing.visible = assemble > 0.08;
@@ -273,8 +276,8 @@ export function createTempest(): ColossusModel {
         const partPose: PartPose = pose.parts[node.defIndex];
         const partEase = staggered(assemble, node.defIndex * ASSEMBLE_STEP);
         const orbitAngle = def.orbit ? pose.orbit - pose.body : 0;
-        const px = rawToUnits(def.x) * partEase;
-        const py = rawToUnits(def.y) * partEase;
+        const px = toWorld(def.x) * partEase;
+        const py = toWorld(def.y) * partEase;
         node.anchor.visible = partPose.hp > 0 && partEase > 0.02;
         node.strut.visible = node.anchor.visible;
         if (!node.anchor.visible) continue;
@@ -290,7 +293,7 @@ export function createTempest(): ColossusModel {
         if (node.barrel && node.muzzle && node.vent) {
           const flare = partPose.charge + ultimaWindup * 0.42 + ultimaRelease * 0.22;
           node.anchor.rotation.z = def.orbit ? partPose.facing - pose.orbit + (ultimaRelease > 0 ? pose.time * 0.9 : 0) : partPose.facing - pose.body;
-          node.barrel.position.x = partPose.charge * rawToUnits(def.muzzle) * 0.11;
+          node.barrel.position.x = partPose.charge * toWorld(def.muzzle) * 0.11;
           node.barrel.scale.x = 1 + partPose.charge * 0.34;
           node.muzzle.visible = flare > 0.02;
           node.muzzle.scale.setScalar(0.72 + flare * 1.2);
@@ -305,6 +308,9 @@ export function createTempest(): ColossusModel {
       }
 
       applyColossusVectorState(kit, pose.time, pose.hit, pose.fuel);
+      massMat.uniforms.uFlash.value = pose.hit * 0.1;
+      massMat.uniforms.uOpacity.value = 0.42;
+      massMat.uniforms.uPulse.value = 0;
       accent.uniforms.uPulse.value += ultimaWindup * 0.15 + ultimaRelease * 0.08;
       warm.uniforms.uPulse.value += siegeBrace * 0.12 + ultimaWindup * 0.16;
       glass.uniforms.uOpacity.value = 0.12 + (1 - pose.fuel) * 0.04;

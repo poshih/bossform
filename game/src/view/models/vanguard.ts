@@ -7,28 +7,28 @@ import {
   barrelGeometry,
   createMechKit,
   diamondGeometry,
-  easeOutCubic,
   finGeometry,
-  lerp,
   lineGeometry,
   nozzleGeometry,
   plateGeometry,
-  rawToUnits,
   ringGeometry,
-  smooth01,
   wedgeGeometry,
   type MechKit,
 } from './kit-mechs.ts';
+import { bodyHullGeometry } from './kit-hull.ts';
+import { easeOutCubic, lerp, smooth01, toWorld } from '../shared.ts';
 import type { ColossusModel, ColossusPose, PartPose, RobotModel, RobotPose } from './types.ts';
 
 const FORM = FORMS[Frame.Vanguard];
-const ROBOT_RADIUS = rawToUnits(FRAME_STATS[Frame.Vanguard].bodyR);
-const CORE_RADIUS = rawToUnits(FORM.coreR);
+const ROBOT_RADIUS = toWorld(FRAME_STATS[Frame.Vanguard].bodyR);
+const CORE_RADIUS = toWorld(FORM.coreR);
 const HULL_Z = 2.6;
 const BANK_TILT = 0.16;
 const SHOULDER_OFFSET = 4.6;
 const ARM_OFFSET = 2.95;
 const ASSEMBLE_STEP = 0.09;
+const COLOSSUS_HULL_MARGIN = 2.8;
+const COLOSSUS_HULL_DEPTH = 6.2;
 
 interface ArmorNode {
   readonly defIndex: number;
@@ -72,8 +72,8 @@ export function createVanguard(): RobotModel {
   hull.add(moveRig);
   hull.add(backpackRig);
 
-  const hullA = kit.teamMaterial(0.46, 0.9, 1.2, 0x08131d, 0.42);
-  const hullB = kit.teamMaterial(0.62, 0.68, 1.45, 0x0b1a28, 0.24, 1.35);
+  const hullA = kit.teamMaterial(0.46, 0.9, 1.2, 0x08131d, 0.58, 1.7);
+  const hullB = kit.teamMaterial(0.62, 0.68, 1.45, 0x0b1a28, 0.56, 1.65);
   const accent = kit.accentMaterial(0xc8f5ff, 0x0f1c28, 1.75, 0.1);
   const warm = kit.accentMaterial(0xffc765, 0x1c1204, 1.6, 0.12);
   const glass = kit.glassMaterial(0x82daff, 0x031018);
@@ -225,10 +225,12 @@ export function createPaladin(): ColossusModel {
   const accent = kit.accentMaterial(0xd8f8ff, 0x101218, 1.8, 0.1);
   const warm = kit.accentMaterial(0xffcd72, 0x1e1204, 1.65, 0.12);
   const glass = kit.glassMaterial(0x88e5ff, 0x031117);
+  const massMat = kit.teamMaterial(0.34, 0.72, 0.42, 0x04090d, 0.42, 1.55);
 
+  const massHull = kit.mesh(body, kit.own(bodyHullGeometry(FORM, COLOSSUS_HULL_MARGIN, COLOSSUS_HULL_DEPTH)), massMat, 0, 0, 0.52, 78);
   const core = kit.mesh(body, kit.own(new THREE.OctahedronGeometry(CORE_RADIUS, 0)), accent, 0, 0, 2.5, 28);
   const coreHalo = kit.mesh(body, kit.own(ringGeometry(CORE_RADIUS * 1.55, 0.14)), glass, 0, 0, 2.95, 30);
-  const keel = kit.mesh(body, kit.own(wedgeGeometry(rawToUnits(FORM.parts[6].x) + rawToUnits(FORM.parts[3].rad) * 1.2, rawToUnits(FORM.parts[0].rad) * 0.66, rawToUnits(FORM.parts[0].rad) * 0.18, 0.16)), hullB, 8.7, 0, 1.45, 60);
+  const keel = kit.mesh(body, kit.own(wedgeGeometry(toWorld(FORM.parts[6].x) + toWorld(FORM.parts[3].rad) * 1.2, toWorld(FORM.parts[0].rad) * 0.66, toWorld(FORM.parts[0].rad) * 0.18, 0.16)), hullB, 8.7, 0, 1.45, 60);
   keel.rotation.y = -0.08;
   const bracePads: THREE.Mesh[] = [];
   for (const side of [-1, 1] as const) {
@@ -240,7 +242,7 @@ export function createPaladin(): ColossusModel {
   FORM.parts.forEach((part, index) => {
     const anchor = new THREE.Group();
     body.add(anchor);
-    const radius = rawToUnits(part.rad);
+    const radius = toWorld(part.rad);
     if (part.kind === PartKind.Armor) {
       const shells = armorCluster(kit, anchor, hullA, hullB, radius);
       if (part.name === 'chest') {
@@ -265,8 +267,8 @@ export function createPaladin(): ColossusModel {
     const barrel = new THREE.Group();
     barrel.position.z = radius * 0.7;
     anchor.add(barrel);
-    const barrelMesh = kit.mesh(barrel, kit.own(barrelGeometry(rawToUnits(part.muzzle), radius * 0.24, radius * 0.38)), part.name === 'prow' ? warm : accent, rawToUnits(part.muzzle) * 0.45, 0, 0, 42);
-    const muzzle = kit.mesh(barrel, kit.own(diamondGeometry(radius * 0.24, radius * 0.14)), part.name === 'prow' ? warm : accent, rawToUnits(part.muzzle) * 0.94, 0, 0.12, 36);
+    const barrelMesh = kit.mesh(barrel, kit.own(barrelGeometry(toWorld(part.muzzle), radius * 0.24, radius * 0.38)), part.name === 'prow' ? warm : accent, toWorld(part.muzzle) * 0.45, 0, 0, 42);
+    const muzzle = kit.mesh(barrel, kit.own(diamondGeometry(radius * 0.24, radius * 0.14)), part.name === 'prow' ? warm : accent, toWorld(part.muzzle) * 0.94, 0, 0.12, 36);
     muzzle.rotation.x = 0.4;
     const vent = kit.mesh(anchor, kit.own(lineGeometry(radius * 0.9, radius * 0.22, 0.12)), warm, -radius * 0.22, 0, radius * 1.12, 28);
     const strut = kit.mesh(body, kit.own(lineGeometry(1, 0.44, 0.18)), glass, 0, 0, 1.95, 58);
@@ -293,6 +295,7 @@ export function createPaladin(): ColossusModel {
       body.rotation.z = pose.body;
       body.position.z = Math.sin(pose.time * 1.1) * 0.15 - siegeBrace * 1.15;
       body.scale.set(1, 1 - siegeBrace * 0.05, 1 + heavyOpen * 0.14);
+      massHull.scale.set(1, 1 - siegeBrace * 0.03, 1 + heavyOpen * 0.08);
       core.scale.setScalar(0.46 + assemble * (0.32 + pose.fuel * 0.26));
       core.rotation.z = pose.time * 0.45;
       coreHalo.visible = assemble > 0.08;
@@ -310,7 +313,7 @@ export function createPaladin(): ColossusModel {
         node.anchor.visible = partPose.hp > 0 && partEase > 0.02;
         node.strut.visible = node.anchor.visible;
         if (!node.anchor.visible) continue;
-        node.anchor.position.set(rawToUnits(def.x) * partEase, rawToUnits(def.y) * partEase, (1 - partEase) * 4.4);
+        node.anchor.position.set(toWorld(def.x) * partEase, toWorld(def.y) * partEase, (1 - partEase) * 4.4);
         const wingSide = def.name === 'wingL' ? 1 : def.name === 'wingR' ? -1 : 0;
         node.anchor.rotation.z = wingSide === 0 ? 0 : wingSide * (0.16 + heavyOpen * 0.28);
         node.strut.position.set(node.anchor.position.x * 0.5, node.anchor.position.y * 0.5, 1.8);
@@ -331,10 +334,10 @@ export function createPaladin(): ColossusModel {
         node.anchor.visible = partPose.hp > 0 && partEase > 0.02;
         node.strut.visible = node.anchor.visible;
         if (!node.anchor.visible) continue;
-        node.anchor.position.set(rawToUnits(def.x) * partEase, rawToUnits(def.y) * partEase, (1 - partEase) * 3.8);
+        node.anchor.position.set(toWorld(def.x) * partEase, toWorld(def.y) * partEase, (1 - partEase) * 3.8);
         node.anchor.rotation.z = partPose.facing - pose.body;
-        node.barrel.position.x = partPose.charge * rawToUnits(def.muzzle) * 0.14;
-        node.barrel.position.z = rawToUnits(def.rad) * (0.74 + heavyOpen * 0.18);
+        node.barrel.position.x = partPose.charge * toWorld(def.muzzle) * 0.14;
+        node.barrel.position.z = toWorld(def.rad) * (0.74 + heavyOpen * 0.18);
         node.barrel.rotation.z = pose.phase === AttackPhase.Release ? pose.time * 0.24 : 0;
         node.barrelMesh.scale.x = 1 + partPose.charge * 0.48 + heavyOpen * 0.12;
         node.muzzle.visible = partPose.charge > 0.01 || pose.phase === AttackPhase.Release;
@@ -349,6 +352,9 @@ export function createPaladin(): ColossusModel {
       }
 
       applyColossusVectorState(kit, pose.time, pose.hit, pose.fuel);
+      massMat.uniforms.uFlash.value = pose.hit * 0.12;
+      massMat.uniforms.uOpacity.value = 0.46;
+      massMat.uniforms.uPulse.value = 0;
       accent.uniforms.uPulse.value += heavyOpen * 0.18 + recovery * 0.05;
       warm.uniforms.uPulse.value += siegeBrace * 0.16 + heavyOpen * 0.16;
       glass.uniforms.uOpacity.value = 0.12 + (1 - pose.fuel) * 0.05;

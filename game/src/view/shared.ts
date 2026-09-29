@@ -32,6 +32,11 @@ export function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Smoothstep over 0..1 (inputs outside are clamped). */
+export function smooth01(value: number): number {
+  return smoothstep(0, 1, value);
+}
+
 export function angleDiffBinary(from: number, to: number): number {
   return (((to - from + fx.ANGLE_HALF) & fx.ANGLE_MASK) - fx.ANGLE_HALF) | 0;
 }
