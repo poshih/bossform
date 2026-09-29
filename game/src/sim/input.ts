@@ -26,6 +26,10 @@ export const gameCodec: InputCodec<GameInput> = {
   byteLength: 5,
   neutral: () => NEUTRAL_INPUT,
   encode(input, out, offset) {
+    // Encoding is local (this machine's own input): a value out of range is a programmer error, never wrapped silently.
+    for (const axis of [input.moveX, input.moveY]) {
+      if (!Number.isInteger(axis) || axis < -MOVE_MAX || axis > MOVE_MAX) throw new RangeError(`movement axis ${axis} is outside -${MOVE_MAX}..${MOVE_MAX}`);
+    }
     out[offset] = input.moveX & 0xff;
     out[offset + 1] = input.moveY & 0xff;
     out[offset + 2] = input.aim & 0xff;
