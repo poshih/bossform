@@ -4,6 +4,8 @@ export const UI_FONT_STACK = 'Inter, "Segoe UI", system-ui, sans-serif';
 export const UI_CAPS_SPACING = '0.22em';
 export const UI_BACKGROUND = '#060912';
 export const UI_PANEL = 'rgba(8, 14, 24, 0.84)';
+/** In-match panels sit over the fight, so they are more see-through than the menu panels. */
+export const UI_HUD_PANEL = 'rgba(8, 14, 24, 0.66)';
 export const UI_PANEL_STRONG = 'rgba(10, 17, 30, 0.94)';
 export const UI_EDGE = 'rgba(141, 221, 255, 0.78)';
 export const UI_EDGE_SOFT = 'rgba(141, 221, 255, 0.28)';

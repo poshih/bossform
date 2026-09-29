@@ -1,7 +1,8 @@
 /**
  * One command for every browser-based check: builds the game, serves it under the hosting platform's strict CSP,
  * runs the E2E scenarios, the online matches (Chromium vs WebKit, clean and hostile links), the cross-engine determinism
- * proof and the audio checks, then tears the servers down again.
+ * proof and the audio checks. Servers that already answer (your own `npm run dev`) are reused and left running; the ones it
+ * starts are stopped at the end.
  *   node tools/verify/browsers.ts
  * Needs Playwright's chromium, firefox and webkit (npx playwright install chromium firefox webkit).
  */
@@ -38,26 +39,36 @@ const STEPS: Step[] = [
   { name: 'audio engine', script: 'audio.ts', args: [] },
 ];
 
+async function isUp(port: number, path: string): Promise<boolean> {
+  try {
+    await fetch(`http://127.0.0.1:${port}${path}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function waitFor(port: number, path: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
-    try {
-      await fetch(`http://127.0.0.1:${port}${path}`);
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    if (await isUp(port, path)) return;
+    await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error(`nothing listening on ${port}`);
+}
+
+/** Uses a server that is already answering (a developer's own dev server stays up); otherwise starts one and stops it at the end. */
+async function ensureServer(port: number, path: string, start: () => ChildProcess): Promise<void> {
+  if (await isUp(port, path)) return;
+  servers.push(start());
+  await waitFor(port, path);
 }
 
 let failed = 0;
 try {
   const build = spawnSync('npm', ['run', 'build', '-w', '@bossform/game'], { cwd: root, encoding: 'utf8' });
   if (build.status !== 0) throw new Error(`build failed\n${build.stdout}\n${build.stderr}`);
-  servers.push(spawn(process.execPath, [verify('serve.ts'), String(STATIC_PORT), 'hopinto'], { stdio: 'ignore' }));
-  servers.push(spawn(path.join(root, 'node_modules/.bin/vite'), ['--port', String(DEV_PORT), '--strictPort'], { cwd: path.join(root, 'game'), stdio: 'ignore' }));
-  await waitFor(STATIC_PORT, '/r/local-test/index.html');
-  await waitFor(DEV_PORT, '/viewer.html');
+  await ensureServer(STATIC_PORT, '/r/local-test/index.html', () => spawn(process.execPath, [verify('serve.ts'), String(STATIC_PORT), 'hopinto'], { stdio: 'ignore' }));
+  await ensureServer(DEV_PORT, '/viewer.html', () => spawn(path.join(root, 'node_modules/.bin/vite'), ['--port', String(DEV_PORT), '--strictPort'], { cwd: path.join(root, 'game'), stdio: 'ignore' }));
 
   for (const step of STEPS) {
     const started = Date.now();
@@ -68,6 +79,6 @@ try {
     if (result.status !== 0) failed++;
   }
 } finally {
-  for (const server of servers) if (server.pid) process.kill(server.pid);
+  for (const server of servers) if (server.pid !== undefined && server.exitCode === null) process.kill(server.pid);
 }
 process.exit(failed > 0 ? 1 : 0);

@@ -37,7 +37,7 @@ import {
   UI_EDGE_SOFT,
   UI_FONT_STACK,
   UI_MUTED,
-  UI_PANEL,
+  UI_HUD_PANEL,
   UI_PANEL_STRONG,
   UI_SUCCESS,
   UI_TEXT,
@@ -399,7 +399,7 @@ export class Hud {
     ctx.save();
     const cut = this.s(PANEL_CUT);
     drawChamferRect(ctx, x, y, width, height, cut);
-    ctx.fillStyle = UI_PANEL;
+    ctx.fillStyle = UI_HUD_PANEL;
     ctx.fill();
     ctx.strokeStyle = UI_EDGE_SOFT;
     strokeGlow(ctx, accent, this.s(PANEL_GLOW), this.s(1.25), () => drawChamferRect(ctx, x, y, width, height, cut));
