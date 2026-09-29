@@ -76,6 +76,61 @@ function hasPod(w: World, seat: number, form: FormDef, role: number): boolean {
   return form.parts.some((part, k) => part.kind === PartKind.Pod && (part.roles & role) !== 0 && w.m.ptHp[base + k] > 0);
 }
 
+function timingOf(form: FormDef, attack: number): AttackTiming {
+  switch (attack) {
+    case Attack.Salvo:
+      return form.salvo;
+    case Attack.Siege:
+      return form.siege;
+    case Attack.Ultima:
+      return form.ultima;
+    default:
+      throw new RangeError(`not a boss attack: ${attack}`);
+  }
+}
+
+function roleOf(attack: number): number {
+  return attack === Attack.Salvo ? Role.Salvo : attack === Attack.Siege ? Role.Siege : Role.Ultima;
+}
+
+/**
+ * The least gauge, as it stands between ticks (what the HUD and bots read), that lets an attack start AND run to the end of
+ * its recovery: its cost, plus every passive drain on the way (updateBoss drains before it runs the attack: the request
+ * tick, each wind-up tick, the ultima's barrage after its first volley, each recovery tick), plus the last unit that keeps
+ * the form alive. So the fuel can never run out mid wind-up (the tell never lies) and the recovery punish window happens.
+ */
+export function attackFuel(form: FormDef, attack: number): number {
+  const timing = timingOf(form, attack);
+  const barrage = attack === Attack.Ultima ? form.ultima.duration - 1 : 0;
+  return timing.cost + BOSS_DRAIN_PER_TICK * (1 + timing.windup + barrage + timing.recovery) + 1;
+}
+
+/** Why a boss attack cannot start right now; None means it can. Checked in this order. */
+export const AttackBlock = { None: 0, NotBoss: 1, NoPod: 2, Cooldown: 3, Fuel: 4, Busy: 5 } as const;
+
+/** Everything an attack needs to start: a colossus, a live pod of its role, the ultima off cooldown, the fuel, and no attack in progress. */
+function blockOf(w: World, seat: number, form: FormDef, attack: number, fuel: number): number {
+  const { m } = w;
+  if (m.plForm[seat] !== Form.Boss) return AttackBlock.NotBoss;
+  if (!hasPod(w, seat, form, roleOf(attack))) return AttackBlock.NoPod;
+  if (attack === Attack.Ultima && m.plUltCd[seat] !== 0) return AttackBlock.Cooldown;
+  if (fuel < attackFuel(form, attack)) return AttackBlock.Fuel;
+  if (m.plAtkPhase[seat] !== AttackPhase.Idle) return AttackBlock.Busy;
+  return AttackBlock.None;
+}
+
+/**
+ * What stops an attack from starting if it were pressed now (for the HUD and bots; the simulation applies the same rule).
+ * Timers count down before the next decision, so an attack on cooldown may become possible one tick before this says so.
+ */
+export function attackBlocker(w: World, seat: number, attack: number): number {
+  return blockOf(w, seat, FORMS[w.m.plFrame[seat]], attack, w.m.plGauge[seat]);
+}
+
+export function canStartAttack(w: World, seat: number, attack: number): boolean {
+  return attackBlocker(w, seat, attack) === AttackBlock.None;
+}
+
 function begin(w: World, seat: number, attack: number, timing: AttackTiming): void {
   const { m } = w;
   m.plGauge[seat] -= timing.cost;
@@ -86,13 +141,14 @@ function begin(w: World, seat: number, attack: number, timing: AttackTiming): vo
   w.emit(Ev.Windup, m.plX[seat], m.plY[seat], seat, attack);
 }
 
-/** Ultima outranks the siege shot, which outranks the salvo. An attack is paid for in full when it starts. */
-function tryStart(w: World, seat: number, form: FormDef, buttons: number): void {
-  const { m } = w;
-  const gauge = m.plGauge[seat];
-  if ((buttons & Button.Ultima) !== 0 && m.plUltCd[seat] === 0 && gauge > form.ultima.cost) begin(w, seat, Attack.Ultima, form.ultima);
-  else if ((buttons & Button.Alt) !== 0 && gauge > form.siege.cost && hasPod(w, seat, form, Role.Siege)) begin(w, seat, Attack.Siege, form.siege);
-  else if ((buttons & Button.Fire) !== 0 && gauge > form.salvo.cost && hasPod(w, seat, form, Role.Salvo)) begin(w, seat, Attack.Salvo, form.salvo);
+/**
+ * Ultima outranks the siege shot, which outranks the salvo. An attack is paid for in full when it starts. `fuel` is the gauge
+ * before this tick's drain, the value everyone saw (see attackFuel).
+ */
+function tryStart(w: World, seat: number, form: FormDef, buttons: number, fuel: number): void {
+  if ((buttons & Button.Ultima) !== 0 && blockOf(w, seat, form, Attack.Ultima, fuel) === AttackBlock.None) begin(w, seat, Attack.Ultima, form.ultima);
+  else if ((buttons & Button.Alt) !== 0 && blockOf(w, seat, form, Attack.Siege, fuel) === AttackBlock.None) begin(w, seat, Attack.Siege, form.siege);
+  else if ((buttons & Button.Fire) !== 0 && blockOf(w, seat, form, Attack.Salvo, fuel) === AttackBlock.None) begin(w, seat, Attack.Salvo, form.salvo);
 }
 
 function shooter(w: World, seat: number, attack: number, part: number): Shooter {
@@ -163,11 +219,11 @@ function release(w: World, seat: number, form: FormDef): void {
   m.plAtkTimer[seat] = volley.recovery;
 }
 
-function runAttack(w: World, seat: number, form: FormDef, buttons: number): void {
+function runAttack(w: World, seat: number, form: FormDef, buttons: number, fuel: number): void {
   const { m } = w;
   switch (m.plAtkPhase[seat]) {
     case AttackPhase.Idle:
-      tryStart(w, seat, form, buttons);
+      tryStart(w, seat, form, buttons, fuel);
       break;
     case AttackPhase.Windup:
       if (--m.plAtkTimer[seat] <= 0) release(w, seat, form);
@@ -192,6 +248,7 @@ export function updateBoss(w: World, seat: number, buttons: number, moveX: numbe
   const { m } = w;
   const form = FORMS[m.plFrame[seat]];
   const base = w.partBase(seat);
+  const fuel = m.plGauge[seat];
   m.plGauge[seat] -= BOSS_DRAIN_PER_TICK;
   if (m.plGauge[seat] <= 0) {
     endBoss(w, seat);
@@ -204,7 +261,7 @@ export function updateBoss(w: World, seat: number, buttons: number, moveX: numbe
     if (m.ptHeat[base + k] > 0) m.ptHeat[base + k]--;
     if (part.kind === PartKind.Pod && m.ptHp[base + k] > 0) m.ptAng[base + k] = fx.turnToward(m.ptAng[base + k], m.plAim[seat], part.turn);
   });
-  runAttack(w, seat, form, buttons);
+  runAttack(w, seat, form, buttons, fuel);
   if (isRooted(m.plAtk[seat], m.plAtkPhase[seat])) drive(w, seat, 0, 0, 0, ROOT_BRAKE);
   else drive(w, seat, moveX, moveY, form.speed, form.accel);
   keepInside(w, seat, form.reach);

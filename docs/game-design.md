@@ -132,9 +132,15 @@ from that weight and must *tell* the arena what is coming before it lands:
 |---|---|---|---|---|
 | **Left click** (hold) | **Salvo**: basic boss spread, differs per robot | 12 to 18 ticks | 18 to 30 ticks | 5 to 8 |
 | **Right click** | **Siege shot**: slower and heavier | 36 to 48 ticks, rooted | 40 to 60 ticks | 45 to 55 |
-| **`E` / gamepad `X`** | **Ultima**: the final boss attack | 90 to 110 ticks, rooted, then a 4 s barrage | 120 to 150 ticks; 10 to 12 s cooldown | 300 to 330 (needs at least that much energy) |
+| **`E` / gamepad `X`** | **Ultima**: the final boss attack | 90 to 110 ticks, rooted, then a 4 s barrage | 120 to 150 ticks; 10 to 12 s cooldown | 300 to 330 |
 
 The exact numbers per boss form are in §5.5.4.
+
+**An attack needs its whole fuel up front.** It starts only if the tank holds its cost plus all the fuel its wind-up, the
+ultima's barrage and its recovery will burn (`attackFuel` in `sim/boss.ts`; the HUD's energy-bar markers and the bots use
+the same rule). So a colossus never folds back in the middle of a tell (the tell never lies) and the recovery, the punish
+window, always happens. In numbers: a salvo needs about 15 points, a siege shot about 70, the ultima 430 to 470: most of
+what a transformation starts with. An attack also needs a live pod of its role.
 
 *Key choice:* the ultima gets its own key (`E` / gamepad `X`), separate from the transform button (`Space` / `Y`), so
 it can never be triggered by mistake while tapping to transform.
@@ -145,7 +151,7 @@ it can never be triggered by mistake while tapping to transform.
 |---|---|---|---|
 | **Salvo** | Its basic weapons are heavy cannon mounts that must swing round and cycle. They cannot aim precisely, so they fill space: a fan of large slow orbs that denies an area instead of hunting a target. | Pods swing toward the target (visible, slow slew), muzzles glow from dim to bright over 12 ticks, short rising tone. | Step through the gaps of the fan (slow orbs, known angles). Out-turn it: the pods lag. Shoot a pod to remove its share of the fan. |
 | **Siege shot** | A heavy shell needs a planted platform to absorb the recoil, so the machine stops, braces, and spends time charging one huge slow shell that bursts into shrapnel. | Body stops and lowers, main barrel extends and glows white-hot, a soft marker shows the burst point, low rising hum, small camera zoom-out; on release the body is thrown backwards. | It is rooted: this is the window to attack the charging pod or the core, or to leave the burst area (the shell needs seconds to arrive). Destroying the charging pod cancels the shot. |
-| **Ultima** | It dumps the whole reactor through every weapon at once. That is why it needs almost a full gauge, why the machine is locked in place while capacitors charge, and why it cannot do anything else. | Whole body lights up, plates unfold, energy lines flow from the core to each live pod (so you can see which pods will fire), the arena dims, a ring collapses inward, a loud tone rises for 1.5 s, and every player's HUD flags it. | Break pods during the charge (each dead pod loses its stream), then leave the dense zone: the spirals and rings are slow and full of gaps. Killing the core ends it. |
+| **Ultima** | It dumps the whole reactor through every weapon at once. That is why it needs most of the energy a transformation starts with, why the machine is locked in place while capacitors charge, and why it cannot do anything else. | Whole body lights up, plates unfold, energy lines flow from the core to each live pod (so you can see which pods will fire), the arena dims, a ring collapses inward, a loud tone rises for 1.5 s, and every player's HUD flags it. | Break pods during the charge (each dead pod loses its stream), then leave the dense zone: the spirals and rings are slow and full of gaps. Killing the core ends it. |
 
 **Tell rules.** Each is enforced by code and checked by verification (§9), not left to art:
 1. **Minimum wind-up:** Salvo at least 12 ticks, Siege 36, Ultima 90. No boss-attack projectile exists before its wind-up ends.

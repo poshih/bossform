@@ -2,6 +2,10 @@ import { fx } from '@metronome/engine';
 import { FORM_NAMES } from '../setup.ts';
 import {
   Attack,
+  AttackBlock,
+  attackBlocker,
+  attackFuel,
+  canStartAttack,
   AttackPhase,
   Banner,
   BOSS_DRAIN_PER_TICK,
@@ -115,7 +119,8 @@ const COMPACT_HINT_SIZE = 8.5;
 const COMPACT_TITLE_SIZE = 8.8;
 /** The key column is at least this wide so the names of stacked compact chips line up. */
 const COMPACT_HINT_COLUMN = 18;
-const ULTIMA_CHIP_INDEX = 2;
+/** The boss-form attack chips, in display order (left click, right click, ultima key). */
+const BOSS_ATTACKS = [Attack.Salvo, Attack.Siege, Attack.Ultima] as const;
 const CHIP_INSET = 9;
 const CHIP_HINT_SIZE = 8.5;
 const CHIP_TITLE_SIZE = 10;
@@ -131,6 +136,25 @@ const SAFE_INDICATOR_GAP = 6;
 /** Room one off-screen pointer needs along its edge: a chevron plus its label, stacked (vertical edges) or side by side. */
 const INDICATOR_SLOT_VERTICAL = 40;
 const INDICATOR_SLOT_HORIZONTAL = 64;
+const METER_SMOOTH_RATE = 14;
+const HP_GHOST_DELAY = 0.28;
+const HP_GHOST_DRAIN_RATE = 0.42;
+const ENERGY_SHIMMER_SECONDS = 0.62;
+const ENERGY_SHIMMER_GAIN = GAUGE_SCALE * 4;
+const CHIP_READY_POP_SECONDS = 0.34;
+const SCORE_ROW_MOVE_SECONDS = 0.3;
+const SCORE_ROW_SHIFT = 12;
+const FEED_SLIDE_DISTANCE = 24;
+const BANNER_REVEAL_SECONDS = 0.42;
+const BANNER_PUNCH_SECONDS = 0.28;
+const BANNER_GLITCH_SECONDS = 0.52;
+const BANNER_SLICE_OFFSET = 10;
+const BANNER_SWEEP_SECONDS = 0.58;
+const COUNTDOWN_PUNCH_SCALE = 0.28;
+const COUNTDOWN_ALPHA = 0.86;
+const OFFSCREEN_BOB = 4;
+const BEAT_ACCENT_BREATH = 0.1;
+const SCRAMBLE_GLYPHS = 'B0S5F0RM-XV/\\<>[]';
 
 const LABEL_FONT_WEIGHT = 600;
 const BODY_FONT_WEIGHT = 500;
@@ -170,6 +194,27 @@ interface DamageWindowState {
   hitUntil: number;
 }
 
+interface SeatMotionState {
+  hpFill: number;
+  hpGhost: number;
+  hpGhostHoldUntil: number;
+  lastHpFill: number;
+  energyFill: number;
+  lastGauge: number;
+  energyShimmerUntil: number;
+  altReady: boolean;
+  altReadyAt: number;
+  transformReady: boolean;
+  transformReadyAt: number;
+  attackReady: boolean[];
+  attackReadyAt: number[];
+}
+
+interface ScoreRowMotion {
+  rank: number;
+  movedAt: number;
+}
+
 interface TeamGroup {
   readonly team: number;
   readonly rows: readonly number[];
@@ -207,6 +252,13 @@ interface ChipSpec {
 interface ChipProgress {
   readonly fill: number;
   readonly color: string;
+}
+
+interface MeterMotion {
+  readonly ghost?: number;
+  readonly shimmer?: number;
+  readonly flash?: number;
+  readonly sheen?: number;
 }
 
 interface Rect {
@@ -263,8 +315,11 @@ export class Hud {
   private readonly banners: BannerItem[] = [];
   private readonly ultimaAlerts: UltimaAlert[] = [];
   private readonly windows: DamageWindowState[] = [];
+  private readonly seatMotion: SeatMotionState[] = [];
+  private readonly scoreMotion = new Map<number, ScoreRowMotion>();
   private scale = 1;
   private occluders: Rect[] = [];
+  private lastDrawTime = 0;
 
   handleEvents(world: World): void {
     const now = world.m.world[W.Tick] / TICK_RATE;
@@ -300,6 +355,9 @@ export class Hud {
     const { world, width, height, time } = view;
     this.syncSeatState(world);
     this.updateDamageWindowState(world);
+    const dt = this.lastDrawTime === 0 ? 0 : clamp(time - this.lastDrawTime, 0, 1 / 12);
+    this.lastDrawTime = time;
+    this.updateSeatMotion(world, time, dt);
     this.scale = clamp(Math.min(width / 1280, height / 720), 0.65, 1.4);
     const margin = this.s(HUD_MARGIN);
     const scoreboardRect = this.rect(margin, margin, this.s(SCOREBOARD_WIDTH), 0);
@@ -322,6 +380,7 @@ export class Hud {
     this.drawOffscreenIndicators(ctx, view);
     this.drawUltimaAlert(ctx, view);
     this.drawCenterBanners(ctx, view);
+    this.drawCountdownPulse(ctx, view);
     this.drawStateWarnings(ctx, view, time);
     this.drawReticle(ctx, view);
     ctx.restore();
@@ -343,6 +402,60 @@ export class Hud {
   private syncSeatState(world: World): void {
     while (this.windows.length < world.seats) {
       this.windows.push({ amount: 0, cap: 1, closeTick: 0, blockedUntil: 0, hitUntil: 0 });
+    }
+    while (this.seatMotion.length < world.seats) {
+      this.seatMotion.push({
+        hpFill: 1,
+        hpGhost: 1,
+        hpGhostHoldUntil: 0,
+        lastHpFill: 1,
+        energyFill: 0,
+        lastGauge: 0,
+        energyShimmerUntil: 0,
+        altReady: false,
+        altReadyAt: 0,
+        transformReady: false,
+        transformReadyAt: 0,
+        attackReady: Array.from({ length: ATTACK_CHIP_COUNT }, () => false),
+        attackReadyAt: Array.from({ length: ATTACK_CHIP_COUNT }, () => 0),
+      });
+    }
+  }
+
+  private smoothStep(current: number, target: number, dt: number, rate: number): number {
+    const amount = 1 - Math.exp(-rate * dt);
+    return lerp(current, target, amount);
+  }
+
+  private updateSeatMotion(world: World, time: number, dt: number): void {
+    const { m } = world;
+    for (let seat = 0; seat < world.seats; seat++) {
+      const state = this.seatMotion[seat];
+      const stats = FRAME_STATS[m.plFrame[seat]];
+      const hpTarget = invLerp(0, stats.hp, m.plHp[seat]);
+      if (hpTarget < state.lastHpFill) state.hpGhostHoldUntil = time + HP_GHOST_DELAY;
+      state.hpFill = dt === 0 ? hpTarget : this.smoothStep(state.hpFill, hpTarget, dt, METER_SMOOTH_RATE);
+      if (hpTarget >= state.hpGhost) state.hpGhost = hpTarget;
+      else if (time > state.hpGhostHoldUntil) state.hpGhost = Math.max(hpTarget, state.hpGhost - HP_GHOST_DRAIN_RATE * dt);
+      state.lastHpFill = hpTarget;
+
+      const gauge = m.plGauge[seat];
+      const energyTarget = clamp(gauge / GAUGE_MAX, 0, 1);
+      state.energyFill = dt === 0 ? energyTarget : this.smoothStep(state.energyFill, energyTarget, dt, METER_SMOOTH_RATE);
+      if (gauge - state.lastGauge >= ENERGY_SHIMMER_GAIN) state.energyShimmerUntil = time + ENERGY_SHIMMER_SECONDS;
+      state.lastGauge = gauge;
+
+      const altReady = m.plAltCd[seat] === 0;
+      if (altReady && !state.altReady) state.altReadyAt = time;
+      state.altReady = altReady;
+      const transformReady = gauge >= BOSS_MIN_GAUGE;
+      if (transformReady && !state.transformReady) state.transformReadyAt = time;
+      state.transformReady = transformReady;
+      BOSS_ATTACKS.forEach((attack, index) => {
+        const ready = m.plForm[seat] === Form.Boss && canStartAttack(world, seat, attack);
+        if (ready && !state.attackReady[index]) state.attackReadyAt[index] = time;
+        state.attackReady[index] = ready;
+      });
     }
   }
 
@@ -423,13 +536,20 @@ export class Hud {
     ctx.restore();
   }
 
-  private drawMeter(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, fill: number, color: string, back = 'rgba(255,255,255,0.08)'): void {
+  private drawMeter(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, fill: number, color: string, back = 'rgba(255,255,255,0.08)', motion?: MeterMotion): void {
     const amount = clamp(fill, 0, 1);
     const cut = Math.min(this.s(6), height * 0.5);
     ctx.save();
     ctx.fillStyle = back;
     drawChamferRect(ctx, x, y, width, height, cut);
     ctx.fill();
+    const ghost = motion?.ghost === undefined ? 0 : clamp(motion.ghost, 0, 1);
+    if (ghost > amount) {
+      const ghostWidth = Math.max(height, width * ghost);
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      drawChamferRect(ctx, x, y, ghostWidth, height, cut);
+      ctx.fill();
+    }
     if (amount > 0) {
       const fillWidth = Math.max(height, width * amount);
       const gradient = ctx.createLinearGradient(x, y, x + fillWidth, y);
@@ -445,6 +565,36 @@ export class Hud {
       ctx.lineWidth = this.s(1);
       drawChamferRect(ctx, x, y, fillWidth, height, cut);
       ctx.stroke();
+      const sheen = motion?.sheen ?? 0;
+      if (sheen > 0) {
+        const sweepWidth = Math.max(height * 2.4, width * 0.18);
+        const offset = (sheen % 1) * (fillWidth + sweepWidth) - sweepWidth;
+        const sheenGradient = ctx.createLinearGradient(x + offset, y, x + offset + sweepWidth, y);
+        sheenGradient.addColorStop(0, 'rgba(255,255,255,0)');
+        sheenGradient.addColorStop(0.5, 'rgba(255,255,255,0.34)');
+        sheenGradient.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.save();
+        drawChamferRect(ctx, x, y, fillWidth, height, cut);
+        ctx.clip();
+        ctx.fillStyle = sheenGradient;
+        ctx.fillRect(x + offset, y, sweepWidth, height);
+        ctx.restore();
+      }
+      const shimmer = motion?.shimmer ?? 0;
+      if (shimmer > 0) {
+        ctx.globalAlpha = shimmer * 0.45;
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y - this.s(2), fillWidth, this.s(1));
+        ctx.fillRect(x, y + height + this.s(1), fillWidth, this.s(1));
+      }
+    }
+    const flash = motion?.flash ?? 0;
+    if (flash > 0) {
+      ctx.globalAlpha = flash;
+      ctx.strokeStyle = UI_WARNING;
+      ctx.lineWidth = this.s(2);
+      drawChamferRect(ctx, x - this.s(1), y - this.s(1), width + this.s(2), height + this.s(2), cut);
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -457,6 +607,11 @@ export class Hud {
     const rows: Array<{ team: number; seat: number }> = [];
     groups.forEach((group) => group.rows.forEach((rowSeat) => rows.push({ team: group.team, seat: rowSeat })));
     const visible = rows.slice(0, SCOREBOARD_MAX_ROWS);
+    visible.forEach((row, rank) => {
+      const previous = this.scoreMotion.get(row.seat);
+      if (previous === undefined) this.scoreMotion.set(row.seat, { rank, movedAt: view.time - SCORE_ROW_MOVE_SECONDS });
+      else if (previous.rank !== rank) this.scoreMotion.set(row.seat, { rank, movedAt: view.time });
+    });
     const extra = Math.max(0, rows.length - visible.length);
     const headerCount = groups.filter((group) => !group.solo).length;
     const height = this.s(32) + visible.length * (rowHeight + rowGap) + headerCount * this.s(14) + (extra > 0 ? this.s(18) : 0) + this.s(10);
@@ -477,38 +632,43 @@ export class Hud {
       }
       for (const rowSeat of group.rows) {
         if (!visible.some((row) => row.seat === rowSeat)) continue;
+        const rowMotion = this.scoreMotion.get(rowSeat);
+        const moveAge = rowMotion === undefined ? SCORE_ROW_MOVE_SECONDS : view.time - rowMotion.movedAt;
+        const moveT = easeOutCubic(clamp(moveAge / SCORE_ROW_MOVE_SECONDS, 0, 1));
+        const animatedCy = cy + (1 - moveT) * this.s(SCORE_ROW_SHIFT);
         const alive = world.m.plAlive[rowSeat] === 1;
         const local = rowSeat === seat;
         const boss = world.m.plForm[rowSeat] === Form.Boss;
         const teamTint = cssHex(teamColor(group.team));
         ctx.save();
+        ctx.globalAlpha = lerp(0.72, 1, moveT);
         if (local) {
           ctx.fillStyle = rgba(teamColor(group.team), 0.16);
-          drawChamferRect(ctx, x + this.s(10), cy, width - this.s(20), rowHeight, this.s(8));
+          drawChamferRect(ctx, x + this.s(10), animatedCy, width - this.s(20), rowHeight, this.s(8));
           ctx.fill();
         }
         ctx.strokeStyle = rgba(teamColor(group.team), 0.26);
         ctx.lineWidth = this.s(1);
-        drawChamferRect(ctx, x + this.s(10), cy, width - this.s(20), rowHeight, this.s(8));
+        drawChamferRect(ctx, x + this.s(10), animatedCy, width - this.s(20), rowHeight, this.s(8));
         ctx.stroke();
         ctx.font = `${BODY_FONT_WEIGHT} ${this.s(11.5)}px ${UI_FONT_STACK}`;
         ctx.fillStyle = alive ? teamTint : 'rgba(206,227,245,0.34)';
         ctx.textBaseline = 'middle';
         if (group.solo) {
           ctx.beginPath();
-          ctx.arc(x + this.s(18), cy + rowHeight * 0.5, this.s(3), 0, Math.PI * 2);
+          ctx.arc(x + this.s(18), animatedCy + rowHeight * 0.5, this.s(3), 0, Math.PI * 2);
           ctx.fill();
         }
-        ctx.fillText(names[rowSeat] ?? `P${rowSeat + 1}`, x + this.s(group.solo ? 28 : 18), cy + rowHeight * 0.5);
+        ctx.fillText(names[rowSeat] ?? `P${rowSeat + 1}`, x + this.s(group.solo ? 28 : 18), animatedCy + rowHeight * 0.5);
         ctx.fillStyle = UI_TEXT;
         ctx.textAlign = 'right';
         const suffix = world.isDeathmatch ? `${world.m.plKills[rowSeat]} / ${world.m.plDeaths[rowSeat]}` : `${world.m.plKills[rowSeat]}K ${world.m.plDeaths[rowSeat]}D`;
-        ctx.fillText(suffix, x + width - this.s(20), cy + rowHeight * 0.5);
+        ctx.fillText(suffix, x + width - this.s(20), animatedCy + rowHeight * 0.5);
         ctx.textAlign = 'left';
-        if (boss) this.drawBossBadge(ctx, x + width - this.s(54), cy + rowHeight * 0.5, cssHex(teamColor(group.team)), 1);
+        if (boss) this.drawBossBadge(ctx, x + width - this.s(54), animatedCy + rowHeight * 0.5, cssHex(teamColor(group.team)), 1);
         if (!alive) {
           ctx.fillStyle = 'rgba(255,255,255,0.38)';
-          ctx.fillText('☠', x + width - this.s(32), cy + rowHeight * 0.5);
+          ctx.fillText('☠', x + width - this.s(32), animatedCy + rowHeight * 0.5);
         }
         ctx.restore();
         cy += rowHeight + rowGap;
@@ -580,9 +740,11 @@ export class Hud {
     this.killFeed.forEach((item, index) => {
       const age = time - item.at;
       const fade = 1 - easeOutCubic(clamp(age / FEED_LIFETIME, 0, 1));
+      const enter = easeOutCubic(clamp(age / 0.22, 0, 1));
       const rowY = y + this.s(30) + index * rowHeight;
       ctx.save();
       ctx.globalAlpha = fade;
+      ctx.translate((1 - enter) * this.s(FEED_SLIDE_DISTANCE), 0);
       ctx.font = `${BODY_FONT_WEIGHT} ${this.s(12)}px ${UI_FONT_STACK}`;
       ctx.textBaseline = 'middle';
       if (item.kind === 'left') {
@@ -593,6 +755,11 @@ export class Hud {
         const victimTeam = world.m.plTeam[item.victim];
         const killerName = item.killer >= 0 ? (names[item.killer] ?? `P${item.killer + 1}`) : 'STORM';
         const victimName = names[item.victim] ?? `P${item.victim + 1}`;
+        if (item.bossKill) {
+          ctx.fillStyle = rgba(0xff6a80, 0.1 + (1 - enter) * 0.16);
+          drawChamferRect(ctx, x + this.s(9), rowY + this.s(2), width - this.s(18), rowHeight - this.s(4), this.s(7));
+          ctx.fill();
+        }
         ctx.fillStyle = item.killer >= 0 ? cssHex(teamColor(killerTeam)) : UI_WARNING;
         ctx.fillText(killerName, x + this.s(14), rowY + rowHeight * 0.5);
         const killerWidth = ctx.measureText(killerName).width;
@@ -720,11 +887,13 @@ export class Hud {
     const rightX = x + layout.rightX;
     const leftWidth = layout.leftWidth;
     const hpBarY = y + layout.hpBar;
+    const motion = this.seatMotion[seat];
+    const beatPulse = 1 + view.beat.pulse * BEAT_ACCENT_BREATH;
 
     this.drawPanel(ctx, x, y, rect.width, rect.height, accent);
     this.drawSectionLabel(ctx, alive ? 'LOCAL PILOT' : 'SPECTATOR', leftX, y + layout.titleBaseline, UI_TEXT_DIM);
     this.drawMetricRow(ctx, 'HP', `${Math.max(0, m.plHp[seat])} / ${stats.hp}`, leftX, y + layout.hpLabel, leftWidth, accent, accent);
-    this.drawMeter(ctx, leftX, hpBarY, leftWidth, barHeight, invLerp(0, stats.hp, m.plHp[seat]), accent);
+    this.drawMeter(ctx, leftX, hpBarY, leftWidth, barHeight, motion.hpFill, accent, 'rgba(255,255,255,0.08)', { ghost: motion.hpGhost });
     const segments = Math.max(1, Math.ceil(stats.hp / stats.windowCap));
     for (let i = 1; i < segments; i++) {
       const sx = leftX + (leftWidth * i) / segments;
@@ -740,13 +909,17 @@ export class Hud {
 
     const windowRatio = this.damageWindowRatio(world, seat, time);
     const blocked = this.windows[seat].blockedUntil > time;
+    const blockFlash = blocked ? clamp((this.windows[seat].blockedUntil - time) / BLOCK_FLASH_SECONDS, 0, 1) : 0;
     const windowColor = blocked ? UI_WARNING : UI_TEXT_DIM;
     this.drawMetricRow(ctx, 'DAMAGE WINDOW', `${Math.round(this.windows[seat].amount)} / ${stats.windowCap}`, leftX, y + layout.windowLabel, leftWidth, windowColor, windowColor);
-    this.drawMeter(ctx, leftX, y + layout.windowBar, leftWidth, minorBarHeight, windowRatio, blocked ? UI_WARNING : '#ffcf69');
+    this.drawMeter(ctx, leftX, y + layout.windowBar, leftWidth, minorBarHeight, windowRatio, blocked ? UI_WARNING : '#ffcf69', 'rgba(255,255,255,0.08)', { flash: blockFlash });
 
     this.drawMetricRow(ctx, 'ENERGY', `${Math.floor(m.plGauge[seat] / GAUGE_SCALE)} / ${GAUGE_MAX / GAUGE_SCALE}`, leftX, y + layout.energyLabel, leftWidth, UI_TEXT_DIM, UI_TEXT);
-    this.drawMeter(ctx, leftX, y + layout.energyBar, leftWidth, barHeight, m.plGauge[seat] / GAUGE_MAX, '#7ae4ff');
-    this.drawGaugeMarkers(ctx, leftX, y + layout.energyBar, leftWidth, frame, m.plForm[seat]);
+    this.drawMeter(ctx, leftX, y + layout.energyBar, leftWidth, barHeight, motion.energyFill, '#7ae4ff', 'rgba(255,255,255,0.08)', {
+      shimmer: clamp((motion.energyShimmerUntil - time) / ENERGY_SHIMMER_SECONDS, 0, 1),
+      sheen: (time * 0.28 + view.beat.phase * 0.18) % 1,
+    });
+    this.drawGaugeMarkers(ctx, leftX, y + layout.energyBar, leftWidth, frame, m.plForm[seat], motion.transformReady, view.beat.pulse);
 
     if (layout.boss) {
       const seconds = m.plGauge[seat] / BOSS_DRAIN_PER_TICK / TICK_RATE;
@@ -759,18 +932,19 @@ export class Hud {
       ctx.restore();
       this.drawAttackTell(ctx, leftX, y + layout.tellLine, world, seat);
       this.drawPartIntegrity(ctx, rightX, y + layout.diagram, layout.rightWidth, layout.diagramHeight, world, seat);
-      this.drawAttackReadiness(ctx, rightX, y + layout.attackChips, layout.rightWidth, frame, world, seat, time);
+      this.drawAttackReadiness(ctx, rightX, y + layout.attackChips, layout.rightWidth, frame, world, seat, time, view.beat.pulse);
     } else {
       const ready = m.plGauge[seat] >= BOSS_MIN_GAUGE;
-      this.drawNormalCooldown(ctx, rightX, y + layout.cooldownChip, layout.rightWidth, world, seat);
+      this.drawNormalCooldown(ctx, rightX, y + layout.cooldownChip, layout.rightWidth, world, seat, time);
       const missing = Math.ceil((BOSS_MIN_GAUGE - m.plGauge[seat]) / GAUGE_SCALE);
+      const pop = this.readyPop(time, motion.transformReadyAt);
       this.drawAbilityChip(ctx, rightX, y + layout.transformChip, layout.rightWidth, this.s(LOCAL_CHIP_HEIGHT), {
         title: 'TRANSFORM',
         hint: 'SPACE',
         status: ready ? 'READY' : `${missing} MORE`,
         color: ready ? accent : UI_TEXT_DIM,
-        alpha: ready ? pulse(time, 7, 0.74, 1) : 0.62,
-      });
+        alpha: ready ? clamp(0.78 + view.beat.pulse * 0.22, 0, 1) : 0.62,
+      }, pop * beatPulse);
     }
   }
 
@@ -822,10 +996,15 @@ export class Hud {
    * used. Tall chips stack the key over the name, put the status on the name's row when both fit (else on the key's row) and
    * keep an optional progress bar on a row of its own, so nothing shares a row.
    */
-  private drawAbilityChip(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, chip: ChipSpec): void {
+  private drawAbilityChip(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, chip: ChipSpec, popScale = 1): void {
     const compact = height <= this.s(LOCAL_COMPACT_CHIP_HEIGHT + 6);
     const { title, hint, color, progress } = chip;
     ctx.save();
+    if (popScale !== 1) {
+      ctx.translate(x + width * 0.5, y + height * 0.5);
+      ctx.scale(popScale, popScale);
+      ctx.translate(-(x + width * 0.5), -(y + height * 0.5));
+    }
     ctx.globalAlpha = chip.alpha;
     ctx.strokeStyle = color;
     ctx.lineWidth = this.s(1.1);
@@ -869,8 +1048,15 @@ export class Hud {
     ctx.restore();
     if (progress !== undefined) {
       const inset = this.s(CHIP_INSET);
-      this.drawMeter(ctx, x + inset, y + this.s(CHIP_PROGRESS_TOP), width - inset * 2, this.s(CHIP_PROGRESS_HEIGHT), progress.fill, progress.color, 'rgba(255,255,255,0.05)');
+      this.drawMeter(ctx, x + inset, y + this.s(CHIP_PROGRESS_TOP), width - inset * 2, this.s(CHIP_PROGRESS_HEIGHT), progress.fill, progress.color, 'rgba(255,255,255,0.05)', { sheen: 0.35 });
     }
+  }
+
+  private readyPop(time: number, readyAt: number): number {
+    const age = time - readyAt;
+    if (readyAt <= 0 || age < 0 || age > CHIP_READY_POP_SECONDS) return 1;
+    const t = clamp(age / CHIP_READY_POP_SECONDS, 0, 1);
+    return 1 + Math.sin(t * Math.PI) * 0.12;
   }
 
   private damageWindowRatio(world: World, seat: number, time: number): number {
@@ -886,10 +1072,14 @@ export class Hud {
     return clamp((state.amount / state.cap) * (1 - elapsed / DAMAGE_WINDOW_DECAY), 0, 1);
   }
 
-  private drawGaugeMarkers(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, frame: number, form: number): void {
+  private drawGaugeMarkers(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, frame: number, form: number, transformReady: boolean, beatPulse: number): void {
     const drawMarker = (value: number, label: string, color: string) => {
       const mx = x + width * clamp(value / GAUGE_MAX, 0, 1);
       ctx.save();
+      const markerPulse = label === 'B' && transformReady ? 1 + beatPulse * 0.18 : 1;
+      ctx.translate(mx, y + this.s(7));
+      ctx.scale(markerPulse, markerPulse);
+      ctx.translate(-mx, -(y + this.s(7)));
       ctx.strokeStyle = color;
       ctx.lineWidth = this.s(1.2);
       ctx.beginPath();
@@ -904,33 +1094,51 @@ export class Hud {
     };
     drawMarker(BOSS_MIN_GAUGE, 'B', UI_TEXT_DIM);
     if (form === Form.Boss) {
-      drawMarker(FORMS[frame].salvo.cost, 'L', UI_ACCENT);
-      drawMarker(FORMS[frame].siege.cost, 'R', '#ffc76f');
-      drawMarker(FORMS[frame].ultima.cost, 'E', UI_WARNING);
+      drawMarker(attackFuel(FORMS[frame], Attack.Salvo), 'L', UI_ACCENT);
+      drawMarker(attackFuel(FORMS[frame], Attack.Siege), 'R', '#ffc76f');
+      drawMarker(attackFuel(FORMS[frame], Attack.Ultima), 'E', UI_WARNING);
     }
   }
 
-  private drawAttackReadiness(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, frame: number, world: World, seat: number, time: number): void {
+  private drawAttackReadiness(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, frame: number, world: World, seat: number, time: number, beatPulse: number): void {
     const { m } = world;
-    const attacks = [FORMS[frame].salvo.cost, FORMS[frame].siege.cost, FORMS[frame].ultima.cost] as const;
     const labels = ['SALVO', 'SIEGE', 'ULTIMA'] as const;
     const hints = ['LMB', 'RMB', 'E'] as const;
     const colors = [UI_ACCENT, '#ffc76f', UI_WARNING] as const;
-    attacks.forEach((cost, index) => {
+    BOSS_ATTACKS.forEach((attack, index) => {
       const gauge = m.plGauge[seat];
-      const cooldown = index === ULTIMA_CHIP_INDEX ? m.plUltCd[seat] : 0;
-      const ready = gauge >= cost && cooldown === 0;
-      const missing = Math.ceil((cost - gauge) / GAUGE_SCALE);
-      const status = ready ? 'READY' : gauge < cost ? `${missing} MORE` : formatCompactSeconds(cooldown / TICK_RATE);
+      const need = attackFuel(FORMS[frame], attack);
+      const block = attackBlocker(world, seat, attack);
+      const ready = block === AttackBlock.None;
+      const missing = Math.ceil((need - gauge) / GAUGE_SCALE);
+      const status = this.attackStatus(block, missing, m.plUltCd[seat]);
       this.drawAbilityChip(ctx, x, y + index * this.s(LOCAL_COMPACT_CHIP_PITCH), width, this.s(LOCAL_COMPACT_CHIP_HEIGHT), {
         title: labels[index],
         hint: hints[index],
         status,
-        shortStatus: gauge < cost ? `+${missing}` : status,
+        shortStatus: block === AttackBlock.Fuel ? `+${missing}` : status,
         color: colors[index],
-        alpha: ready ? pulse(time + index, 6, 0.72, 1) : 0.38,
-      });
+        alpha: ready ? clamp(0.74 + beatPulse * 0.24, 0, 1) : 0.38,
+      }, this.readyPop(time, this.seatMotion[seat].attackReadyAt[index]));
     });
+  }
+
+  /** The chip text for an attack: why it cannot start (see sim attackBlocker), or READY. */
+  private attackStatus(block: number, missing: number, ultimaCooldown: number): string {
+    switch (block) {
+      case AttackBlock.None:
+        return 'READY';
+      case AttackBlock.Fuel:
+        return `${missing} MORE`;
+      case AttackBlock.Cooldown:
+        return formatCompactSeconds(ultimaCooldown / TICK_RATE);
+      case AttackBlock.NoPod:
+        return 'NO GUNS';
+      case AttackBlock.Busy:
+        return 'FIRING';
+      default:
+        throw new RangeError(`no chip text for attack block ${block}`);
+    }
   }
 
   private drawAttackTell(ctx: CanvasRenderingContext2D, x: number, y: number, world: World, seat: number): void {
@@ -986,7 +1194,7 @@ export class Hud {
     ctx.restore();
   }
 
-  private drawNormalCooldown(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, world: World, seat: number): void {
+  private drawNormalCooldown(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, world: World, seat: number, time: number): void {
     const frame = world.m.plFrame[seat];
     const remaining = world.m.plAltCd[seat];
     const total = NORMAL_ALT_COOLDOWNS[frame];
@@ -999,7 +1207,7 @@ export class Hud {
       color,
       alpha: 1,
       progress: { fill: 1 - remaining / total, color },
-    });
+    }, this.readyPop(time, this.seatMotion[seat].altReadyAt));
   }
 
   private drawRadar(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, size: number): void {
@@ -1126,15 +1334,18 @@ export class Hud {
       place(Math.atan2(point.y - centerY, point.x - centerX), this.s(INDICATOR_CHEVRON + 3), neutralAccent(1), 0.82, 'WARDEN', neutralEdge(1));
     }
     this.placeAlongEdges(marks, width, height);
-    for (const mark of marks) {
-      this.drawChevron(ctx, mark.x, mark.y, mark.angle, mark.size, mark.color, mark.alpha);
+    marks.forEach((mark, index) => {
+      const bob = Math.sin(time * 2.4 + index * 0.9) * this.s(OFFSCREEN_BOB);
+      const bobX = mark.vertical ? bob : 0;
+      const bobY = mark.vertical ? 0 : bob;
+      this.drawChevron(ctx, mark.x + bobX, mark.y + bobY, mark.angle, mark.size, mark.color, mark.alpha);
       ctx.save();
       ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(10)}px ${UI_FONT_STACK}`;
       ctx.fillStyle = mark.labelColor;
       ctx.textAlign = 'center';
-      ctx.fillText(mark.label, mark.x, mark.y + mark.size + this.s(12));
+      ctx.fillText(mark.label, mark.x + bobX, mark.y + bobY + mark.size + this.s(12));
       ctx.restore();
-    }
+    });
   }
 
   /** Where a ray from the screen centre at `angle` meets the inset screen edge. `vertical` marks a left or right edge. */
@@ -1291,7 +1502,10 @@ export class Hud {
     const fadeIn = clamp(age / 0.18, 0, 1);
     const fadeOut = 1 - clamp((age - (item.duration - BANNER_FADE)) / BANNER_FADE, 0, 1);
     const alpha = Math.min(fadeIn, fadeOut);
-    const scale = lerp(1.08, 1, easeOutCubic(clamp(age / 0.24, 0, 1)));
+    const punch = Math.sin(clamp(age / BANNER_PUNCH_SECONDS, 0, 1) * Math.PI);
+    const scale = lerp(1.1, 1, easeOutCubic(clamp(age / BANNER_PUNCH_SECONDS, 0, 1))) + punch * 0.04;
+    const reveal = easeOutCubic(clamp(age / BANNER_REVEAL_SECONDS, 0, 1));
+    const text = this.scrambleText(item.title, reveal);
     ctx.save();
     ctx.translate(view.width * 0.5, view.height * 0.29);
     ctx.scale(scale, scale);
@@ -1302,13 +1516,76 @@ export class Hud {
     ctx.textBaseline = 'middle';
     ctx.shadowColor = item.color;
     ctx.shadowBlur = 18;
-    fillCenteredText(ctx, item.title, 0, 0);
+    const titleWidth = ctx.measureText(item.title).width;
+    const sweep = clamp(age / BANNER_SWEEP_SECONDS, 0, 1);
+    ctx.strokeStyle = item.color;
+    ctx.lineWidth = this.s(1.3);
+    ctx.beginPath();
+    ctx.moveTo(-titleWidth * 0.62, -this.s(25));
+    ctx.lineTo(lerp(-titleWidth * 0.62, titleWidth * 0.62, sweep), -this.s(25));
+    ctx.moveTo(titleWidth * 0.62, this.s(25));
+    ctx.lineTo(lerp(titleWidth * 0.62, -titleWidth * 0.62, sweep), this.s(25));
+    ctx.stroke();
+    fillCenteredText(ctx, text, 0, 0);
+    if (age < BANNER_GLITCH_SECONDS) {
+      const sliceAlpha = (1 - age / BANNER_GLITCH_SECONDS) * 0.5;
+      ctx.globalAlpha = alpha * sliceAlpha;
+      ctx.fillStyle = UI_TEXT;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(-titleWidth, -this.s(9), titleWidth * 2, this.s(8));
+      ctx.clip();
+      fillCenteredText(ctx, text, Math.sin(age * 90) * this.s(BANNER_SLICE_OFFSET), 0);
+      ctx.restore();
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(-titleWidth, this.s(4), titleWidth * 2, this.s(7));
+      ctx.clip();
+      fillCenteredText(ctx, text, -Math.sin(age * 70) * this.s(BANNER_SLICE_OFFSET), 0);
+      ctx.restore();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = item.color;
+    }
     if (item.subtitle) {
       ctx.shadowBlur = 10;
       ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(13)}px ${UI_FONT_STACK}`;
       ctx.fillStyle = UI_TEXT;
       fillCenteredText(ctx, item.subtitle, 0, this.s(28));
     }
+    ctx.restore();
+  }
+
+  private scrambleText(text: string, reveal: number): string {
+    const shown = Math.floor(text.length * clamp(reveal, 0, 1));
+    let out = '';
+    for (let i = 0; i < text.length; i++) {
+      const source = text.charAt(i);
+      if (source === ' ' || i < shown) out += source;
+      else out += SCRAMBLE_GLYPHS.charAt((i * 7 + shown * 3) % SCRAMBLE_GLYPHS.length);
+    }
+    return out;
+  }
+
+  private drawCountdownPulse(ctx: CanvasRenderingContext2D, view: HudView): void {
+    const { world } = view;
+    if (world.m.world[W.Phase] !== Phase.Countdown) return;
+    const seconds = Math.ceil(world.m.world[W.PhaseTimer] / TICK_RATE);
+    if (seconds <= 0) return;
+    const beatScale = 1 + view.beat.pulse * COUNTDOWN_PUNCH_SCALE;
+    ctx.save();
+    ctx.translate(view.width * 0.5, view.height * 0.43);
+    ctx.scale(beatScale, beatScale);
+    ctx.globalAlpha = COUNTDOWN_ALPHA;
+    ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(92)}px ${UI_FONT_STACK}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = UI_ACCENT;
+    ctx.shadowBlur = this.s(30);
+    ctx.fillStyle = UI_TEXT;
+    ctx.fillText(String(seconds), 0, 0);
+    ctx.strokeStyle = UI_ACCENT;
+    ctx.lineWidth = this.s(1.6);
+    ctx.strokeText(String(seconds), 0, 0);
     ctx.restore();
   }
 

@@ -6,7 +6,7 @@ import { fx } from '@metronome/engine';
 import {
   Attack, AttackPhase, BOSS_DRAIN_PER_TICK, BOSS_KILL_ORBS, BOSS_KILL_SCORE, BOSS_MIN_GAUGE, BOSS_PART_GAIN_PCT, Button, Ev, Form, FORMS, Frame,
   FRAME_STATS, GAUGE_MAX, GAUGE_PER_DAMAGE_DEALT, HOT_PART_DAMAGE_PCT, KILL_ORBS, MIN_WINDUP_TICKS, Mode, MORPH_TICKS, PartKind, podMuzzle,
-  REVERT_PROTECT_TICKS, Role, VANGUARD, W,
+  REVERT_PROTECT_TICKS, Role, VANGUARD, W, attackFuel, canStartAttack,
 } from '../../game/src/sim/index.ts';
 import type { Vec } from '../../game/src/sim/index.ts';
 import { exposedPoint, holding, IDLE, Scenario } from './game-scenario.ts';
@@ -215,12 +215,32 @@ for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
   }
 }
 
-section('ultima needs the energy for it');
-{
-  const s = colossus(Frame.Vanguard);
-  s.m.plGauge[PILOT] = FORMS[Frame.Vanguard].ultima.cost;
-  s.step(2, presses(Button.Ultima));
-  check('with no more than the cost in the tank the ultima cannot start', s.events(Ev.Windup).length === 0);
+section('an attack needs its cost plus all the fuel its wind-up, barrage and recovery burn: the tell never lies');
+for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
+  const form = FORMS[frame];
+  for (const [attack, button, label] of [[Attack.Salvo, Button.Fire, 'salvo'], [Attack.Siege, Button.Alt, 'siege'], [Attack.Ultima, Button.Ultima, 'ultima']] as const) {
+    const need = attackFuel(form, attack);
+    const short = colossus(frame);
+    short.m.plGauge[PILOT] = need - 1;
+    const refusedAhead = !canStartAttack(short.w, PILOT, attack);
+    short.step(1, presses(button));
+    const refused = short.events(Ev.Windup).length === 0 && short.m.plAtkPhase[PILOT] === AttackPhase.Idle;
+
+    const exact = colossus(frame);
+    exact.m.plGauge[PILOT] = need;
+    const allowedAhead = canStartAttack(exact.w, PILOT, attack);
+    exact.step(1, presses(button));
+    const started = exact.events(Ev.Windup).length === 1;
+    let stayed = true;
+    for (let i = 0; i < 1200 && exact.m.plAtkPhase[PILOT] !== AttackPhase.Idle; i++) {
+      exact.step();
+      if (exact.m.plForm[PILOT] !== Form.Boss) stayed = false;
+    }
+    const finished = exact.events(Ev.Release).length === 1 && exact.m.plAtkPhase[PILOT] === AttackPhase.Idle;
+    check(`${FORM_NAMES[frame]} ${label}: one unit short of ${need} it cannot start; with exactly that it winds up, fires and recovers before the fuel runs out`,
+      refusedAhead && refused && allowedAhead && started && stayed && finished && exact.m.plForm[PILOT] === Form.Boss,
+      `short refused ${refused}, started ${started}, stayed in form ${stayed}, finished ${finished}`);
+  }
 }
 
 info(`${W.Count} world scalars`);
