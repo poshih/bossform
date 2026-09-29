@@ -1,5 +1,9 @@
 # BOSSFORM
 
+> **Design:** the current design is [`docs/game-design.md`](docs/game-design.md) (v0.2: PvP battle arena, slow
+> bullets only, vector-mesh look, up to 8 players). The sections below still describe the **v0 prototype**
+> (tag `v0-prototype`) and are rewritten as the redesign lands.
+
 An arena mech shoot-'em-up in the spirit of *Senko no Ronde*, built on **METRONOME**, a standalone
 deterministic lockstep engine. Move and aim separately (twin-stick), fill the energy gauge by grazing bullets and
 wrecking enemies, then press the boss button and **transform into your frame's colossal boss form**.
