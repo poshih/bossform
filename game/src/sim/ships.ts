@@ -25,7 +25,6 @@ export function resetShip(w: World, seat: number, at: Vec, aim: number, protecti
   m.plAim[seat] = aim;
   m.plBody[seat] = aim;
   m.plOrbit[seat] = 0;
-  m.plPrev[seat] = 0;
   m.plInvuln[seat] = protection;
   m.plRespawn[seat] = 0;
   m.plWinEnd[seat] = 0;
@@ -70,11 +69,12 @@ function respawnCountdown(w: World, seat: number): void {
   w.emit(Ev.Respawn, at.x, at.y, seat);
 }
 
-function updateNormal(w: World, seat: number, buttons: number, pressed: number, moveX: number, moveY: number): void {
+function updateNormal(w: World, seat: number, buttons: number, moveX: number, moveY: number): void {
   const { m } = w;
   const stats = FRAME_STATS[m.plFrame[seat]];
   m.plBody[seat] = m.plAim[seat];
-  if ((pressed & Button.Boss) !== 0 && m.plGauge[seat] >= BOSS_MIN_GAUGE) {
+  // Held, not pressed: a pilot holding the button while the gauge fills transforms the moment it can.
+  if ((buttons & Button.Boss) !== 0 && m.plGauge[seat] >= BOSS_MIN_GAUGE) {
     startMorph(w, seat);
     return;
   }
@@ -106,12 +106,10 @@ function updateShip(w: World, seat: number, input: GameInput, present: boolean):
   const buttons = fighting ? input.buttons : 0;
   const moveX = fighting ? input.moveX : 0;
   const moveY = fighting ? input.moveY : 0;
-  const pressed = buttons & ~m.plPrev[seat];
-  m.plPrev[seat] = buttons;
   m.plAim[seat] = input.aim;
   switch (m.plForm[seat]) {
     case Form.Normal:
-      updateNormal(w, seat, buttons, pressed, moveX, moveY);
+      updateNormal(w, seat, buttons, moveX, moveY);
       break;
     case Form.Morph:
       m.plBody[seat] = m.plAim[seat];

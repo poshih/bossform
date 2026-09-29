@@ -5,7 +5,7 @@ import { fx } from '@metronome/engine';
  * to their definitions (frames.ts, forms.ts, neutrals.ts). All values are fixed-point (fx.lit / fx.fromInt) or
  * plain integers (ticks, hit points, counts). Presentation constants live in ../config.ts, never here.
  */
-export const SIM_VERSION = 2;
+export const SIM_VERSION = 3;
 export const TICK_RATE = 60;
 
 // ---- Match rules -----------------------------------------------------------------------------------

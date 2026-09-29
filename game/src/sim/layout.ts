@@ -44,7 +44,7 @@ export function layoutFor(cap: Capacity) {
     teamWins: field.i32(TEAM_LIMIT), teamScore: field.i32(TEAM_LIMIT),
 
     // Ships (one entry per seat)
-    plActive: field.u8(S), plAlive: field.u8(S), plFrame: field.u8(S), plTeam: field.u8(S), plForm: field.u8(S), plPrev: field.u8(S),
+    plActive: field.u8(S), plAlive: field.u8(S), plFrame: field.u8(S), plTeam: field.u8(S), plForm: field.u8(S),
     plAtk: field.u8(S), plAtkPhase: field.u8(S),
     plX: field.i32(S), plY: field.i32(S), plVX: field.i32(S), plVY: field.i32(S),
     plAim: field.i32(S), plBody: field.i32(S), plOrbit: field.i32(S),
