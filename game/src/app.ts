@@ -346,6 +346,12 @@ export class App {
 
   // ---- read-only view for tests and tools --------------------------------------------------------------
 
+  /** Tools only (profiling): hides or shows a scene view of the current match. */
+  setViewVisible(index: number, visible: boolean): void {
+    if (this.stage === null) throw new Error('no match is running');
+    this.stage.setViewVisible(index, visible);
+  }
+
   private focusScreen(stage: Stage): { x: number; y: number; width: number; height: number } {
     const out = { x: 0, y: 0 };
     stage.seatScreen(this.focusSeat, out);

@@ -99,6 +99,13 @@ export class Stage {
     this.pipeline.render(this.scene, this.camera.camera, { punch: this.fx.punch, ultima: this.fx.ultimaDim, beat, time: this.timeSeconds });
   }
 
+  /** Tools only (profiling): shows or hides one scene view, by its position in the draw order (see `views`). */
+  setViewVisible(index: number, visible: boolean): void {
+    const view = this.views[index];
+    if (view === undefined) throw new RangeError(`no view ${index}`);
+    view.root.visible = visible;
+  }
+
   get cameraState(): FollowCamera['state'] {
     return this.camera.state;
   }
