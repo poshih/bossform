@@ -57,6 +57,18 @@ import {
 
 
 const HUD_MARGIN = 18;
+/** Section titles (SCOREBOARD, FEED, RADAR ...): font size, and how far the RADAR title's baseline sits above the radar. */
+const SECTION_LABEL_SIZE = 11;
+const RADAR_TITLE_DROP = 8;
+/** The ULTIMA banner under the timer. */
+const ULTIMA_BANNER_TOP = 90;
+const ULTIMA_BANNER_WIDTH = 320;
+const ULTIMA_BANNER_HEIGHT = 42;
+/** Off-screen pointer labels: gap between the chevron and the label, on the side facing the screen centre. */
+const OFFSCREEN_LABEL_BELOW = 12;
+const OFFSCREEN_LABEL_ABOVE = 6;
+/** Least distance between a pointer label and the screen edge. */
+const OFFSCREEN_LABEL_EDGE = 4;
 const PANEL_CUT = 12;
 const PANEL_GLOW = 10;
 const FEED_LIFETIME = 4.6;
@@ -318,7 +330,6 @@ export class Hud {
   private readonly seatMotion: SeatMotionState[] = [];
   private readonly scoreMotion = new Map<number, ScoreRowMotion>();
   private scale = 1;
-  private occluders: Rect[] = [];
   private lastDrawTime = 0;
 
   handleEvents(world: World): void {
@@ -368,17 +379,21 @@ export class Hud {
     const localWidth = clamp(width * (this.scale < 0.85 ? 0.28 : 0.33), this.s(300), this.s(440));
     const localLayout = this.measureLocalPanel(ctx, world, view.seat, localWidth);
     const localRect = this.rect(width * 0.5 - localWidth * 0.5, height - margin - localLayout.height, localWidth, localLayout.height);
-    this.occluders = [scoreboardRect, feedRect, radarRect, localRect];
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     this.drawNameTags(ctx, view);
-    this.drawScoreboard(ctx, view, scoreboardRect.x, scoreboardRect.y, scoreboardRect.width);
-    this.drawKillFeed(ctx, view, feedRect.x, feedRect.y, feedRect.width);
-    this.drawTimer(ctx, view, timerRect.x, timerRect.y, timerRect.width);
-    this.drawRadar(ctx, view, radarRect.x, radarRect.y, radarRect.width);
+    // Each panel reports the area it covered (heights depend on the rows drawn): off-screen pointers keep clear of them.
+    const covered: Rect[] = [
+      this.drawScoreboard(ctx, view, scoreboardRect.x, scoreboardRect.y, scoreboardRect.width),
+      this.drawKillFeed(ctx, view, feedRect.x, feedRect.y, feedRect.width),
+      this.drawTimer(ctx, view, timerRect.x, timerRect.y, timerRect.width),
+      this.drawRadar(ctx, view, radarRect.x, radarRect.y, radarRect.width),
+      localRect,
+    ];
     this.drawLocalPanel(ctx, view, localRect, localLayout);
-    this.drawOffscreenIndicators(ctx, view);
-    this.drawUltimaAlert(ctx, view);
+    if (this.ultimaAlerts.length > 0) covered.push(this.ultimaBannerRect(width));
+    this.drawOffscreenIndicators(ctx, view, covered);
+    this.drawUltimaAlert(ctx, view, covered);
     this.drawCenterBanners(ctx, view);
     this.drawCountdownPulse(ctx, view);
     this.drawStateWarnings(ctx, view, time);
@@ -527,7 +542,7 @@ export class Hud {
 
   private drawSectionLabel(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string): void {
     ctx.save();
-    ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(11)}px ${UI_FONT_STACK}`;
+    ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(SECTION_LABEL_SIZE)}px ${UI_FONT_STACK}`;
     ctx.letterSpacing = UI_CAPS_SPACING;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
@@ -599,7 +614,7 @@ export class Hud {
     ctx.restore();
   }
 
-  private drawScoreboard(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, width: number): void {
+  private drawScoreboard(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, width: number): Rect {
     const { world, seat, names } = view;
     const groups = this.groupTeams(world);
     const rowHeight = this.s(20);
@@ -682,6 +697,7 @@ export class Hud {
       ctx.fillText(`+${extra} MORE`, x + this.s(14), y + height - this.s(10));
       ctx.restore();
     }
+    return this.rect(x, y, width, height);
   }
 
   private groupTeams(world: World): TeamGroup[] {
@@ -731,7 +747,7 @@ export class Hud {
     ctx.restore();
   }
 
-  private drawKillFeed(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, width: number): void {
+  private drawKillFeed(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, width: number): Rect {
     const { names, time, world } = view;
     const rowHeight = this.s(FEED_ROW_HEIGHT);
     const height = this.s(30) + Math.max(1, this.killFeed.length) * rowHeight;
@@ -776,13 +792,15 @@ export class Hud {
       }
       ctx.restore();
     });
+    return this.rect(x, y, width, height);
   }
 
-  private drawTimer(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, width: number): void {
+  private drawTimer(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, width: number): Rect {
     const { world } = view;
     const phase = world.m.world[W.Phase];
     const roundTick = world.m.world[W.RoundTick];
     const height = world.isDeathmatch ? this.s(70) : this.s(88);
+    const covered = this.rect(x, y, width, height);
     this.drawPanel(ctx, x, y, width, height, UI_ACCENT);
     this.drawSectionLabel(ctx, world.isDeathmatch ? 'DEATHMATCH' : `ROUND ${world.m.world[W.Round]}`, x + this.s(14), y + this.s(18), UI_TEXT_DIM);
     ctx.save();
@@ -793,7 +811,7 @@ export class Hud {
     const topLabel = phase === Phase.Countdown ? formatCompactSeconds(world.m.world[W.PhaseTimer] / TICK_RATE) : world.isDeathmatch ? formatClock((DEATHMATCH_TICKS - roundTick) / TICK_RATE) : formatClock(Math.max(0, (SUDDEN_DEATH_TICKS - roundTick) / TICK_RATE));
     ctx.fillText(topLabel, x + width * 0.5, y + this.s(38));
     ctx.restore();
-    if (world.isDeathmatch) return;
+    if (world.isDeathmatch) return covered;
     this.drawTeamWins(ctx, world, x + this.s(14), y + this.s(54), width - this.s(28));
     if (roundTick >= SUDDEN_DEATH_TICKS) {
       const remaining = Math.max(0, (SHRINK_TICKS - (roundTick - SUDDEN_DEATH_TICKS)) / TICK_RATE);
@@ -804,6 +822,7 @@ export class Hud {
       ctx.fillText(`SUDDEN DEATH  ${formatClock(remaining)}`, x + width * 0.5, y + height - this.s(12));
       ctx.restore();
     }
+    return covered;
   }
 
   private drawTeamWins(ctx: CanvasRenderingContext2D, world: World, x: number, y: number, width: number): void {
@@ -1210,7 +1229,8 @@ export class Hud {
     }, this.readyPop(time, this.seatMotion[seat].altReadyAt));
   }
 
-  private drawRadar(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, size: number): void {
+  /** Draws the radar; returns the area it covers, its title above it included. */
+  private drawRadar(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, size: number): Rect {
     const { world, seat } = view;
     const radius = size * 0.5;
     const cx = x + radius;
@@ -1224,7 +1244,7 @@ export class Hud {
     ctx.strokeStyle = UI_EDGE_SOFT;
     ctx.lineWidth = this.s(1);
     ctx.stroke();
-    this.drawSectionLabel(ctx, 'RADAR', x, y - this.s(8), UI_TEXT_DIM);
+    this.drawSectionLabel(ctx, 'RADAR', x, y - this.s(RADAR_TITLE_DROP), UI_TEXT_DIM);
 
     const mapUnits = (wx: number, wy: number): { x: number; y: number } => ({ x: cx + (wx / arena) * radius, y: cy - (wy / arena) * radius });
     const mapPoint = (rawX: number, rawY: number): { x: number; y: number } => mapUnits(fx.toFloat(rawX), fx.toFloat(rawY));
@@ -1298,9 +1318,11 @@ export class Hud {
       ctx.fillRect(p.x, p.y, this.s(1.5), this.s(1.5));
     }
     ctx.restore();
+    const titleRise = this.s(RADAR_TITLE_DROP + SECTION_LABEL_SIZE);
+    return this.rect(x, y - titleRise, size, size + titleRise);
   }
 
-  private drawOffscreenIndicators(ctx: CanvasRenderingContext2D, view: HudView): void {
+  private drawOffscreenIndicators(ctx: CanvasRenderingContext2D, view: HudView, covered: readonly Rect[]): void {
     const { world, seat, width, height, time } = view;
     const centerX = width * 0.5;
     const centerY = height * 0.5;
@@ -1333,7 +1355,7 @@ export class Hud {
       if (pointOnScreen(point.x, point.y, width, height, 20)) continue;
       place(Math.atan2(point.y - centerY, point.x - centerX), this.s(INDICATOR_CHEVRON + 3), neutralAccent(1), 0.82, 'WARDEN', neutralEdge(1));
     }
-    this.placeAlongEdges(marks, width, height);
+    this.placeAlongEdges(marks, width, height, covered);
     marks.forEach((mark, index) => {
       const bob = Math.sin(time * 2.4 + index * 0.9) * this.s(OFFSCREEN_BOB);
       const bobX = mark.vertical ? bob : 0;
@@ -1343,7 +1365,11 @@ export class Hud {
       ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(10)}px ${UI_FONT_STACK}`;
       ctx.fillStyle = mark.labelColor;
       ctx.textAlign = 'center';
-      ctx.fillText(mark.label, mark.x + bobX, mark.y + bobY + mark.size + this.s(12));
+      // The label goes on the side facing the screen centre, so a pointer on the bottom edge keeps its label on screen.
+      const onBottom = !mark.vertical && mark.y > height * 0.5;
+      const labelY = onBottom ? mark.y + bobY - mark.size - this.s(OFFSCREEN_LABEL_ABOVE) : mark.y + bobY + mark.size + this.s(OFFSCREEN_LABEL_BELOW);
+      const halfLabel = ctx.measureText(mark.label).width * 0.5 + this.s(OFFSCREEN_LABEL_EDGE);
+      ctx.fillText(mark.label, clamp(mark.x + bobX, halfLabel, width - halfLabel), labelY);
       ctx.restore();
     });
   }
@@ -1361,9 +1387,9 @@ export class Hud {
   }
 
   /** An edge point slid along its edge to the nearest stretch that no HUD panel covers. */
-  private edgeClamp(angle: number, width: number, height: number, pad: number): { x: number; y: number } {
+  private edgeClamp(angle: number, width: number, height: number, pad: number, covered: readonly Rect[]): { x: number; y: number } {
     const spot = this.edgeSpot(angle, width, height, pad);
-    this.packAlongEdge([spot], width, height, pad, 0);
+    this.packAlongEdge([spot], width, height, pad, 0, covered);
     return spot;
   }
 
@@ -1371,7 +1397,7 @@ export class Hud {
    * Off-screen pointers, grouped by the edge they sit on: each is slid along its edge to the free stretch nearest its true
    * direction, and pointers that would crowd each other are kept `gap` apart, so nothing overlaps a panel or another pointer.
    */
-  private placeAlongEdges(marks: EdgeMark[], width: number, height: number): void {
+  private placeAlongEdges(marks: EdgeMark[], width: number, height: number, covered: readonly Rect[]): void {
     const pad = this.s(OFFSCREEN_PAD);
     const groups = new Map<string, EdgeMark[]>();
     for (const mark of marks) {
@@ -1381,15 +1407,15 @@ export class Hud {
       else group.push(mark);
     }
     for (const group of groups.values()) {
-      this.packAlongEdge(group, width, height, pad, this.s(group[0].vertical ? INDICATOR_SLOT_VERTICAL : INDICATOR_SLOT_HORIZONTAL));
+      this.packAlongEdge(group, width, height, pad, this.s(group[0].vertical ? INDICATOR_SLOT_VERTICAL : INDICATOR_SLOT_HORIZONTAL), covered);
     }
   }
 
   /** Moves marks that share one edge (they must all be vertical or all horizontal) along it; see placeAlongEdges. */
-  private packAlongEdge(marks: EdgeSpot[], width: number, height: number, pad: number, gap: number): void {
+  private packAlongEdge(marks: EdgeSpot[], width: number, height: number, pad: number, gap: number, covered: readonly Rect[]): void {
     const vertical = marks[0].vertical;
     const axis = vertical ? 'y' : 'x';
-    const stretches = this.freeStretches(vertical ? 'vertical' : 'horizontal', vertical ? marks[0].x : marks[0].y, vertical ? height : width, pad);
+    const stretches = this.freeStretches(vertical ? 'vertical' : 'horizontal', vertical ? marks[0].x : marks[0].y, vertical ? height : width, pad, covered);
     marks.sort((a, b) => a[axis] - b[axis]);
     let lastStretch = 0;
     let lastPosition = -Infinity;
@@ -1423,16 +1449,16 @@ export class Hud {
    * The stretches of one screen edge that no HUD panel reaches. `axis` is the direction along the edge, `edgeAt` the edge's own
    * coordinate: only panels near that line block it. The whole edge is returned when panels cover all of it.
    */
-  private freeStretches(axis: 'horizontal' | 'vertical', edgeAt: number, span: number, pad: number): Array<[number, number]> {
+  private freeStretches(axis: 'horizontal' | 'vertical', edgeAt: number, span: number, pad: number, covered: readonly Rect[]): Array<[number, number]> {
     const margin = pad + this.s(SAFE_INDICATOR_GAP);
     const alongX = axis === 'horizontal';
-    const covered = this.occluders
+    const blocked = covered
       .filter((rect) => (alongX ? rect.y - margin <= edgeAt && edgeAt <= rect.y + rect.height + margin : rect.x - margin <= edgeAt && edgeAt <= rect.x + rect.width + margin))
       .map((rect): [number, number] => (alongX ? [rect.x - margin, rect.x + rect.width + margin] : [rect.y - margin, rect.y + rect.height + margin]))
       .sort((a, b) => a[0] - b[0]);
     const free: Array<[number, number]> = [];
     let cursor = pad;
-    for (const [start, end] of covered) {
+    for (const [start, end] of blocked) {
       const from = clamp(start, pad, span - pad);
       const to = clamp(end, pad, span - pad);
       if (to <= cursor) continue;
@@ -1469,7 +1495,12 @@ export class Hud {
     ctx.restore();
   }
 
-  private drawUltimaAlert(ctx: CanvasRenderingContext2D, view: HudView): void {
+  private ultimaBannerRect(width: number): Rect {
+    const bannerWidth = this.s(ULTIMA_BANNER_WIDTH);
+    return this.rect(width * 0.5 - bannerWidth * 0.5, this.s(ULTIMA_BANNER_TOP), bannerWidth, this.s(ULTIMA_BANNER_HEIGHT));
+  }
+
+  private drawUltimaAlert(ctx: CanvasRenderingContext2D, view: HudView, covered: readonly Rect[]): void {
     if (this.ultimaAlerts.length === 0) return;
     const alert = this.ultimaAlerts[this.ultimaAlerts.length - 1];
     const { world, width, height } = view;
@@ -1477,10 +1508,10 @@ export class Hud {
     const point = { x: 0, y: 0 };
     view.seatScreen(seat, point);
     this.drawEdgeFrame(ctx, width, height, UI_WARNING, pulse(view.time, 10, 0.45, 0.82));
-    const bannerWidth = this.s(320);
-    const x = width * 0.5 - bannerWidth * 0.5;
-    const y = this.s(90);
-    this.drawPanel(ctx, x, y, bannerWidth, this.s(42), UI_WARNING);
+    const banner = this.ultimaBannerRect(width);
+    const { x, y } = banner;
+    const bannerWidth = banner.width;
+    this.drawPanel(ctx, x, y, bannerWidth, banner.height, UI_WARNING);
     ctx.save();
     ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(15)}px ${UI_FONT_STACK}`;
     ctx.textAlign = 'center';
@@ -1490,7 +1521,7 @@ export class Hud {
     ctx.restore();
     if (!pointOnScreen(point.x, point.y, width, height, this.s(16))) {
       const angle = Math.atan2(point.y - (y + this.s(52)), point.x - width * 0.5);
-      const edge = this.edgeClamp(angle, width, height, this.s(ULTIMA_ARROW_PAD));
+      const edge = this.edgeClamp(angle, width, height, this.s(ULTIMA_ARROW_PAD), covered);
       this.drawChevron(ctx, edge.x, edge.y, angle, this.s(18), UI_WARNING, pulse(view.time, 15, 0.65, 1));
     }
   }
