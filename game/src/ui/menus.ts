@@ -665,6 +665,7 @@ function ensureStyles(): void {
     .bf-title-mark { font-size: clamp(30px, min(8.4vw, 10vh), 78px); font-weight: 780; letter-spacing: clamp(.04em, .45vw, .12em); text-transform: uppercase; text-shadow: 0 0 16px rgba(111,227,255,.28); line-height: .94; white-space: nowrap; }
     .bf-title-tag, .bf-subtitle { margin-top: 10px; color: var(--bf-copy-dim); letter-spacing: var(--bf-track); text-transform: uppercase; font-size: 12px; }
     .bf-title-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 26px; }
+    .bf-title-card > .bf-toggle { display: block; margin: 16px auto 0; }
     .bf-single-column { grid-template-columns: 1fr; }
     .bf-action, .bf-ghost, .bf-toggle, .bf-choice-card, .bf-status-chip {
       min-height: 46px; border: 1px solid var(--bf-edge-soft); background: rgba(8, 16, 29, .9); color: var(--bf-copy); padding: 0 16px; font: 600 clamp(13px, 1.25vw, 14px)/1 var(--bf-font); letter-spacing: .06em; text-transform: uppercase;
