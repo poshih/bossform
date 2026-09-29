@@ -28,6 +28,7 @@ const STEPS: Step[] = [
   { name: 'E2E menus: title, help, quick battle, pause, quit (1280x720)', script: 'e2e.ts', args: ['menus', '1280', '720', URL] },
   { name: 'E2E real keyboard and mouse (1280x720)', script: 'e2e.ts', args: ['play', '1280', '720', URL] },
   { name: 'E2E gamepad (1280x720)', script: 'e2e.ts', args: ['pad', '1280', '720', URL] },
+  { name: 'E2E camera: aiming never moves it, it follows the pilot, only a destroyed colossus shakes it (1280x720)', script: 'e2e.ts', args: ['camera', '1280', '720', URL] },
   { name: 'E2E bot pilots become colossi and tear each other apart (960x540)', script: 'e2e.ts', args: ['bosses', '960', '540', URL] },
   { name: 'E2E a whole elimination match, results, rematch (640x360)', script: 'e2e.ts', args: ['match', '640', '360', URL] },
   { name: 'E2E layout 1920x1080', script: 'e2e.ts', args: ['layout', '1920', '1080', URL] },
