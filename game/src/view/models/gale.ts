@@ -23,6 +23,8 @@ const FORM = FORMS[Frame.Gale];
 const ROBOT_RADIUS = toWorld(FRAME_STATS[Frame.Gale].bodyR);
 const CORE_RADIUS = toWorld(FORM.coreR);
 const ASSEMBLE_STEP = 0.11;
+const ASSEMBLE_ARC_HEIGHT = 3.1;
+const ASSEMBLE_ARC_SWAY = 0.2;
 const COLOSSUS_HULL_MARGIN = 2.1;
 const COLOSSUS_HULL_DEPTH = 4.8;
 
@@ -149,6 +151,7 @@ export function createGale(): RobotModel {
       hull.rotation.x = bank * 0.18 + dash * 0.06;
       hull.rotation.y = -Math.cos(pose.move - pose.aim) * pose.speed * 0.08;
       moveRig.rotation.z = (pose.move - pose.aim) * 0.26;
+      dashRig.rotation.z = (pose.move - pose.aim) * 0.12;
       fuselage.position.x = 0.4 - pose.fire * 0.32;
       spine.position.x = 1.4 + dash * 0.22;
       core.scale.setScalar(1 + pose.fire * 0.16 + dash * 0.1);
@@ -172,7 +175,7 @@ export function createGale(): RobotModel {
       shellRing.visible = dash > 0.03 || pose.shield > 0.03;
       shellRing.scale.setScalar(1 + dash * 0.07 + pose.shield * 0.06);
       shellRing.rotation.z = pose.time * 1.2;
-      applyRobotVectorState(kit, pose.time, pose.hit, pose.charge, pose.shield);
+      applyRobotVectorState(kit, pose.time, pose.hit, pose.charge, pose.shield, morph);
       accent.uniforms.uPulse.value += pose.fire * 0.18 + dash * 0.1;
       warm.uniforms.uPulse.value += dash * 0.18;
       glass.uniforms.uOpacity.value = 0.12 + dash * 0.12 + pose.shield * 0.14;
@@ -281,13 +284,17 @@ export function createTempest(): ColossusModel {
         node.anchor.visible = partPose.hp > 0 && partEase > 0.02;
         node.strut.visible = node.anchor.visible;
         if (!node.anchor.visible) continue;
-        node.anchor.position.set(px * Math.cos(orbitAngle) - py * Math.sin(orbitAngle), px * Math.sin(orbitAngle) + py * Math.cos(orbitAngle), (1 - partEase) * 3.2);
+        const arc = Math.sin(partEase * Math.PI);
+        const arcedX = px - py * ASSEMBLE_ARC_SWAY * arc;
+        const arcedY = py + px * ASSEMBLE_ARC_SWAY * arc;
+        node.anchor.position.set(arcedX * Math.cos(orbitAngle) - arcedY * Math.sin(orbitAngle), arcedX * Math.sin(orbitAngle) + arcedY * Math.cos(orbitAngle), (1 - partEase) * 3.2 + arc * ASSEMBLE_ARC_HEIGHT);
         node.strut.position.set(node.anchor.position.x * 0.5, node.anchor.position.y * 0.5, 1.62);
         node.strut.scale.x = Math.hypot(node.anchor.position.x, node.anchor.position.y);
         node.strut.rotation.z = Math.atan2(node.anchor.position.y, node.anchor.position.x);
         (node.strut.material as VectorMaterial).uniforms.uOpacity.value = 0.12 + (def.orbit ? 0.06 : 0) + ultimaWindup * 0.08;
         for (let k = 0; k < node.shells.length; k++) {
           (node.shells[k].material as VectorMaterial).uniforms.uFlash.value = partPose.flash * 0.32;
+          (node.shells[k].material as VectorMaterial).uniforms.uPulse.value = partPose.hp < 0.35 ? 0.1 + 0.07 * Math.sin(pose.time * 14 + k) : 0;
           node.shells[k].scale.z = 1 + ultimaWindup * 0.08;
         }
         if (node.barrel && node.muzzle && node.vent) {
@@ -307,7 +314,7 @@ export function createTempest(): ColossusModel {
         }
       }
 
-      applyColossusVectorState(kit, pose.time, pose.hit, pose.fuel);
+      applyColossusVectorState(kit, pose.time, pose.hit, pose.fuel, assemble);
       massMat.uniforms.uFlash.value = pose.hit * 0.1;
       massMat.uniforms.uOpacity.value = 0.42;
       massMat.uniforms.uPulse.value = 0;

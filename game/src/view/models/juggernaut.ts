@@ -30,6 +30,8 @@ const PART_STACK = 1.9;
 const ANCHOR_LIFT = -2.2;
 const HULL_MASS_MARGIN = 4;
 const HULL_MASS_DEPTH = 7.5;
+const ASSEMBLE_ARC_HEIGHT = 5.2;
+const ASSEMBLE_ARC_SWAY = 0.14;
 
 interface RobotRig {
   readonly root: THREE.Group;
@@ -56,8 +58,6 @@ interface PartRig {
   readonly homeX: number;
   readonly homeY: number;
   readonly homeZ: number;
-  readonly openDirX: number;
-  readonly openDirY: number;
   readonly baseRotation: number;
 }
 
@@ -270,7 +270,6 @@ function buildPartRig(tracker: ResourceTracker, teamMaterials: TeamMaterialRef[]
     muzzleRing.rotation.x = Math.PI * 0.5;
   }
 
-  const openLength = Math.hypot(homeX, homeY) || 1;
   return {
     def,
     group,
@@ -283,8 +282,6 @@ function buildPartRig(tracker: ResourceTracker, teamMaterials: TeamMaterialRef[]
     homeX,
     homeY,
     homeZ,
-    openDirX: homeX / openLength,
-    openDirY: homeY / openLength,
     baseRotation: 0,
   };
 }
@@ -418,6 +415,8 @@ export function createJuggernaut(): RobotModel {
     update(pose: RobotPose): void {
       const alt = smooth01(pose.alt);
       const morph = smooth01(pose.morph);
+      const reveal = Math.max(0, 1 - morph - pose.shield * 0.62);
+      const readyPulse = 0.5 + 0.5 * Math.sin(pose.time * 7.5);
       const recoil = smooth01(pose.fire);
       const moveDelta = Math.atan2(Math.sin(pose.move - pose.aim), Math.cos(pose.move - pose.aim));
       rig.root.rotation.z = pose.aim;
@@ -437,7 +436,13 @@ export function createJuggernaut(): RobotModel {
       const hullOpacity = 1 - morph;
       setOpacity(rig.materials, hullOpacity);
       setFlash(rig.materials, pose.hit);
-      for (const material of rig.materials) material.uniforms.uPulse.value = 0;
+      for (let i = 0; i < rig.materials.length; i++) {
+        const material = rig.materials[i];
+        material.uniforms.uPulse.value = 0;
+        material.uniforms.uTime.value = pose.time;
+        material.uniforms.uReveal.value = reveal;
+        material.uniforms.uFlow.value = i >= 2 ? 0.04 + readyPulse * 0.04 + pose.charge * 0.06 : 0;
+      }
       rig.materials[2].uniforms.uPulse.value = alt * (0.2 + recoil * 0.4);
       rig.materials[3].uniforms.uPulse.value = recoil * 0.6 + pose.charge * 0.18;
       rig.materials[4].uniforms.uPulse.value = pose.speed * 0.4 + pulse(pose.time, 10, 0, 0.18);
@@ -467,6 +472,8 @@ export function createFortress(): ColossusModel {
       const recovery = pose.phase === AttackPhase.Recovery ? smooth01(pose.progress) : 0;
       const openAmount = Math.max(ultimaWindup, ultimaRelease * 0.85);
       const brace = siegeWindup;
+      const heavyPulse = 0.5 + 0.5 * Math.sin(pose.time * 5.8);
+      const flowBase = 0.08 + heavyPulse * 0.08 + openAmount * 0.1;
       rig.root.rotation.z = pose.body;
       rig.body.position.z = Math.sin(pose.time * 1.3) * 0.45 - brace * 1.2;
       rig.body.scale.set(1 + brace * 0.05, 1 - brace * 0.04, 1 + brace * 0.02);
@@ -490,9 +497,19 @@ export function createFortress(): ColossusModel {
       (rig.core.material as VectorMaterial).uniforms.uOpacity.value = 0.72;
       (rig.coreHalo.material as VectorMaterial).uniforms.uOpacity.value = 0.24 + pose.fuel * 0.1;
       (rig.coreCollapse.material as VectorMaterial).uniforms.uOpacity.value = ultimaWindup * 0.48;
-      (rig.core.material as VectorMaterial).uniforms.uPulse.value = 0.12 + (1 - pose.fuel) * 0.08 + pulse(pose.time, 4.2, 0, 0.08);
+      (rig.core.material as VectorMaterial).uniforms.uPulse.value = 0.12 + heavyPulse * 0.08 + (1 - pose.fuel) * 0.08 + pulse(pose.time, 4.2, 0, 0.08);
       (rig.coreHalo.material as VectorMaterial).uniforms.uPulse.value = 0.06 + openAmount * 0.14;
       (rig.coreCollapse.material as VectorMaterial).uniforms.uPulse.value = ultimaWindup * 0.18;
+      for (const material of rig.hullMaterials) {
+        material.uniforms.uTime.value = pose.time;
+        material.uniforms.uReveal.value = pose.assemble;
+        material.uniforms.uFlow.value = heavyPulse > 0.7 || openAmount > 0.01 ? flowBase * 0.45 : 0;
+      }
+      for (const material of rig.accentMaterials) {
+        material.uniforms.uTime.value = pose.time;
+        material.uniforms.uReveal.value = pose.assemble;
+        material.uniforms.uFlow.value = flowBase + 0.08;
+      }
 
       let podLine = 0;
       for (let i = 0; i < rig.parts.length; i++) {
@@ -512,11 +529,11 @@ export function createFortress(): ColossusModel {
           continue;
         }
         rig.plateGirders[i].visible = true;
-        const openPush = openAmount * toWorld(part.def.rad) * 0.18;
+        const arc = Math.sin(assemble * Math.PI);
         part.group.position.set(
-          part.homeX * assemble + part.openDirX * openPush,
-          part.homeY * assemble + part.openDirY * openPush,
-          part.homeZ + openAmount * 0.6,
+          part.homeX * assemble - part.homeY * ASSEMBLE_ARC_SWAY * arc,
+          part.homeY * assemble + part.homeX * ASSEMBLE_ARC_SWAY * arc,
+          part.homeZ + arc * ASSEMBLE_ARC_HEIGHT,
         );
         part.group.rotation.z = part.def.kind === PartKind.Pod ? partPose.facing - pose.body : part.baseRotation;
         part.group.rotation.x = brace * 0.03;
@@ -564,13 +581,6 @@ export function createFortress(): ColossusModel {
         podLine++;
       }
 
-      const mortar = rig.parts[MORTAR_INDEX];
-      if (mortar.group.visible) {
-        mortar.group.position.x += brace * 2.6;
-        mortar.group.position.z += brace * 1.8;
-      }
-      rig.parts[TURRET_LEFT_INDEX].group.position.y += openAmount * 2.2;
-      rig.parts[TURRET_RIGHT_INDEX].group.position.y -= openAmount * 2.2;
       rig.turretArms[0].visible = rig.parts[TURRET_LEFT_INDEX].group.visible;
       rig.turretArms[1].visible = rig.parts[TURRET_RIGHT_INDEX].group.visible;
       rig.turretArms[0].scale.y = 1 + pose.parts[TURRET_LEFT_INDEX].charge * 0.22;

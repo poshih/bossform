@@ -27,6 +27,8 @@ const BANK_TILT = 0.16;
 const SHOULDER_OFFSET = 4.6;
 const ARM_OFFSET = 2.95;
 const ASSEMBLE_STEP = 0.09;
+const ASSEMBLE_ARC_HEIGHT = 3.8;
+const ASSEMBLE_ARC_SWAY = 0.16;
 const COLOSSUS_HULL_MARGIN = 2.8;
 const COLOSSUS_HULL_DEPTH = 6.2;
 
@@ -175,6 +177,7 @@ export function createVanguard(): RobotModel {
       hull.rotation.y = -Math.cos(pose.move - pose.aim) * pose.speed * 0.06;
       moveRig.rotation.z = (pose.move - pose.aim) * 0.18;
       backpackRig.position.x = -pose.speed * 0.72;
+      backpackRig.rotation.z = (pose.move - pose.aim) * 0.22;
 
       const recoil = pose.fire * 0.46;
       rifle.position.x = 3.3 - recoil;
@@ -201,7 +204,7 @@ export function createVanguard(): RobotModel {
       shellRing.visible = pose.shield > 0.03;
       shellRing.scale.setScalar(1 + pose.shield * 0.08);
       shellRing.rotation.z = pose.time * 0.7;
-      applyRobotVectorState(kit, pose.time, pose.hit, pose.charge, pose.shield);
+      applyRobotVectorState(kit, pose.time, pose.hit, pose.charge, pose.shield, morph);
       glass.uniforms.uOpacity.value = 0.14 + pose.shield * 0.2;
       accent.uniforms.uPulse.value += pose.fire * 0.3 + pose.alt * 0.08;
       warm.uniforms.uPulse.value += pose.alt * 0.14;
@@ -313,7 +316,10 @@ export function createPaladin(): ColossusModel {
         node.anchor.visible = partPose.hp > 0 && partEase > 0.02;
         node.strut.visible = node.anchor.visible;
         if (!node.anchor.visible) continue;
-        node.anchor.position.set(toWorld(def.x) * partEase, toWorld(def.y) * partEase, (1 - partEase) * 4.4);
+        const homeX = toWorld(def.x);
+        const homeY = toWorld(def.y);
+        const arc = Math.sin(partEase * Math.PI);
+        node.anchor.position.set(homeX * partEase - homeY * ASSEMBLE_ARC_SWAY * arc, homeY * partEase + homeX * ASSEMBLE_ARC_SWAY * arc, (1 - partEase) * 4.4 + arc * ASSEMBLE_ARC_HEIGHT);
         const wingSide = def.name === 'wingL' ? 1 : def.name === 'wingR' ? -1 : 0;
         node.anchor.rotation.z = wingSide === 0 ? 0 : wingSide * (0.16 + heavyOpen * 0.28);
         node.strut.position.set(node.anchor.position.x * 0.5, node.anchor.position.y * 0.5, 1.8);
@@ -322,6 +328,7 @@ export function createPaladin(): ColossusModel {
         (node.strut.material as VectorMaterial).uniforms.uOpacity.value = 0.16 + heavyOpen * 0.08;
         for (let k = 0; k < node.shells.length; k++) {
           (node.shells[k].material as VectorMaterial).uniforms.uFlash.value = partPose.flash * 0.34;
+          (node.shells[k].material as VectorMaterial).uniforms.uPulse.value = partPose.hp < 0.35 ? 0.12 + 0.08 * Math.sin(pose.time * 13 + k) : 0;
           node.shells[k].scale.z = 1 + heavyOpen * 0.12;
         }
       }
@@ -334,12 +341,16 @@ export function createPaladin(): ColossusModel {
         node.anchor.visible = partPose.hp > 0 && partEase > 0.02;
         node.strut.visible = node.anchor.visible;
         if (!node.anchor.visible) continue;
-        node.anchor.position.set(toWorld(def.x) * partEase, toWorld(def.y) * partEase, (1 - partEase) * 3.8);
+        const homeX = toWorld(def.x);
+        const homeY = toWorld(def.y);
+        const arc = Math.sin(partEase * Math.PI);
+        node.anchor.position.set(homeX * partEase - homeY * ASSEMBLE_ARC_SWAY * arc, homeY * partEase + homeX * ASSEMBLE_ARC_SWAY * arc, (1 - partEase) * 3.8 + arc * ASSEMBLE_ARC_HEIGHT);
         node.anchor.rotation.z = partPose.facing - pose.body;
         node.barrel.position.x = partPose.charge * toWorld(def.muzzle) * 0.14;
         node.barrel.position.z = toWorld(def.rad) * (0.74 + heavyOpen * 0.18);
         node.barrel.rotation.z = pose.phase === AttackPhase.Release ? pose.time * 0.24 : 0;
         node.barrelMesh.scale.x = 1 + partPose.charge * 0.48 + heavyOpen * 0.12;
+        (node.barrelMesh.material as VectorMaterial).uniforms.uPulse.value = partPose.hp < 0.35 ? 0.1 + 0.08 * Math.sin(pose.time * 12 + i) : 0;
         node.muzzle.visible = partPose.charge > 0.01 || pose.phase === AttackPhase.Release;
         node.muzzle.scale.setScalar(0.86 + partPose.charge * 1.9 + (pose.phase === AttackPhase.Release ? 0.45 : 0));
         (node.vent.material as VectorMaterial).uniforms.uPulse.value = partPose.heat * 0.55 + recovery * 0.12;
@@ -351,7 +362,7 @@ export function createPaladin(): ColossusModel {
         (node.strut.material as VectorMaterial).uniforms.uPulse.value = 0.04 + partPose.charge * 0.22 + heavyOpen * 0.1;
       }
 
-      applyColossusVectorState(kit, pose.time, pose.hit, pose.fuel);
+      applyColossusVectorState(kit, pose.time, pose.hit, pose.fuel, assemble);
       massMat.uniforms.uFlash.value = pose.hit * 0.12;
       massMat.uniforms.uOpacity.value = 0.46;
       massMat.uniforms.uPulse.value = 0;

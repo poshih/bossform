@@ -30,10 +30,12 @@ attribute vec3 hide;
 varying vec3 vBary;
 varying vec3 vNormal;
 varying vec3 vView;
+varying vec3 vLocal;
 void main() {
   // An edge whose flag is set is pushed far from zero so it can never be drawn.
   vBary = bary + hide * 16.0;
   vNormal = normalize(normalMatrix * normal);
+  vLocal = position;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   vView = mv.xyz;
   gl_Position = projectionMatrix * mv;
@@ -48,20 +50,29 @@ uniform float uGlow;
 uniform float uFlash;
 uniform float uOpacity;
 uniform float uPulse;
+uniform float uTime;
+uniform float uFlow;
+uniform float uReveal;
 varying vec3 vBary;
 varying vec3 vNormal;
 varying vec3 vView;
+varying vec3 vLocal;
 void main() {
   vec3 fw = fwidth(vBary);
   vec3 k = smoothstep(vec3(0.0), fw * uEdgeWidth, vBary);
   float edge = 1.0 - min(min(k.x, k.y), k.z);
+  float radial = clamp(length(vLocal.xy) / 56.0, 0.0, 1.0);
+  float reveal = smoothstep(radial - 0.08, radial + 0.08, uReveal);
   float facing = abs(dot(normalize(vNormal), normalize(-vView)));
   float rim = pow(1.0 - facing, 2.0);
   vec3 face = uFill * (0.52 + 0.32 * facing) + uEdge * rim * 0.12;
-  vec3 line = uEdge * uGlow * (0.92 + 0.32 * uPulse);
+  float wave = 0.5 + 0.5 * sin(dot(vLocal.xy, vec2(0.21, 0.37)) + uTime * 5.4);
+  float wave2 = wave * wave;
+  float flowWave = uFlow > 0.001 ? wave2 * wave2 * wave2 * wave2 : 0.0;
+  vec3 line = uEdge * uGlow * (0.92 + 0.32 * uPulse + flowWave * uFlow);
   vec3 col = mix(face, line, edge);
   col = mix(col, vec3(1.8), uFlash * (0.22 + 0.78 * edge));
-  float alpha = mix(uFillAlpha * (0.7 + 0.9 * rim), 1.0, edge) * uOpacity;
+  float alpha = mix(uFillAlpha * (0.7 + 0.9 * rim), 1.0, edge) * uOpacity * reveal;
   gl_FragColor = vec4(col, alpha);
 }`;
 
@@ -75,6 +86,9 @@ export type VectorMaterial = THREE.ShaderMaterial & {
     uFlash: { value: number };
     uOpacity: { value: number };
     uPulse: { value: number };
+    uTime: { value: number };
+    uFlow: { value: number };
+    uReveal: { value: number };
   };
 };
 
@@ -92,6 +106,9 @@ export function createVectorMaterial(style: Partial<VectorStyle> = {}): VectorMa
       uFlash: { value: 0 },
       uOpacity: { value: 1 },
       uPulse: { value: 0 },
+      uTime: { value: 0 },
+      uFlow: { value: 0 },
+      uReveal: { value: 1 },
     },
     transparent: true,
     depthWrite: false,

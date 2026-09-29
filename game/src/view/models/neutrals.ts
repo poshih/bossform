@@ -44,7 +44,7 @@ function createNeutralMaterialSet(tracker: ResourceTracker): { hull: VectorMater
   return { hull, accent, hot, list: [hull, accent, hot] };
 }
 
-function updateNeutralOpacity(materials: readonly VectorMaterial[], hp: number, telegraph: number): void {
+function updateNeutralOpacity(materials: readonly VectorMaterial[], time: number, hp: number, telegraph: number, spawn: number): void {
   const hullOpacity = 0.48 + hp * 0.36;
   materials[0].uniforms.uOpacity.value = hullOpacity;
   materials[0].uniforms.uPulse.value = (1 - hp) * 0.06;
@@ -52,6 +52,11 @@ function updateNeutralOpacity(materials: readonly VectorMaterial[], hp: number, 
   materials[1].uniforms.uPulse.value = telegraph * 0.35;
   materials[2].uniforms.uOpacity.value = telegraph * 0.82;
   materials[2].uniforms.uPulse.value = telegraph * 0.55;
+  for (const material of materials) {
+    material.uniforms.uTime.value = time;
+    material.uniforms.uFlow.value = 0.06 + telegraph * 0.18 + (1 - hp) * 0.08;
+    material.uniforms.uReveal.value = spawn;
+  }
 }
 
 export function createDrone(): NeutralModel {
@@ -94,13 +99,15 @@ export function createDrone(): NeutralModel {
   return {
     root,
     update(pose: NeutralPose): void {
+      const spawn = pose.spawn ?? 1;
       root.rotation.z = pose.heading;
+      root.scale.setScalar(0.35 + spawn * 0.65);
       body.position.set(Math.sin(pose.time * 13) * 0.45, Math.cos(pose.time * 11.5) * 0.35, 1.4 + Math.sin(pose.time * 6.5) * 0.28);
       body.rotation.x = Math.sin(pose.time * 14) * 0.05;
       finL.rotation.z = 0.14 + Math.sin(pose.time * 16) * 0.08;
       finR.rotation.z = -0.14 - Math.sin(pose.time * 15) * 0.08;
       eye.scale.setScalar(1 + pose.telegraph * 0.25 + pulse(pose.time, 9, 0, 0.08));
-      updateNeutralOpacity(list, pose.hp, pose.telegraph);
+      updateNeutralOpacity(list, pose.time, pose.hp, pose.telegraph, spawn);
       setFlash(list, pose.flash);
     },
     dispose(): void {
@@ -142,13 +149,15 @@ export function createSentinel(): NeutralModel {
   return {
     root,
     update(pose: NeutralPose): void {
+      const spawn = pose.spawn ?? 1;
       root.rotation.z = pose.heading;
+      root.scale.setScalar(0.35 + spawn * 0.65);
       body.position.z = 1.6 + Math.sin(pose.time * 4.4) * 0.36;
       rotor.rotation.z = pose.time * 0.28;
       ring.rotation.z = -pose.time * 0.45;
       core.scale.setScalar(1 + pose.telegraph * 0.18 + pulse(pose.time, 7, 0, 0.06));
       for (let i = 0; i < armTips.length; i++) armTips[i].scale.setScalar(1 + pose.telegraph * 0.35 + Math.sin(pose.time * 8 + i * 1.6) * 0.04);
-      updateNeutralOpacity(list, pose.hp, pose.telegraph);
+      updateNeutralOpacity(list, pose.time, pose.hp, pose.telegraph, spawn);
       setFlash(list, pose.flash);
     },
     dispose(): void {
@@ -190,7 +199,9 @@ export function createWarden(): NeutralModel {
   return {
     root,
     update(pose: NeutralPose): void {
+      const spawn = pose.spawn ?? 1;
       root.rotation.z = pose.heading * 0.45;
+      root.scale.setScalar(0.35 + spawn * 0.65);
       body.position.z = 2.2 + Math.sin(pose.time * 2.8) * 0.42;
       orbitGroup.rotation.z = -pose.time * 0.35;
       halo.scale.setScalar(1 + pose.telegraph * 0.12 + pulse(pose.time, 3.4, 0, 0.04));
@@ -202,7 +213,7 @@ export function createWarden(): NeutralModel {
         shards[i].position.set(Math.cos(ang) * WARDEN_RADIUS * 0.82, Math.sin(ang) * WARDEN_RADIUS * 0.82, 4.6 + Math.sin(ang * 2) * 0.35);
         shards[i].rotation.z = ang + Math.PI * 0.5;
       }
-      updateNeutralOpacity(list, pose.hp, pose.telegraph);
+      updateNeutralOpacity(list, pose.time, pose.hp, pose.telegraph, spawn);
       list[0].uniforms.uPulse.value += pose.telegraph * 0.18;
       list[1].uniforms.uPulse.value += pose.telegraph * 0.18;
       setFlash(list, pose.flash);

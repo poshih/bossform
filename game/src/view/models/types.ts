@@ -93,6 +93,8 @@ export interface ColossusModel {
 /** Neutral units: hazards that shoot at everyone and drop energy. */
 export interface NeutralPose {
   time: number;
+  /** 0..1 warp-in draw-on state after spawning. */
+  spawn?: number;
   /** Direction of travel / facing. */
   heading: number;
   /** 0..1 damage flash. */

@@ -8,14 +8,19 @@ import { clamp01, expStep, lerp, lerpRadiansBinary, toWorld } from './shared.ts'
 
 /** How fast a neutral unit's firing glow fades, per second. */
 const TELEGRAPH_DECAY = 4;
+const SPAWN_RISE = 5.5;
 
 export class NeutralsView implements StageView {
   readonly root = new THREE.Group();
   private readonly models = [] as ReturnType<typeof createNeutral>[];
   private readonly telegraph: Float32Array;
+  private readonly spawn: Float32Array;
+  private readonly alive: Uint8Array;
 
   constructor(capacity: number) {
     this.telegraph = new Float32Array(capacity);
+    this.spawn = new Float32Array(capacity);
+    this.alive = new Uint8Array(capacity);
     for (let n = 0; n < capacity; n++) {
       const model = createNeutral(NeutralType.Drone);
       model.root.visible = false;
@@ -37,8 +42,13 @@ export class NeutralsView implements StageView {
       const model = this.models[n];
       if (current.nAlive[n] !== 1) {
         model.root.visible = false;
+        this.spawn[n] = 0;
+        this.alive[n] = 0;
         continue;
       }
+      if (this.alive[n] === 0) this.spawn[n] = 0;
+      this.alive[n] = 1;
+      this.spawn[n] = expStep(this.spawn[n], 1, SPAWN_RISE, frame.dt);
       if (previous.nType[n] !== current.nType[n]) {
         this.root.remove(model.root);
         model.dispose();
@@ -56,6 +66,7 @@ export class NeutralsView implements StageView {
         : Math.abs(vx) + Math.abs(vy) > 0.001 ? Math.atan2(vy, vx) : lerpRadiansBinary(previous.nAng[n], current.nAng[n], snap);
       const pose: NeutralPose = {
         time: timeSeconds,
+        spawn: this.spawn[n],
         heading,
         flash: clamp01(current.nFlash[n] / FLASH_TICKS),
         hp: clamp01(current.nHp[n] / NEUTRAL_DEFS[current.nType[n]].hp),

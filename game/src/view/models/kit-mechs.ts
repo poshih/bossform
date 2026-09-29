@@ -207,17 +207,25 @@ export function applyRobotVectorState(
   hit: number,
   charge: number,
   shield: number,
+  morph: number,
 ): void {
   const ready = Math.max(0, (charge - 0.75) / 0.25);
-  const readyPulse = ready > 0 ? 0.2 + 0.8 * (0.5 + 0.5 * Math.sin(time * 7.5)) * ready : 0;
+  const readyPulse = ready > 0 ? (0.2 + 0.8 * (0.5 + 0.5 * Math.sin(time * 7.5))) * ready : 0;
+  const reveal = clamp01(1 - morph - shield * 0.62);
   for (const material of kit.hullMaterials) {
     material.uniforms.uFlash.value = hit * 0.42;
     material.uniforms.uPulse.value = readyPulse * 0.04;
     material.uniforms.uOpacity.value = lerp(1, 0.15, shield * 0.12);
+    material.uniforms.uTime.value = time;
+    material.uniforms.uFlow.value = readyPulse > 0.01 || shield > 0.01 ? 0.035 + readyPulse * 0.08 + shield * 0.05 : 0;
+    material.uniforms.uReveal.value = reveal;
   }
   for (const material of kit.accentMaterials) {
     material.uniforms.uFlash.value = hit * 0.3;
     material.uniforms.uPulse.value = readyPulse * 0.18 + shield * 0.06;
+    material.uniforms.uTime.value = time;
+    material.uniforms.uFlow.value = 0.08 + readyPulse * 0.16 + shield * 0.12;
+    material.uniforms.uReveal.value = reveal;
   }
 }
 
@@ -226,14 +234,22 @@ export function applyColossusVectorState(
   time: number,
   hit: number,
   fuel: number,
+  assemble: number,
 ): void {
+  const heavyPulse = 0.5 + 0.5 * Math.sin(time * 5.8);
   for (const material of kit.hullMaterials) {
     material.uniforms.uFlash.value = hit * 0.28;
     material.uniforms.uOpacity.value = 0.92;
-    material.uniforms.uPulse.value = 0.01 + (1 - fuel) * 0.03 * (0.5 + 0.5 * Math.sin(time * 4));
+    material.uniforms.uPulse.value = 0.01 + heavyPulse * 0.03 + (1 - fuel) * 0.03 * (0.5 + 0.5 * Math.sin(time * 4));
+    material.uniforms.uTime.value = time;
+    material.uniforms.uFlow.value = heavyPulse > 0.7 ? heavyPulse * 0.035 : 0;
+    material.uniforms.uReveal.value = assemble;
   }
   for (const material of kit.accentMaterials) {
     material.uniforms.uFlash.value = hit * 0.24;
-    material.uniforms.uPulse.value = (0.05 + (1 - fuel) * 0.08) * (0.5 + 0.5 * Math.sin(time * 5));
+    material.uniforms.uPulse.value = heavyPulse * 0.08 + (0.05 + (1 - fuel) * 0.08) * (0.5 + 0.5 * Math.sin(time * 5));
+    material.uniforms.uTime.value = time;
+    material.uniforms.uFlow.value = 0.14 + heavyPulse * 0.08 + (1 - fuel) * 0.08;
+    material.uniforms.uReveal.value = assemble;
   }
 }

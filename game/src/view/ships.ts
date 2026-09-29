@@ -61,6 +61,13 @@ const MIN_CORE_VISUAL_RADIUS = 2.2;
 const NORMAL_CORE_SCALE = 1.18;
 const BOSS_CORE_SCALE = 1.05;
 const FOCUS_CORE_GAIN = 1.18;
+const READY_TICKS = 12;
+const READY_AURA_RADIUS = 19;
+const READY_AURA_Z = 4.2;
+const READY_AURA_FLOW = 0.32;
+const READY_AURA_EDGE_WIDTH = 1.35;
+const READY_TICK_LENGTH = 3.1;
+const READY_TICK_WIDTH = 0.42;
 
 function teamColor(team: number): THREE.Color {
   return colorIntoLinear(new THREE.Color(), TEAM_COLORS[team % TEAM_COLORS.length]);
@@ -84,6 +91,8 @@ export class ShipsView implements StageView {
   private readonly coreDotMaterials: THREE.MeshBasicMaterial[] = [];
   private readonly coreRings: THREE.Mesh[] = [];
   private readonly coreRingMaterials: THREE.MeshBasicMaterial[] = [];
+  private readonly readyAuras: THREE.Group[] = [];
+  private readonly readyAuraMaterials: VectorMaterial[] = [];
   private readonly modelFrames: number[] = [];
   private readonly partPoses: PartPose[][];
 
@@ -152,6 +161,22 @@ export class ShipsView implements StageView {
       this.root.add(coreRing);
       this.coreRings.push(coreRing);
       this.coreRingMaterials.push(coreRingMaterial);
+
+      const readyAura = new THREE.Group();
+      const readyAuraMaterial = createVectorMaterial({ edge: 0xffffff, fill: 0x07111a, fillAlpha: 0.0, edgeWidth: READY_AURA_EDGE_WIDTH, glow: 1.85 });
+      for (let tick = 0; tick < READY_TICKS; tick++) {
+        const tickGeometry = new THREE.BoxGeometry(READY_TICK_LENGTH, READY_TICK_WIDTH, 0.18);
+        const mesh = vectorMesh(tickGeometry, readyAuraMaterial, 14);
+        tickGeometry.dispose();
+        const angle = (tick / READY_TICKS) * Math.PI * 2;
+        mesh.position.set(Math.cos(angle) * READY_AURA_RADIUS, Math.sin(angle) * READY_AURA_RADIUS, READY_AURA_Z);
+        mesh.rotation.z = angle + Math.PI * 0.5;
+        readyAura.add(mesh);
+      }
+      readyAura.visible = false;
+      this.root.add(readyAura);
+      this.readyAuras.push(readyAura);
+      this.readyAuraMaterials.push(readyAuraMaterial);
       this.modelFrames.push(Frame.Vanguard);
     }
     markerGeometry.dispose();
@@ -194,11 +219,12 @@ export class ShipsView implements StageView {
       this.bulwarkMaterials[seat].uniforms.uFill.value.copy(color).multiplyScalar(BULWARK_FILL_TINT);
       this.glowMaterials[seat].color.copy(color);
       this.coreRingMaterials[seat].color.copy(color);
+      this.readyAuraMaterials[seat].uniforms.uEdge.value.copy(color);
     }
   }
 
   update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
-    const { alpha, focusSeat, time: timeSeconds } = frame;
+    const { alpha, focusSeat, time: timeSeconds, beat } = frame;
     this.setTeams(current);
     for (let seat = 0; seat < current.seats; seat++) {
       this.firePulse[seat] = expStep(this.firePulse[seat], 0, FIRE_DECAY, frame.dt);
@@ -240,11 +266,29 @@ export class ShipsView implements StageView {
       mount.position.set(sample.x, sample.y, 0);
       if (showRobot) robot.update(robotPose);
 
+      const readyAura = this.readyAuras[seat];
+      const readyAuraMaterial = this.readyAuraMaterials[seat];
+      const ready = current.plGauge[seat] >= BOSS_MIN_GAUGE;
+      readyAura.visible = showRobot && ready;
+      if (readyAura.visible) {
+        const auraPulse = 1 + beat.pulse * 0.16 + beat.barPulse * 0.1;
+        readyAura.position.set(sample.x, sample.y, 0);
+        readyAura.rotation.z = timeSeconds * 1.9 + seat * 0.31;
+        readyAura.scale.setScalar(auraPulse);
+        readyAuraMaterial.uniforms.uOpacity.value = 0.68 + beat.pulse * 0.22;
+        readyAuraMaterial.uniforms.uPulse.value = 0.2 + beat.pulse * 0.35;
+        readyAuraMaterial.uniforms.uTime.value = timeSeconds;
+        readyAuraMaterial.uniforms.uFlow.value = READY_AURA_FLOW;
+        readyAuraMaterial.uniforms.uReveal.value = 1;
+      }
+
       const showBulwark = showRobot && frame === Frame.Juggernaut && current.plBulwark[seat] > 0;
       bulwark.visible = showBulwark;
       bulwark.position.set(sample.x, sample.y, bulwark.position.z);
       bulwark.rotation.z = sample.aim;
       this.bulwarkMaterials[seat].uniforms.uOpacity.value = robotPose.alt;
+      this.bulwarkMaterials[seat].uniforms.uTime.value = timeSeconds;
+      this.bulwarkMaterials[seat].uniforms.uFlow.value = robotPose.alt * 0.22;
 
       const showColossus = sample.alive && (form === Form.Boss || form === Form.Morph);
       colossus.root.visible = showColossus;
@@ -262,6 +306,8 @@ export class ShipsView implements StageView {
       markerMaterial.uniforms.uOpacity.value = seat === focusSeat ? 0.88 : 0;
       markerMaterial.uniforms.uPulse.value = seat === focusSeat ? 0.10 + 0.05 * Math.sin(timeSeconds * 3.2) : 0;
       markerMaterial.uniforms.uFlash.value = 0;
+      markerMaterial.uniforms.uTime.value = timeSeconds;
+      markerMaterial.uniforms.uFlow.value = seat === focusSeat ? 0.12 : 0;
 
       const focusGain = seat === focusSeat ? FOCUS_CORE_GAIN : 1;
       const coreRadius = showColossus
@@ -291,6 +337,8 @@ export class ShipsView implements StageView {
     for (const material of this.coreDotMaterials) material.dispose();
     for (const ring of this.coreRings) ring.geometry.dispose();
     for (const material of this.coreRingMaterials) material.dispose();
+    for (const aura of this.readyAuras) for (const child of aura.children) (child as THREE.Mesh).geometry.dispose();
+    for (const material of this.readyAuraMaterials) material.dispose();
   }
 
   private sample(previous: WorldSnapshot, current: WorldSnapshot, seat: number, alpha: number): ShipRenderSample {
