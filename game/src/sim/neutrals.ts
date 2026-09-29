@@ -158,7 +158,7 @@ function drone(w: World, n: number): void {
   setVelocity(w, n, radial(dx, dy) > DRONE_STANDOFF ? toTarget : toTarget + fx.ANGLE_QUARTER, def.speed);
   if ((m.nAge[n] + m.nAng[n]) % DRONE_FIRE_INTERVAL === 0) {
     fan(w, NEUTRAL_SHOOTER, DRONE_SHOT, m.nX[n], m.nY[n], toTarget, DRONE_FAN_COUNT, DRONE_FAN_SPREAD);
-    w.emit(Ev.NeutralFire, m.nX[n], m.nY[n], NeutralType.Drone);
+    w.emit(Ev.NeutralFire, m.nX[n], m.nY[n], NeutralType.Drone, n);
   }
 }
 
@@ -178,7 +178,7 @@ function sentinel(w: World, n: number): void {
       launch(w, NEUTRAL_SHOOTER, SENTINEL_SHOT, m.nX[n], m.nY[n], m.nAng[n] + Math.floor((fx.ANGLE_FULL * arm) / SENTINEL_ARMS));
     }
     m.nAng[n] = (m.nAng[n] + SENTINEL_STEP) & fx.ANGLE_MASK;
-    w.emit(Ev.NeutralFire, m.nX[n], m.nY[n], NeutralType.Sentinel);
+    w.emit(Ev.NeutralFire, m.nX[n], m.nY[n], NeutralType.Sentinel, n);
   }
 }
 
@@ -199,10 +199,10 @@ function warden(w: World, n: number): void {
       const angle = Math.floor((fx.ANGLE_FULL * k) / WARDEN_RING_COUNT);
       if (Math.abs(fx.angleDiff(toTarget, angle)) > WARDEN_LANE_HALF) launch(w, NEUTRAL_SHOOTER, WARDEN_RING_SHOT, m.nX[n], m.nY[n], angle);
     }
-    w.emit(Ev.NeutralFire, m.nX[n], m.nY[n], NeutralType.Warden);
+    w.emit(Ev.NeutralFire, m.nX[n], m.nY[n], NeutralType.Warden, n);
   } else if (phase === WARDEN_CYCLE / 2) {
     fan(w, NEUTRAL_SHOOTER, WARDEN_FAN_SHOT, m.nX[n], m.nY[n], toTarget, WARDEN_FAN_COUNT, WARDEN_FAN_SPREAD);
-    w.emit(Ev.NeutralFire, m.nX[n], m.nY[n], NeutralType.Warden);
+    w.emit(Ev.NeutralFire, m.nX[n], m.nY[n], NeutralType.Warden, n);
   }
 }
 

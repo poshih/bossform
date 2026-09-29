@@ -11,6 +11,7 @@ import {
   type World,
 } from '../sim/index.ts';
 import { NEUTRAL_COLORS, TEAM_COLORS } from '../config.ts';
+import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
 import { clamp01, colorIntoLinear, toWorld } from './shared.ts';
 
@@ -115,7 +116,7 @@ function makePool(): FxPool {
   };
 }
 
-export class FxView {
+export class FxView implements StageView {
   readonly mesh: THREE.Mesh;
   readonly root = new THREE.Group();
 
@@ -244,7 +245,8 @@ export class FxView {
     }
   }
 
-  update(world: World, current: WorldSnapshot, dtSeconds: number, timeSeconds: number): void {
+  update(_previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
+    const { world, dt: dtSeconds, time: timeSeconds } = frame;
     this.screenFlash *= Math.exp(-6 * dtSeconds);
     this.ultimaDim = 0;
     let count = 0;

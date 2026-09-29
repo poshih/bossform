@@ -19,7 +19,7 @@ export const Ev = {
   Graze: 6,
   /** A bulwark swallowed a projectile: a = seat. */
   Absorb: 7,
-  /** A ship was destroyed: a = seat, b = killer seat or NO_SEAT. */
+  /** A ship was destroyed: a = seat, b = killer seat or NO_SEAT, c = 1 if it was destroyed as a colossus (boss form). */
   Death: 8,
   Respawn: 9,
   Left: 10,
@@ -36,6 +36,7 @@ export const Ev = {
   NeutralHit: 17,
   /** A neutral unit was destroyed: a = neutral type. */
   NeutralKilled: 18,
+  /** A neutral unit fired: a = its NeutralType, b = its index in the neutral pool. */
   NeutralFire: 19,
   OrbPickup: 20,
   Dash: 21,

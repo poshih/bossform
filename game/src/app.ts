@@ -1,6 +1,8 @@
 import { hashToString } from '@metronome/engine';
 import { AudioEngine } from './audio/audio.ts';
 import { AudioDirector } from './audio/director.ts';
+import { BeatClock } from './beat.ts';
+import type { Beat } from './beat.ts';
 import { MAX_DPR } from './config.ts';
 import { Devices } from './input/devices.ts';
 import { RelayLobby } from './net/lobby.ts';
@@ -60,6 +62,7 @@ export class App {
   private readonly director: AudioDirector;
   private readonly devices: Devices;
   private readonly hud = new Hud();
+  private readonly beatClock = new BeatClock();
   private readonly hudContext: CanvasRenderingContext2D;
   private readonly menus: Menus;
   private run: MatchRun | null = null;
@@ -276,9 +279,11 @@ export class App {
     }
     world.events.clear();
     this.freezeIfRequested(run, world);
-    stage.render(world, result.alpha, dtSeconds);
+    this.beatClock.advance(dtSeconds, null);
+    const beat = this.beatClock.state;
+    stage.render(world, result.alpha, dtSeconds, beat);
     if (!attract) this.director.update(world, this.focusSeat, dtSeconds);
-    this.drawHud(run, world);
+    this.drawHud(run, world, beat);
     this.checkMatchEnd(run, world);
   }
 
@@ -300,7 +305,7 @@ export class App {
     }
   }
 
-  private drawHud(run: MatchRun, world: World): void {
+  private drawHud(run: MatchRun, world: World, beat: Beat): void {
     const ctx = this.hudContext;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.parts.hudCanvas.width, this.parts.hudCanvas.height);
@@ -315,6 +320,8 @@ export class App {
       height: this.cssHeight,
       project: (x, y, out) => stage.project(x, y, out),
       ground: (cssX, cssY, out) => stage.ground(cssX, cssY, out),
+      seatScreen: (seat, out) => stage.seatScreen(seat, out),
+      beat,
       time: this.elapsedSeconds,
       cursor: this.screen === 'play' && run.localSeat >= 0 && isFighting(world, run.localSeat) ? this.devices.cursor : null,
     });
@@ -338,6 +345,12 @@ export class App {
   }
 
   // ---- read-only view for tests and tools --------------------------------------------------------------
+
+  private focusScreen(stage: Stage): { x: number; y: number; width: number; height: number } {
+    const out = { x: 0, y: 0 };
+    stage.seatScreen(this.focusSeat, out);
+    return { x: out.x, y: out.y, width: this.cssWidth, height: this.cssHeight };
+  }
 
   debug(): unknown {
     const run = this.run;
@@ -372,12 +385,15 @@ export class App {
         attackPhase: m.plAtkPhase[seat],
         hp: m.plHp[seat],
         gauge: m.plGauge[seat],
+        aim: m.plAim[seat],
         x: m.plX[seat] / 65536,
         y: m.plY[seat] / 65536,
         kills: m.plKills[seat],
         deaths: m.plDeaths[seat],
       })),
       stats: { ...run.session.stats },
+      camera: this.stage?.cameraState ?? null,
+      focusScreen: this.stage === null ? null : this.focusScreen(this.stage),
     };
   }
 }

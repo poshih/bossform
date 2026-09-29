@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SHOT_DEFS, type World } from '../sim/index.ts';
 import { NEUTRAL_COLORS, TEAM_COLORS } from '../config.ts';
+import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
 import { colorIntoLinear, lerp, lerpBinaryAngle, toWorld } from './shared.ts';
 
@@ -105,8 +106,12 @@ void main() {
   gl_FragColor = vec4(color, alpha);
 }`;
 
-export class ProjectilesView {
+export class ProjectilesView implements StageView {
   readonly mesh: THREE.Mesh;
+
+  get root(): THREE.Object3D {
+    return this.mesh;
+  }
 
   private readonly geometry: THREE.InstancedBufferGeometry;
   private readonly material: THREE.ShaderMaterial;
@@ -179,7 +184,10 @@ export class ProjectilesView {
     this.teamColors = TEAM_COLORS.map((hex) => colorIntoLinear(new THREE.Color(), hex));
   }
 
-  update(previous: WorldSnapshot, current: WorldSnapshot, alpha: number, focusTeam: number, timeSeconds: number): void {
+  handleEvents(): void {}
+
+  update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
+    const { alpha, focusTeam, time: timeSeconds } = frame;
     let count = 0;
     for (let p = 0; p < current.projectiles; p++) {
       if (current.pAlive[p] !== 1) continue;

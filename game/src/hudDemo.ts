@@ -2,6 +2,7 @@ import { fx } from '@metronome/engine';
 import { Bot } from './bot/bot.ts';
 import { TEAM_COLORS } from './config.ts';
 import { evenTeams, freeForAllTeams } from './setup.ts';
+import { BeatClock } from './beat.ts';
 import { Hud } from './ui/hud.ts';
 import { createGameSim, encodeConfig, Form, FRAME_COUNT, MAX_PLAYERS, Mode, NEUTRAL_INPUT } from './sim/index.ts';
 import type { GameInput } from './sim/index.ts';
@@ -28,6 +29,7 @@ const teams = mode === Mode.Deathmatch ? evenTeams(seatCount, Math.min(2, seatCo
 const config = encodeConfig({ mode, seats: Array.from({ length: seatCount }, (_, seat) => ({ frame: seat % FRAME_COUNT, team: teams[seat] })) });
 const sim = createGameSim({ seed: 424242, seats: seatCount, config });
 const hud = new Hud();
+const beatClock = new BeatClock();
 const bots = Array.from({ length: seatCount }, (_, seat) => new Bot(seat, 9000 + seat * 17, 0.85));
 const names = Array.from({ length: seatCount }, (_, seat) => `PILOT ${seat + 1}`);
 const canvas = document.querySelector('canvas')!;
@@ -166,6 +168,7 @@ function frame(now: number): void {
     accumulator -= FIXED_STEP;
     stepSim();
   }
+  beatClock.advance(dt, null);
   drawBackdrop();
   drawWorld();
   const cursorWorld = lead().cursor;
@@ -179,6 +182,8 @@ function frame(now: number): void {
     height: cssHeight,
     project,
     ground,
+    seatScreen: (seat, out) => project(fx.toFloat(sim.world.m.plX[seat]), fx.toFloat(sim.world.m.plY[seat]), out),
+    beat: beatClock.state,
     time: performance.now() / 1000,
     cursor,
   });

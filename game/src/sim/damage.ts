@@ -67,5 +67,5 @@ export function killShip(w: World, seat: number, killer: number): void {
   clearBoss(w, seat);
   m.plGauge[seat] = 0;
   m.plRespawn[seat] = w.isDeathmatch ? RESPAWN_TICKS : 0;
-  w.emit(Ev.Death, m.plX[seat], m.plY[seat], seat, credit);
+  w.emit(Ev.Death, m.plX[seat], m.plY[seat], seat, credit, wasBoss ? 1 : 0);
 }

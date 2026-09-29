@@ -1,14 +1,21 @@
 import * as THREE from 'three';
-import { FLASH_TICKS, NEUTRAL_DEFS, NeutralType } from '../sim/index.ts';
+import { Ev, FLASH_TICKS, NEUTRAL_DEFS, NeutralType } from '../sim/index.ts';
+import type { World } from '../sim/index.ts';
 import { createNeutral, type NeutralPose } from '../view/models/index.ts';
+import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
-import { clamp01, lerp, lerpRadiansBinary, toWorld } from './shared.ts';
+import { clamp01, expStep, lerp, lerpRadiansBinary, toWorld } from './shared.ts';
 
-export class NeutralsView {
+/** How fast a neutral unit's firing glow fades, per second. */
+const TELEGRAPH_DECAY = 4;
+
+export class NeutralsView implements StageView {
   readonly root = new THREE.Group();
   private readonly models = [] as ReturnType<typeof createNeutral>[];
+  private readonly telegraph: Float32Array;
 
   constructor(capacity: number) {
+    this.telegraph = new Float32Array(capacity);
     for (let n = 0; n < capacity; n++) {
       const model = createNeutral(NeutralType.Drone);
       model.root.visible = false;
@@ -17,7 +24,15 @@ export class NeutralsView {
     }
   }
 
-  update(previous: WorldSnapshot, current: WorldSnapshot, alpha: number, telegraph: Float32Array, timeSeconds: number): void {
+  handleEvents(world: World): void {
+    const events = world.events;
+    for (let i = 0; i < events.count; i++) if (events.type[i] === Ev.NeutralFire) this.telegraph[events.b[i]] = 1;
+  }
+
+  update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
+    const { alpha, time: timeSeconds } = frame;
+    const telegraph = this.telegraph;
+    for (let n = 0; n < telegraph.length; n++) telegraph[n] = expStep(telegraph[n], 0, TELEGRAPH_DECAY, frame.dt);
     for (let n = 0; n < current.neutrals; n++) {
       const model = this.models[n];
       if (current.nAlive[n] !== 1) {

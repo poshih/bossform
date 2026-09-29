@@ -1,4 +1,5 @@
 import { createGameSim } from './sim/index.ts';
+import { BeatClock } from './beat.ts';
 import { Bot } from './bot/bot.ts';
 import { encodeConfig, Frame, Mode, TICK_RATE, type MatchConfig, type SeatConfig } from './sim/index.ts';
 import type { GameInput } from './sim/index.ts';
@@ -101,6 +102,7 @@ function bootStage(): Stage {
 
   let accumulator = 0;
   let last = performance.now();
+  const beatClock = new BeatClock();
   let frameCounter = 0;
   let totalRenderMs = 0;
   let ready = false;
@@ -115,7 +117,8 @@ function bootStage(): Stage {
       accumulator -= STEP_SECONDS;
     }
     const started = performance.now();
-    stageInstance.render(world, accumulator / STEP_SECONDS, dt);
+    beatClock.advance(dt, null);
+    stageInstance.render(world, accumulator / STEP_SECONDS, dt, beatClock.state);
     const renderMs = performance.now() - started;
     totalRenderMs += renderMs;
     frameCounter++;

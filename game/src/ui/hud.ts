@@ -29,6 +29,7 @@ import {
   W,
 } from '../sim/index.ts';
 import type { World } from '../sim/index.ts';
+import type { Beat } from '../beat.ts';
 import { clamp, drawChamferRect, easeOutCubic, fillCenteredText, formatClock, formatCompactSeconds, invLerp, lerp, pointOnScreen, pulse, strokeGlow } from './draw.ts';
 import {
   UI_ACCENT,
@@ -249,12 +250,15 @@ export interface HudView {
   readonly project: (x: number, y: number, out: { x: number; y: number }) => void;
   /** CSS pixels on the overlay to the floor point under them, in world units (Stage.ground). */
   readonly ground: (cssX: number, cssY: number, out: { x: number; y: number }) => void;
+  /** Where a pilot is DRAWN this frame, in CSS pixels (interpolated like the ship itself; Stage.seatScreen). */
+  readonly seatScreen: (seat: number, out: { x: number; y: number }) => void;
+  /** The music's beat, for accents that pulse in time. */
+  readonly beat: Beat;
   readonly time: number;
   readonly cursor: { x: number; y: number } | null;
 }
 
 export class Hud {
-  private readonly previousForms: number[] = [];
   private readonly killFeed: KillFeedItem[] = [];
   private readonly banners: BannerItem[] = [];
   private readonly ultimaAlerts: UltimaAlert[] = [];
@@ -275,7 +279,7 @@ export class Hud {
       } else if ((type === Ev.Hit || type === Ev.StormHit) && a >= 0) {
         this.windows[a].hitUntil = now + HIT_PULSE_SECONDS;
       } else if (type === Ev.Death && a >= 0) {
-        this.killFeed.unshift({ kind: 'kill', at: now, victim: a, killer: b, bossKill: this.previousForms[a] === Form.Boss });
+        this.killFeed.unshift({ kind: 'kill', at: now, victim: a, killer: b, bossKill: world.events.c[i] === 1 });
       } else if (type === Ev.Left && a >= 0) {
         this.killFeed.unshift({ kind: 'left', at: now, victim: a, killer: NO_SEAT, bossKill: false });
       } else if (type === Ev.Windup && b === Attack.Ultima && a >= 0) {
@@ -290,7 +294,6 @@ export class Hud {
       }
     }
     this.trimTransient(world, now);
-    for (let seat = 0; seat < world.seats; seat++) this.previousForms[seat] = world.m.plForm[seat];
   }
 
   draw(ctx: CanvasRenderingContext2D, view: HudView): void {
@@ -340,7 +343,6 @@ export class Hud {
   private syncSeatState(world: World): void {
     while (this.windows.length < world.seats) {
       this.windows.push({ amount: 0, cap: 1, closeTick: 0, blockedUntil: 0, hitUntil: 0 });
-      this.previousForms.push(Form.Normal);
     }
   }
 
@@ -1103,7 +1105,7 @@ export class Hud {
     };
     for (let other = 0; other < world.seats; other++) {
       if (other === seat || world.m.plAlive[other] !== 1 || world.m.plTeam[other] === world.m.plTeam[seat]) continue;
-      this.screenOf(view, world.m.plX[other], world.m.plY[other], point);
+      view.seatScreen(other, point);
       if (pointOnScreen(point.x, point.y, width, height, 20)) continue;
       const boss = world.m.plForm[other] === Form.Boss;
       const color = cssHex(teamColor(world.m.plTeam[other]));
@@ -1262,7 +1264,7 @@ export class Hud {
     const { world, width, height } = view;
     const seat = alert.seat;
     const point = { x: 0, y: 0 };
-    this.screenOf(view, world.m.plX[seat], world.m.plY[seat], point);
+    view.seatScreen(seat, point);
     this.drawEdgeFrame(ctx, width, height, UI_WARNING, pulse(view.time, 10, 0.45, 0.82));
     const bannerWidth = this.s(320);
     const x = width * 0.5 - bannerWidth * 0.5;
@@ -1355,7 +1357,7 @@ export class Hud {
     const point = { x: 0, y: 0 };
     for (let other = 0; other < world.seats; other++) {
       if (other === seat || world.m.plAlive[other] !== 1 || world.m.plTeam[other] === world.m.plTeam[seat]) continue;
-      this.screenOf(view, world.m.plX[other], world.m.plY[other], point);
+      view.seatScreen(other, point);
       if (!pointOnScreen(point.x, point.y, width, height, 40)) continue;
       ctx.save();
       ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(10)}px ${UI_FONT_STACK}`;

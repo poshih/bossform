@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '../sim/index.ts';
+import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
 import { clamp01, lerp, toWorld } from './shared.ts';
 
@@ -29,8 +30,12 @@ void main() {
   gl_FragColor = vec4(color, alpha * 0.88);
 }`;
 
-export class OrbsView {
+export class OrbsView implements StageView {
   readonly mesh: THREE.Mesh;
+
+  get root(): THREE.Object3D {
+    return this.mesh;
+  }
   private readonly geometry: THREE.InstancedBufferGeometry;
   private readonly material: THREE.ShaderMaterial;
   private readonly centers: Float32Array;
@@ -64,7 +69,10 @@ export class OrbsView {
     this.mesh.frustumCulled = false;
   }
 
-  update(previous: WorldSnapshot, current: WorldSnapshot, alpha: number, timeSeconds: number): void {
+  handleEvents(): void {}
+
+  update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
+    const { alpha, time: timeSeconds } = frame;
     let count = 0;
     for (let o = 0; o < current.orbs; o++) {
       if (current.oAlive[o] !== 1) continue;

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { World } from '../sim/index.ts';
 import { W } from '../sim/index.ts';
+import type { FrameContext, StageView } from '../view/frame.ts';
+import type { WorldSnapshot } from '../view/snapshot.ts';
 import { toWorld } from '../view/shared.ts';
 
 const FLOOR_EXTENT = 12000;
@@ -81,8 +83,12 @@ void main() {
   gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
 }`;
 
-export class ArenaFloor {
+export class ArenaFloor implements StageView {
   readonly mesh: THREE.Mesh;
+
+  get root(): THREE.Object3D {
+    return this.mesh;
+  }
   private readonly material: THREE.ShaderMaterial;
 
   constructor(world: World) {
@@ -105,11 +111,18 @@ export class ArenaFloor {
     this.setSafeRadius(world.m.world[W.SafeR]);
   }
 
-  update(timeSeconds: number): void {
+  handleEvents(): void {}
+
+  update(_previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
+    this.setSafeRadius(current.safeR);
+    this.advance(frame.time);
+  }
+
+  private advance(timeSeconds: number): void {
     this.material.uniforms.uTime.value = timeSeconds;
   }
 
-  setSafeRadius(rawRadius: number): void {
+  private setSafeRadius(rawRadius: number): void {
     this.material.uniforms.uSafeR.value = toWorld(rawRadius);
   }
 

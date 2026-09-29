@@ -1,7 +1,7 @@
 /**
  * Browser E2E for the whole game: real Chromium, real keyboard / mouse / gamepad events, the real WebGL pipeline.
  *   node tools/verify/e2e.ts <scenario> [width] [height] [baseUrl]
- * Scenarios: menus | play | match | bosses | pad | layout
+ * Scenarios: menus | play | match | bosses | pad | layout | camera
  * Screenshots go to tools/verify/shots/e2e-<scenario>-<w>x<h>/. The console must stay free of errors and warnings.
  * Needs a server for the game (dev: `npm run dev` on :4427, or the static build).
  */
@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { check, finish, info, section } from './lib.ts';
+import { FAR_SHAKE_DISTANCE, NEAR_SHAKE_DISTANCE } from '../../game/src/view/shake.ts';
 
 const [scenario = 'menus', w = '1280', h = '720', base = 'http://127.0.0.1:4427/'] = process.argv.slice(2);
 const WIDTH = Number(w);
@@ -20,6 +21,14 @@ fs.mkdirSync(outDir, { recursive: true });
 const PHASE_BATTLE = 1;
 const PHASE_OVER = 3;
 const FORM_BOSS = 2;
+/** Camera checks (see render/camera.ts, view/shake.ts): a shake lasts under a second; after a focus change the camera needs about a second to settle; a settled pilot is drawn within this many pixels of the centre (720p: 1.4 px per unit, lag at full speed under ~20 units). */
+const CAMERA_SHAKE_MS = 1000;
+/** Deaths closer than this shake at half strength or more: long enough to be seen even at a slow headless frame rate. */
+const CAMERA_CLEAR_SHAKE_UNITS = NEAR_SHAKE_DISTANCE + (FAR_SHAKE_DISTANCE - NEAR_SHAKE_DISTANCE) / 2;
+const CAMERA_EVENT_SLACK_MS = 100;
+const CAMERA_SETTLE_MS = 1000;
+const CAMERA_CENTRE_PX = 45;
+const ANGLE_FULL = 65536;
 
 interface SeatInfo {
   name: string;
@@ -27,6 +36,7 @@ interface SeatInfo {
   form: number;
   hp: number;
   gauge: number;
+  aim: number;
   x: number;
   y: number;
   kills: number;
@@ -48,6 +58,7 @@ interface Snapshot {
   neutrals?: number;
   orbs?: number;
   seats?: SeatInfo[];
+  camera?: { x: number; y: number; height: number; shake: number } | null;
 }
 
 /** A scripted gamepad the page polls exactly like hardware: window.__pad.axes / .buttons are set by the test. */
@@ -259,7 +270,112 @@ async function layoutScenario(): Promise<void> {
   check('the scene and the HUD are drawn at this size', (await litShare(WHOLE_SCREEN)) > 0.05 && (await litShare(HUD_TOP_LEFT)) > 0.005);
 }
 
-const scenarios: Record<string, () => Promise<void>> = { menus: menusScenario, play: playScenario, match: matchScenario, bosses: bossesScenario, pad: padScenario, layout: layoutScenario };
+type CameraTraceRow = {
+  t: number;
+  focus: number;
+  shake: number;
+  hp: number;
+  focusX: number;
+  focusY: number;
+  screenOffset: number;
+  colossi: Array<{ seat: number; x: number; y: number }>;
+  alive: boolean[];
+};
+
+/** Samples the running app once per animation frame, in the page, for `seconds` of real time or until `stop` holds. */
+async function traceCamera(seconds: number, stopAfterNearColossusDeath: boolean): Promise<CameraTraceRow[]> {
+  return page.evaluate(async ([limitMs, stopEarly, nearDistance]) => {
+    type Debug = {
+      focusSeat: number;
+      camera: { shake: number };
+      focusScreen: { x: number; y: number; width: number; height: number };
+      seats: Array<{ x: number; y: number; hp: number; form: number; alive: boolean }>;
+    };
+    const app = (window as unknown as { __bossform: { debug(): Debug } }).__bossform;
+    const rows: CameraTraceRowInPage[] = [];
+    type CameraTraceRowInPage = { t: number; focus: number; shake: number; hp: number; focusX: number; focusY: number; screenOffset: number; colossi: Array<{ seat: number; x: number; y: number }>; alive: boolean[] };
+    const started = performance.now();
+    let nearDeathAt = -1;
+    while (performance.now() - started < limitMs) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const d = app.debug();
+      const focused = d.seats[d.focusSeat];
+      const row: CameraTraceRowInPage = {
+        t: performance.now(),
+        focus: d.focusSeat,
+        shake: d.camera.shake,
+        hp: d.seats.reduce((sum, seat) => sum + seat.hp, 0),
+        focusX: focused.x,
+        focusY: focused.y,
+        screenOffset: Math.hypot(d.focusScreen.x - d.focusScreen.width / 2, d.focusScreen.y - d.focusScreen.height / 2),
+        colossi: d.seats.flatMap((seat, index) => (seat.form === 2 && seat.alive ? [{ seat: index, x: seat.x, y: seat.y }] : [])),
+        alive: d.seats.map((seat) => seat.alive),
+      };
+      const before = rows[rows.length - 1];
+      if (stopEarly && before !== undefined && nearDeathAt < 0) {
+        const died = before.colossi.find((c) => !row.alive[c.seat] && Math.hypot(c.x - before.focusX, c.y - before.focusY) < nearDistance);
+        if (died !== undefined) nearDeathAt = row.t;
+      }
+      rows.push(row);
+      if (nearDeathAt >= 0 && row.t - nearDeathAt > 1500) break;
+    }
+    return rows;
+  }, [seconds * 1000, stopAfterNearColossusDeath, CAMERA_CLEAR_SHAKE_UNITS] as const);
+}
+
+async function cameraScenario(): Promise<void> {
+  section('the camera: aiming never moves it, it keeps the pilot centred, it shakes only for a destroyed colossus');
+  await open('index.html?start=1,3,0,29');
+  await until((s) => s.phase === PHASE_BATTLE, 15000);
+  const cx = WIDTH / 2;
+  const cy = HEIGHT / 2;
+  await page.mouse.move(cx + 240, cy);
+  await page.waitForTimeout(100);
+  const start = await snapshot();
+  let drift = 0;
+  let shipMoved = 0;
+  let aimTurned = 0;
+  for (let i = 0; i < 48; i++) {
+    const angle = (i / 48) * Math.PI * 2;
+    await page.mouse.move(cx + Math.cos(angle) * 240, cy + Math.sin(angle) * 170);
+    await page.waitForTimeout(30);
+    const s = await snapshot();
+    drift = Math.max(drift, Math.hypot(s.camera!.x - start.camera!.x, s.camera!.y - start.camera!.y));
+    shipMoved = Math.max(shipMoved, Math.hypot(s.seats![0].x - start.seats![0].x, s.seats![0].y - start.seats![0].y));
+    const turn = Math.abs((((s.seats![0].aim - start.seats![0].aim) % ANGLE_FULL) + ANGLE_FULL * 1.5) % ANGLE_FULL - ANGLE_FULL / 2);
+    aimTurned = Math.max(aimTurned, turn);
+  }
+  check('the still pilot aims all the way round with the mouse', shipMoved <= 1 && aimTurned > ANGLE_FULL / 3, `aim turned ${((aimTurned / ANGLE_FULL) * 360).toFixed(0)} degrees, ship moved ${shipMoved.toFixed(2)}`);
+  check('aiming does not move the camera', drift < 0.5, `camera moved ${drift.toFixed(2)} units`);
+
+  await open('index.html?start=1,3,0,29&autoplay=1');
+  await until((s) => s.phase === PHASE_BATTLE, 15000);
+  const follow = await traceCamera(6, false);
+  const damaged = follow[0].hp - follow[follow.length - 1].hp;
+  check('pilots fight (hits land) while the camera is traced', damaged > 0, `${damaged} hp lost across all pilots`);
+  const settled = follow.filter((row) => row.shake === 0 && row.t - follow[0].t >= CAMERA_SETTLE_MS && follow.every((other) => other.t > row.t || other.t < row.t - CAMERA_SETTLE_MS || other.focus === row.focus));
+  const worst = Math.max(...settled.map((row) => row.screenOffset));
+  check('the followed pilot is drawn near the centre of the screen', settled.length > 0 && worst < CAMERA_CENTRE_PX, `largest offset ${worst.toFixed(1)} px over ${settled.length} settled frames`);
+
+  await open('index.html?start=1,7,0,42&timescale=8&autoplay=1');
+  await until((s) => s.phase === PHASE_BATTLE, 15000);
+  const fight = await traceCamera(120, true);
+  const deaths: Array<{ t: number; near: boolean }> = [];
+  for (let i = 1; i < fight.length; i++) {
+    for (const c of fight[i - 1].colossi) {
+      if (fight[i].alive[c.seat]) continue;
+      deaths.push({ t: fight[i].t, near: Math.hypot(c.x - fight[i - 1].focusX, c.y - fight[i - 1].focusY) < CAMERA_CLEAR_SHAKE_UNITS });
+    }
+  }
+  const unexplained = fight.filter((row) => row.shake > 0 && !deaths.some((d) => row.t >= d.t - CAMERA_EVENT_SLACK_MS && row.t - d.t < CAMERA_SHAKE_MS)).length;
+  const near = deaths.filter((d) => d.near);
+  const shookAfterNear = near.some((d) => fight.some((row) => row.shake > 0 && row.t >= d.t - CAMERA_EVENT_SLACK_MS && row.t - d.t < CAMERA_SHAKE_MS));
+  check('a colossus destroyed within reach of the followed pilot shakes the camera', near.length > 0 && shookAfterNear, `${deaths.length} colossus deaths, ${near.length} within ${CAMERA_CLEAR_SHAKE_UNITS} units of the camera`);
+  check('nothing else shakes it', unexplained === 0, `${unexplained} shaken frames without a colossus death`);
+  await shot('camera');
+}
+
+const scenarios: Record<string, () => Promise<void>> = { menus: menusScenario, play: playScenario, match: matchScenario, bosses: bossesScenario, pad: padScenario, layout: layoutScenario, camera: cameraScenario };
 if (!(scenario in scenarios)) throw new Error(`unknown scenario "${scenario}"`);
 await scenarios[scenario]();
 check('the browser console stayed free of errors and warnings', problems.length === 0, problems.slice(0, 4).join(' | '));

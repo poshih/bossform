@@ -3,6 +3,8 @@ import {
   Attack,
   AttackPhase,
   BOSS_MIN_GAUGE,
+  Ev,
+  FireSlot,
   FLASH_TICKS,
   FORMS,
   FRAME_STATS,
@@ -14,18 +16,15 @@ import {
   MORPH_TICKS,
   Role,
 } from '../sim/index.ts';
+import type { World } from '../sim/index.ts';
 import { TEAM_COLORS } from '../config.ts';
 import { createVectorMaterial, vectorMesh } from '../render/vector.ts';
 import type { VectorMaterial } from '../render/vector.ts';
 import { createColossus, createRobot } from './models/index.ts';
 import type { ColossusPose, PartPose, RobotPose } from './models/index.ts';
+import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
-import { binaryAngleToRadians, clamp01, colorIntoLinear, easeOutCubic, lerp, lerpRadiansBinary, smoothstep, toWorld } from './shared.ts';
-
-export interface ShipPulses {
-  readonly fire: Float32Array;
-  readonly alt: Float32Array;
-}
+import { binaryAngleToRadians, clamp01, colorIntoLinear, easeOutCubic, expStep, lerp, lerpRadiansBinary, smoothstep, toWorld } from './shared.ts';
 
 interface ShipRenderSample {
   x: number;
@@ -53,6 +52,9 @@ const BULWARK_FILL_TINT = 0.1;
 const BULWARK_EDGE_WIDTH = 1.7;
 const BULWARK_GLOW = 1.5;
 const INVULN_FADE_TICKS = 20;
+/** How fast the fire and alt pulses (muzzle flash, recoil) fade after a shot, per second. */
+const FIRE_DECAY = 8;
+const ALT_DECAY = 5;
 const NORMAL_MARKER_SCALE = 1.14;
 const BOSS_MARKER_SCALE = 1.02;
 const MIN_CORE_VISUAL_RADIUS = 2.2;
@@ -64,8 +66,10 @@ function teamColor(team: number): THREE.Color {
   return colorIntoLinear(new THREE.Color(), TEAM_COLORS[team % TEAM_COLORS.length]);
 }
 
-export class ShipsView {
+export class ShipsView implements StageView {
   readonly root = new THREE.Group();
+  private readonly firePulse: Float32Array;
+  private readonly altPulse: Float32Array;
 
   private readonly robots = [] as ReturnType<typeof createRobot>[];
   private readonly robotMounts: THREE.Group[] = [];
@@ -84,6 +88,8 @@ export class ShipsView {
   private readonly partPoses: PartPose[][];
 
   constructor(seats: number) {
+    this.firePulse = new Float32Array(seats);
+    this.altPulse = new Float32Array(seats);
     this.partPoses = Array.from({ length: seats }, () => Array.from({ length: MAX_PARTS }, () => ({ hp: 0, facing: 0, flash: 0, heat: 0, charge: 0 })));
     const markerGeometry = new THREE.RingGeometry(13, 14.2, 48);
     const glowGeometry = new THREE.CircleGeometry(1, 48);
@@ -155,7 +161,17 @@ export class ShipsView {
     bulwarkGeometry.dispose();
   }
 
-  setTeams(snapshot: WorldSnapshot): void {
+  handleEvents(world: World): void {
+    const events = world.events;
+    for (let i = 0; i < events.count; i++) {
+      if (events.type[i] !== Ev.Fire) continue;
+      const seat = events.a[i];
+      this.firePulse[seat] = 1;
+      if (events.c[i] === FireSlot.Alt) this.altPulse[seat] = 1;
+    }
+  }
+
+  private setTeams(snapshot: WorldSnapshot): void {
     for (let seat = 0; seat < snapshot.seats; seat++) {
       const frame = snapshot.plFrame[seat];
       const color = teamColor(snapshot.plTeam[seat]);
@@ -181,7 +197,13 @@ export class ShipsView {
     }
   }
 
-  update(previous: WorldSnapshot, current: WorldSnapshot, alpha: number, focusSeat: number, pulses: ShipPulses, timeSeconds: number): void {
+  update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
+    const { alpha, focusSeat, time: timeSeconds } = frame;
+    this.setTeams(current);
+    for (let seat = 0; seat < current.seats; seat++) {
+      this.firePulse[seat] = expStep(this.firePulse[seat], 0, FIRE_DECAY, frame.dt);
+      this.altPulse[seat] = expStep(this.altPulse[seat], 0, ALT_DECAY, frame.dt);
+    }
     for (let seat = 0; seat < current.seats; seat++) {
       const sample = this.sample(previous, current, seat, alpha);
       const robot = this.robots[seat];
@@ -206,8 +228,8 @@ export class ShipsView {
         aim: sample.aim,
         move,
         speed,
-        fire: pulses.fire[seat],
-        alt: this.altAmount(current, seat, timeSeconds, pulses.alt[seat]),
+        fire: this.firePulse[seat],
+        alt: this.altAmount(current, seat, timeSeconds, this.altPulse[seat]),
         hit: flash,
         charge: gauge,
         shield: smoothstep(0, 1, shield),
