@@ -38,7 +38,7 @@ export interface SessionOptions<I> {
   readonly factory: SimFactory<I>;
   readonly codec: InputCodec<I>;
   readonly params: SessionParams;
-  /** This machine's peer id (0..255). */
+  /** This machine's peer id (0..65534). 65535 is reserved for transport-level broadcast. */
   readonly self: number;
   /** seatOwners[seat] = peer that supplies that seat's input, or NO_PEER for an empty seat. */
   readonly seatOwners: readonly number[];
@@ -71,10 +71,15 @@ const ACCEPT_AHEAD = INPUT_WINDOW >> 1;
 const CHECK_HISTORY = 64;
 const CHECK_MASK = CHECK_HISTORY - 1;
 const NEVER = 0x7fffffff;
-const LEAVE_COPIES = 3;
+const LEAVE_COPIES = 8;
 const RTT_SMOOTHING = 0.2;
+const MAX_PEER_ID = 0xfffe;
 
 const DEFAULTS = { peerTimeoutMs: 5000, connectTimeoutMs: 30000, resendIntervalMs: 40, keepAliveMs: 200 } as const;
+
+function setBit(bytes: Uint8Array, bit: number): void {
+  bytes[bit >> 3] |= 1 << (bit & 7);
+}
 
 export class Session<I> {
   readonly params: SessionParams;
@@ -98,6 +103,8 @@ export class Session<I> {
   private readonly bytesPerInput: number;
   private readonly seatOwners: readonly number[];
   private readonly neutralBytes: Uint8Array;
+  private readonly localSeatIndex: Int32Array;
+  private readonly remoteOwnedSeats: readonly number[];
 
   // Input storage: per seat a ring of INPUT_WINDOW encoded inputs, tagged with the tick they belong to.
   private readonly ring: Uint8Array;
@@ -109,35 +116,36 @@ export class Session<I> {
 
   // Peers
   private readonly remotePeers: readonly number[];
-  private readonly peerSlot: Int16Array;
+  private readonly peerSlot = new Map<number, number>();
   private readonly seatsOfPeer: readonly (readonly number[])[];
-  /** ackedBy[slot * seats + seat]: how far remote peer `slot` has acknowledged our local seat. */
-  private readonly ackedBy: Int32Array;
+  /** ackedBy[slot][localSeatIndex] = how far remote peer `slot` has acknowledged this local seat. */
+  private readonly ackedBy: readonly Int32Array[];
   private readonly heard: Uint8Array;
   private readonly heardSinceUpdate: Uint8Array;
   private readonly hasLeft: Uint8Array;
   private readonly lastHeardAt: Float64Array;
-  private readonly lastSentAt: Float64Array;
-  private readonly ackDirty: Uint8Array;
+  private lastSentAt = -Infinity;
+  private ackDirty = false;
   private inputsDirty = false;
 
   // Checksums
   private readonly localCheckTick = new Int32Array(CHECK_HISTORY).fill(-1);
   private readonly localCheckHash: Hash64[] = new Array<Hash64>(CHECK_HISTORY);
-  private readonly remoteCheckTick: Int32Array;
-  private readonly remoteCheckHash: Hash64[];
+  private readonly remoteCheckTick: readonly Int32Array[];
+  private readonly remoteCheckHash: readonly Hash64[][];
 
   private readonly recorder: ReplayRecorder | null;
   private readonly frameBytes: Uint8Array;
+  private readonly presenceBits: Uint8Array;
 
   constructor(opts: SessionOptions<I>) {
     validateParams(opts.params);
     const { params, codec } = opts;
     if (opts.seatOwners.length !== params.seats) throw new RangeError('Session: seatOwners must list every seat');
     for (const owner of opts.seatOwners) {
-      if (owner !== NO_PEER && !(Number.isInteger(owner) && owner >= 0 && owner < 256)) throw new RangeError(`Session: bad seat owner ${owner}`);
+      if (owner !== NO_PEER && !(Number.isInteger(owner) && owner >= 0 && owner <= MAX_PEER_ID)) throw new RangeError(`Session: bad seat owner ${owner}`);
     }
-    if (!Number.isInteger(opts.self) || opts.self < 0 || opts.self > 255) throw new RangeError('Session: self must be a peer id in 0..255');
+    if (!Number.isInteger(opts.self) || opts.self < 0 || opts.self > MAX_PEER_ID) throw new RangeError('Session: self must be a peer id in 0..65534');
 
     this.opts = opts;
     this.params = params;
@@ -148,25 +156,25 @@ export class Session<I> {
     this.sim = opts.factory({ seed: params.seed, seats: params.seats, config: params.config });
     this.handshake = handshakeHash(params, codec.byteLength, this.sim.memory.layoutHash);
     this.localSeats = opts.seatOwners.flatMap((owner, seat) => (owner === opts.self ? [seat] : []));
+    this.localSeatIndex = new Int32Array(this.seats).fill(-1);
+    this.localSeats.forEach((seat, index) => { this.localSeatIndex[seat] = index; });
+    this.remoteOwnedSeats = opts.seatOwners.flatMap((owner, seat) => (owner !== NO_PEER && owner !== opts.self ? [seat] : []));
 
     const remote = [...new Set(opts.seatOwners.filter((o) => o !== NO_PEER && o !== opts.self))].sort((a, b) => a - b);
     this.remotePeers = remote;
     this.transport = opts.transport ?? null;
     if (remote.length > 0 && this.transport === null) throw new RangeError('Session: remote seats need a transport');
     if (remote.length > 0 && this.localSeats.length === 0) throw new RangeError('Session: this peer owns no seat');
-    this.peerSlot = new Int16Array(256).fill(-1);
-    remote.forEach((peer, slot) => { this.peerSlot[peer] = slot; });
+    remote.forEach((peer, slot) => { this.peerSlot.set(peer, slot); });
     this.seatsOfPeer = remote.map((peer) => opts.seatOwners.flatMap((o, seat) => (o === peer ? [seat] : [])));
     const peerCount = remote.length;
-    this.ackedBy = new Int32Array(Math.max(1, peerCount) * this.seats);
+    this.ackedBy = remote.map(() => new Int32Array(this.localSeats.length));
     this.heard = new Uint8Array(peerCount);
     this.heardSinceUpdate = new Uint8Array(peerCount);
     this.hasLeft = new Uint8Array(peerCount);
     this.lastHeardAt = new Float64Array(peerCount);
-    this.lastSentAt = new Float64Array(peerCount).fill(-Infinity);
-    this.ackDirty = new Uint8Array(peerCount);
-    this.remoteCheckTick = new Int32Array(Math.max(1, peerCount) * CHECK_HISTORY).fill(-1);
-    this.remoteCheckHash = new Array<Hash64>(Math.max(1, peerCount) * CHECK_HISTORY);
+    this.remoteCheckTick = remote.map(() => new Int32Array(CHECK_HISTORY).fill(-1));
+    this.remoteCheckHash = remote.map(() => new Array<Hash64>(CHECK_HISTORY));
 
     this.neutralBytes = new Uint8Array(this.bytesPerInput);
     codec.encode(codec.neutral(), this.neutralBytes, 0);
@@ -176,6 +184,7 @@ export class Session<I> {
     this.dropFrom = new Int32Array(this.seats).fill(NEVER);
     this.sentAt = new Float64Array(this.seats * INPUT_WINDOW);
     this.frameBytes = new Uint8Array(this.seats * this.bytesPerInput);
+    this.presenceBits = new Uint8Array(Math.ceil(this.seats / 8));
 
     // The first inputDelay ticks have no sampled input anywhere: they are neutral by definition.
     const delay = params.inputDelay;
@@ -187,7 +196,7 @@ export class Session<I> {
       }
       this.frontier[seat] = delay;
     }
-    for (let slot = 0; slot < peerCount; slot++) for (let seat = 0; seat < this.seats; seat++) this.ackedBy[slot * this.seats + seat] = delay;
+    for (const ack of this.ackedBy) ack.fill(delay);
 
     this.recorder = opts.recordReplay ? new ReplayRecorder(params, codec.byteLength) : null;
     this.transport?.setReceiver((peer, data) => this.receive(peer, data));
@@ -270,8 +279,11 @@ export class Session<I> {
   leave(): void {
     if (this.terminal) return;
     const lastTick = Math.max(-1, ...this.localSeats.map((seat) => this.frontier[seat] - 1));
+    const frame = this.buildFrame();
+    const packet = encodeLeave(this.opts.self, this.handshake, lastTick);
     for (let copy = 0; copy < LEAVE_COPIES; copy++) {
-      for (const peer of this.remotePeers) this.send(peer, encodeLeave(this.opts.self, this.handshake, lastTick));
+      this.sendToActives(frame);
+      this.sendToActives(packet);
     }
     this.setStatus('left', null);
   }
@@ -319,7 +331,7 @@ export class Session<I> {
     const B = this.bytesPerInput;
     const inputs: I[] = new Array<I>(this.seats);
     const present: boolean[] = new Array<boolean>(this.seats);
-    let mask = 0;
+    this.presenceBits.fill(0);
     for (let seat = 0; seat < this.seats; seat++) {
       const isPresent = this.seatOwners[seat] !== NO_PEER && t < this.dropFrom[seat];
       present[seat] = isPresent;
@@ -327,7 +339,7 @@ export class Session<I> {
         const at = (seat * INPUT_WINDOW + (t & INPUT_MASK)) * B;
         inputs[seat] = this.codec.decode(this.ring, at);
         this.frameBytes.set(this.ring.subarray(at, at + B), seat * B);
-        mask |= 1 << seat;
+        setBit(this.presenceBits, seat);
       } else {
         inputs[seat] = this.codec.neutral();
         this.frameBytes.set(this.neutralBytes, seat * B);
@@ -336,7 +348,7 @@ export class Session<I> {
     this.sim.step({ tick: t, inputs, present });
     this.tick_ = t + 1;
     this.stats.ticks++;
-    this.recorder?.pushTick(mask, this.frameBytes);
+    this.recorder?.pushTick(this.presenceBits, this.frameBytes);
     if (this.tick_ % this.params.checksumInterval === 0) this.checksum();
     this.opts.onTick?.(t);
   }
@@ -351,10 +363,10 @@ export class Session<I> {
     this.localCheckTick[tick & CHECK_MASK] = tick;
     this.localCheckHash[tick & CHECK_MASK] = hash;
     this.recorder?.pushCheckpoint(tick, hash);
+    this.sendToActives(encodeCheck(this.opts.self, this.handshake, tick, hash));
     for (let slot = 0; slot < this.remotePeers.length; slot++) {
-      this.send(this.remotePeers[slot], encodeCheck(this.opts.self, this.handshake, tick, hash));
-      const at = slot * CHECK_HISTORY + (tick & CHECK_MASK);
-      if (this.remoteCheckTick[at] === tick) this.compareChecks(this.remotePeers[slot], tick, hash, this.remoteCheckHash[at]);
+      const remoteTick = this.remoteCheckTick[slot][tick & CHECK_MASK];
+      if (remoteTick === tick) this.compareChecks(this.remotePeers[slot], tick, hash, this.remoteCheckHash[slot][tick & CHECK_MASK]);
       if (this.terminal) return;
     }
   }
@@ -371,7 +383,7 @@ export class Session<I> {
 
   private receive(peer: number, data: Uint8Array): void {
     if (this.terminal) return;
-    const slot = peer >= 0 && peer < 256 ? this.peerSlot[peer] : -1;
+    const slot = this.peerSlot.get(peer) ?? -1;
     if (slot < 0) {
       this.stats.rejectedPackets++;
       return;
@@ -404,12 +416,11 @@ export class Session<I> {
         this.onFrame(peer, slot, packet.acks, packet.segments);
         break;
       case PacketType.Check: {
-        const at = slot * CHECK_HISTORY + (packet.tick & CHECK_MASK);
         const mine = packet.tick & CHECK_MASK;
         if (this.localCheckTick[mine] === packet.tick) this.compareChecks(peer, packet.tick, this.localCheckHash[mine], packet.hash);
         else if (packet.tick > this.tick_) {
-          this.remoteCheckTick[at] = packet.tick;
-          this.remoteCheckHash[at] = packet.hash;
+          this.remoteCheckTick[slot][mine] = packet.tick;
+          this.remoteCheckHash[slot][mine] = packet.hash;
         }
         break;
       }
@@ -423,11 +434,12 @@ export class Session<I> {
 
   private onFrame(peer: number, slot: number, acks: readonly AckEntry[], segments: readonly Segment[]): void {
     for (const ack of acks) {
-      if (ack.seat >= this.seats || this.seatOwners[ack.seat] !== this.opts.self) continue;
-      const at = slot * this.seats + ack.seat;
+      if (ack.seat >= this.seats) continue;
+      const localIndex = this.localSeatIndex[ack.seat];
+      if (localIndex < 0) continue;
       const acknowledged = Math.min(ack.frontier, this.frontier[ack.seat]);
-      if (acknowledged > this.ackedBy[at]) {
-        this.ackedBy[at] = acknowledged;
+      if (acknowledged > this.ackedBy[slot][localIndex]) {
+        this.ackedBy[slot][localIndex] = acknowledged;
         const sample = this.now - this.sentAt[ack.seat * INPUT_WINDOW + ((acknowledged - 1) & INPUT_MASK)];
         if (acknowledged > this.params.inputDelay && sample >= 0) {
           this.stats.rttMs = this.stats.rttMs === 0 ? sample : this.stats.rttMs + (sample - this.stats.rttMs) * RTT_SMOOTHING;
@@ -442,7 +454,7 @@ export class Session<I> {
       }
       if (!this.storeRemote(seg)) return;
     }
-    this.ackDirty[slot] = 1;
+    this.ackDirty = true;
   }
 
   private storeRemote(seg: Segment): boolean {
@@ -476,34 +488,43 @@ export class Session<I> {
   }
 
   private flush(): void {
-    for (let slot = 0; slot < this.remotePeers.length; slot++) {
-      if (this.hasLeft[slot] !== 0) continue;
-      const sinceSent = this.now - this.lastSentAt[slot];
-      const due =
-        this.inputsDirty ||
-        this.ackDirty[slot] !== 0 ||
-        sinceSent >= (this.opts.keepAliveMs ?? DEFAULTS.keepAliveMs) ||
-        (this.hasUnacknowledged(slot) && sinceSent >= (this.opts.resendIntervalMs ?? DEFAULTS.resendIntervalMs));
-      if (!due) continue;
-      this.sendFrame(slot);
-      this.lastSentAt[slot] = this.now;
-      this.ackDirty[slot] = 0;
+    if (this.transport === null || this.activePeerCount() === 0) {
+      this.inputsDirty = false;
+      this.ackDirty = false;
+      return;
     }
+    const sinceSent = this.now - this.lastSentAt;
+    const due =
+      this.inputsDirty ||
+      this.ackDirty ||
+      sinceSent >= (this.opts.keepAliveMs ?? DEFAULTS.keepAliveMs) ||
+      (this.hasUnacknowledged() && sinceSent >= (this.opts.resendIntervalMs ?? DEFAULTS.resendIntervalMs));
+    if (!due) return;
+    this.sendToActives(this.buildFrame());
+    this.lastSentAt = this.now;
+    this.ackDirty = false;
     this.inputsDirty = false;
   }
 
-  private hasUnacknowledged(slot: number): boolean {
-    for (const seat of this.localSeats) if (this.ackedBy[slot * this.seats + seat] < this.frontier[seat]) return true;
+  private hasUnacknowledged(): boolean {
+    for (let slot = 0; slot < this.remotePeers.length; slot++) {
+      if (this.hasLeft[slot] !== 0) continue;
+      for (let localIndex = 0; localIndex < this.localSeats.length; localIndex++) {
+        const seat = this.localSeats[localIndex];
+        if (this.ackedBy[slot][localIndex] < this.frontier[seat]) return true;
+      }
+    }
     return false;
   }
 
-  private sendFrame(slot: number): void {
+  private buildFrame(): Uint8Array {
     const B = this.bytesPerInput;
-    const acks: AckEntry[] = this.seatsOfPeer[slot].map((seat) => ({ seat, frontier: this.frontier[seat] }));
+    const acks: AckEntry[] = this.remoteOwnedSeats.map((seat) => ({ seat, frontier: this.frontier[seat] }));
     const segments: Segment[] = [];
-    for (const seat of this.localSeats) {
+    for (let localIndex = 0; localIndex < this.localSeats.length; localIndex++) {
+      const seat = this.localSeats[localIndex];
       const head = this.frontier[seat];
-      const start = Math.max(this.ackedBy[slot * this.seats + seat], head - MAX_SEGMENT_TICKS);
+      const start = Math.max(this.minimumAcknowledged(localIndex, head), head - MAX_SEGMENT_TICKS);
       const count = head - start;
       if (count <= 0) continue;
       const bytes = new Uint8Array(count * B);
@@ -513,13 +534,41 @@ export class Session<I> {
       }
       segments.push({ seat, start, count, bytes });
     }
-    this.send(this.remotePeers[slot], encodeFrame(this.opts.self, this.handshake, acks, segments));
+    return encodeFrame(this.opts.self, this.handshake, acks, segments);
   }
 
-  private send(peer: number, data: Uint8Array): void {
-    this.stats.packetsOut++;
-    this.stats.bytesOut += data.length;
-    this.transport?.send(peer, data);
+  private minimumAcknowledged(localIndex: number, head: number): number {
+    let min = head;
+    let found = false;
+    for (let slot = 0; slot < this.remotePeers.length; slot++) {
+      if (this.hasLeft[slot] !== 0) continue;
+      const acknowledged = this.ackedBy[slot][localIndex];
+      if (!found || acknowledged < min) min = acknowledged;
+      found = true;
+    }
+    return found ? min : head;
+  }
+
+  private sendToActives(data: Uint8Array): void {
+    if (this.transport === null) return;
+    if (typeof this.transport.broadcast === 'function') {
+      this.stats.packetsOut++;
+      this.stats.bytesOut += data.length;
+      this.transport.broadcast(data);
+      return;
+    }
+    for (let slot = 0; slot < this.remotePeers.length; slot++) {
+      if (this.hasLeft[slot] !== 0) continue;
+      this.stats.packetsOut++;
+      this.stats.bytesOut += data.length;
+      this.transport.send(this.remotePeers[slot], data);
+    }
+  }
+
+  private activePeerCount(): number {
+    let active = 0;
+    for (let slot = 0; slot < this.remotePeers.length; slot++) if (this.hasLeft[slot] === 0) active++;
+    return active;
   }
 
   private checkTimeouts(): void {

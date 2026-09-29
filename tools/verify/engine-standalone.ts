@@ -5,13 +5,15 @@
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { check, finish, info, section } from './lib.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'metronome-standalone-'));
+const work = path.join(root, 'tools/verify/.standalone-work');
+
+fs.rmSync(work, { recursive: true, force: true });
+fs.mkdirSync(work, { recursive: true });
 
 section('compile the engine alone');
 const dist = path.join(work, 'node_modules/@metronome/engine');

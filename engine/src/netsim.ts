@@ -39,6 +39,10 @@ class Endpoint implements Transport {
     this.net.enqueue(this.id, peer, data);
   }
 
+  broadcast(data: Uint8Array): void {
+    this.net.broadcast(this.id, data);
+  }
+
   setReceiver(receiver: ((peer: number, data: Uint8Array) => void) | null): void {
     this.receiver = receiver;
   }
@@ -92,6 +96,13 @@ export class SimulatedNetwork {
       const jitter = (this.unit() * 2 - 1) * this.conditions.jitterMs;
       const deliverAt = this.now + Math.max(0, this.conditions.latencyMs + jitter);
       this.queue.push({ deliverAt, order: this.counter++, from, to, data: data.slice() });
+    }
+  }
+
+  broadcast(from: number, data: Uint8Array): void {
+    for (const peer of this.endpoints.keys()) {
+      if (peer === from) continue;
+      this.enqueue(from, peer, data);
     }
   }
 

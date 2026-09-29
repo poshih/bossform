@@ -30,3 +30,5 @@ export { ReplayRecorder, decodeReplay, playReplay } from './replay.ts';
 export type { Checkpoint, Replay, ReplayResult } from './replay.ts';
 export { auditDeterminism, withTripwires } from './audit.ts';
 export type { AuditOptions, AuditReport } from './audit.ts';
+export { BROADCAST_PEER, MAX_SEGMENT_TICKS, PacketType, decodePacket, encodeCheck, encodeFrame, encodeLeave, WireError } from './wire.ts';
+export type { AckEntry, Packet, Segment } from './wire.ts';

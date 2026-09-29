@@ -4,7 +4,7 @@
  * engine verification never depends on the actual game.
  */
 import { fx, Rng, SimMemory, field } from '@metronome/engine';
-import type { InputCodec, SimFactory, Simulation, TickInput } from '@metronome/engine';
+import type { InputCodec, LayoutSpec, SimFactory, Simulation, TickInput } from '@metronome/engine';
 
 export interface ToyInput {
   moveX: number;
@@ -13,7 +13,7 @@ export interface ToyInput {
   fire: boolean;
 }
 
-const clamp127 = (v: number) => (v < -127 ? -127 : v);
+const clamp127 = (v: number) => (v < -127 ? -127 : v > 127 ? 127 : v);
 
 export const toyCodec: InputCodec<ToyInput> = {
   byteLength: 5,
@@ -35,7 +35,6 @@ export const toyCodec: InputCodec<ToyInput> = {
   },
 };
 
-const MAX_SHIPS = 4;
 const MAX_BULLETS = 192;
 const MAX_ROCKS = 48;
 const ARENA = fx.fromInt(160);
@@ -53,33 +52,38 @@ const ROCK_SPAWN_EVERY = 20;
 const ROCK_HP = 3;
 const SHIP_HP = 40;
 
-const LAYOUT = {
-  rng: field.u32(4),
-  world: field.i32(4),
-  shipX: field.i32(MAX_SHIPS), shipY: field.i32(MAX_SHIPS), shipVX: field.i32(MAX_SHIPS), shipVY: field.i32(MAX_SHIPS),
-  shipHp: field.i32(MAX_SHIPS), shipCooldown: field.i32(MAX_SHIPS), shipScore: field.i32(MAX_SHIPS),
-  bulletX: field.i32(MAX_BULLETS), bulletY: field.i32(MAX_BULLETS), bulletVX: field.i32(MAX_BULLETS), bulletVY: field.i32(MAX_BULLETS),
-  bulletLife: field.i32(MAX_BULLETS), bulletOwner: field.u8(MAX_BULLETS),
-  rockX: field.i32(MAX_ROCKS), rockY: field.i32(MAX_ROCKS), rockAngle: field.i32(MAX_ROCKS), rockHp: field.i32(MAX_ROCKS),
-} as const;
+function createLayout(seats: number) {
+  return {
+    rng: field.u32(4),
+    world: field.i32(4),
+    shipX: field.i32(seats), shipY: field.i32(seats), shipVX: field.i32(seats), shipVY: field.i32(seats),
+    shipHp: field.i32(seats), shipCooldown: field.i32(seats), shipScore: field.i32(seats),
+    bulletX: field.i32(MAX_BULLETS), bulletY: field.i32(MAX_BULLETS), bulletVX: field.i32(MAX_BULLETS), bulletVY: field.i32(MAX_BULLETS),
+    bulletLife: field.i32(MAX_BULLETS), bulletOwner: field.u16(MAX_BULLETS),
+    rockX: field.i32(MAX_ROCKS), rockY: field.i32(MAX_ROCKS), rockAngle: field.i32(MAX_ROCKS), rockHp: field.i32(MAX_ROCKS),
+  } as const satisfies LayoutSpec;
+}
+
+type ToyLayout = ReturnType<typeof createLayout>;
 
 const W_TICK = 0;
 const W_SPAWN_TIMER = 1;
 
 export class ToySim implements Simulation<ToyInput> {
-  readonly memory: SimMemory<typeof LAYOUT>;
+  readonly memory: SimMemory<ToyLayout>;
   private readonly rng: Rng;
   private readonly seats: number;
 
   constructor(seed: number, seats: number) {
-    this.memory = new SimMemory(LAYOUT);
+    const layout = createLayout(seats);
+    this.memory = new SimMemory(layout);
     this.rng = new Rng(this.memory.f.rng);
     this.rng.seed(seed);
     this.seats = seats;
     const m = this.memory.f;
     for (let s = 0; s < seats; s++) {
-      m.shipX[s] = fx.fromInt(-60 + s * 40);
-      m.shipY[s] = fx.fromInt(-120);
+      m.shipX[s] = fx.fromInt(-60 + (s % 8) * 18 - Math.floor(s / 8) * 12);
+      m.shipY[s] = fx.fromInt(-120 + Math.floor(s / 8) * 22);
       m.shipHp[s] = SHIP_HP;
     }
   }

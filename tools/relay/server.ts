@@ -1,8 +1,9 @@
 /**
  * Dumb WebSocket relay + room matchmaker for lockstep co-op (development / self-hosting).
  *   node tools/relay/server.ts [port]        (default 4431)
- * It never inspects lockstep traffic: binary frames are [peer, ...payload] and are forwarded verbatim
- * ([destination] in, [origin] out). Only the tiny JSON room protocol below is understood:
+ * It never inspects lockstep traffic: binary frames are [peer u16 LE, ...payload] and are forwarded verbatim
+ * after rewriting that u16 as needed ([destination] in, [origin] out). Only the tiny JSON room protocol below
+ * is understood:
  *   client -> {type:'hello', frame, difficulty}
  *   server -> {type:'welcome', peer, size}          on connect
  *   server -> {type:'start', seed, frames, difficulty, stage, delay}   once every seat said hello
@@ -20,6 +21,8 @@ const MAX_FRAME_BYTES = 1024;
 const LATENCY_MS = Number(process.env.RELAY_LATENCY_MS ?? 0);
 const JITTER_MS = Number(process.env.RELAY_JITTER_MS ?? 0);
 const LOSS = Number(process.env.RELAY_LOSS ?? 0);
+const RELAY_HEADER_BYTES = 2;
+const BROADCAST_PEER = 0xffff;
 
 interface Member {
   socket: WebSocket;
@@ -37,6 +40,35 @@ const rooms = new Map<string, Room>();
 const wss = new WebSocketServer({ port: PORT, host: '127.0.0.1', maxPayload: MAX_FRAME_BYTES });
 
 const send = (socket: WebSocket, message: object) => socket.send(JSON.stringify(message));
+
+function forwardBinary(sender: Member, peers: readonly (Member | null)[], data: Buffer): void {
+  if (data.length < RELAY_HEADER_BYTES) return;
+  const destination = data.readUInt16LE(0);
+  const payload = data.subarray(RELAY_HEADER_BYTES);
+  if (destination === BROADCAST_PEER) {
+    for (const peer of peers) {
+      if (!peer || peer === sender) continue;
+      scheduleBinary(peer.socket, sender.peer, payload);
+    }
+    return;
+  }
+  const target = peers[destination];
+  if (!target || target === sender) return;
+  scheduleBinary(target.socket, sender.peer, payload);
+}
+
+function scheduleBinary(socket: WebSocket, origin: number, payload: Uint8Array): void {
+  if (Math.random() < LOSS) return;
+  const out = Buffer.allocUnsafe(RELAY_HEADER_BYTES + payload.length);
+  out.writeUInt16LE(origin, 0);
+  out.set(payload, RELAY_HEADER_BYTES);
+  const delay = Math.max(0, LATENCY_MS + (Math.random() * 2 - 1) * JITTER_MS);
+  if (delay === 0) {
+    socket.send(out, { binary: true });
+    return;
+  }
+  setTimeout(() => { if (socket.readyState === socket.OPEN) socket.send(out, { binary: true }); }, delay);
+}
 
 wss.on('connection', (socket, request) => {
   const room = new URL(request.url ?? '/', 'http://relay').searchParams.get('room') ?? 'lobby';
@@ -76,16 +108,7 @@ wss.on('connection', (socket, request) => {
       }
       return;
     }
-    const bytes = data as Buffer;
-    if (bytes.length < 2) return;
-    const target = current.members[bytes[0]];
-    if (!target || target === member) return;
-    if (Math.random() < LOSS) return;
-    const out = Buffer.from(bytes);
-    out[0] = peer;
-    const delay = Math.max(0, LATENCY_MS + (Math.random() * 2 - 1) * JITTER_MS);
-    if (delay === 0) target.socket.send(out, { binary: true });
-    else setTimeout(() => { if (target.socket.readyState === target.socket.OPEN) target.socket.send(out, { binary: true }); }, delay);
+    forwardBinary(member, current.members, data as Buffer);
   });
 
   socket.on('close', () => {

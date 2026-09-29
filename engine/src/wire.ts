@@ -1,19 +1,42 @@
 import type { Hash64 } from './hash.ts';
 
 /**
- * Datagram formats. Every packet starts with: type, sender peer id, handshake hash (so a build or parameter
- * mismatch is caught on the very first packet). All integers are little-endian.
+ * Datagram formats. Every packet starts with:
+ *   type u8 | sender u16 | handshake.lo u32 | handshake.hi u32
+ * All integers are little-endian.
  *
- *   FRAME  acks + redundant, unacknowledged inputs for the seats the sender owns
- *   CHECK  state checksum after `tick` completed ticks
- *   LEAVE  graceful departure: the sender's last valid input is for `lastTick`
+ * FRAME payload:
+ *   ackCount u16 |
+ *   ackCount x (seat u16 | frontier u32) |
+ *   segmentCount u16 |
+ *   segmentCount x (seat u16 | start u32 | count u16 | count * inputByteLength bytes)
+ *
+ * CHECK payload:
+ *   tick u32 | hash.lo u32 | hash.hi u32
+ *
+ * LEAVE payload:
+ *   lastTick i32
+ *
+ * FRAME total size is:
+ *   15 + 6 * ackCount + sum(8 + count * inputByteLength)
+ * so the ack table alone crosses a 1200-byte MTU at about 198 seats, before any input segments are added.
+ *
+ * FRAME packets are intentionally peer-independent: one encoded packet can be broadcast to every other peer.
+ * Acks report the contiguous-input frontier for every seat owned by some other peer; receivers keep the entries
+ * for their own seats and ignore the rest. Segments carry every locally owned seat from the minimum frontier any
+ * still-active remote peer has acknowledged, capped by MAX_SEGMENT_TICKS.
  */
 export const PacketType = { Frame: 1, Check: 2, Leave: 3 } as const;
+
+/** Destination used by relay-style transports to fan a packet out to every other peer. */
+export const BROADCAST_PEER = 0xffff;
 
 /** Redundant ticks per segment. Must cover 2 * MAX_INPUT_DELAY + 2 (how far a peer can lag our acknowledgements); still one MTU. */
 export const MAX_SEGMENT_TICKS = 64;
 
-const HEADER_BYTES = 1 + 1 + 4 + 4;
+const HEADER_BYTES = 1 + 2 + 4 + 4;
+const ACK_BYTES = 2 + 4;
+const SEGMENT_HEADER_BYTES = 2 + 4 + 2;
 
 export class WireError extends Error {}
 
@@ -38,9 +61,9 @@ export type Packet =
 
 function writeHeader(view: DataView, type: number, sender: number, handshake: Hash64): number {
   view.setUint8(0, type);
-  view.setUint8(1, sender);
-  view.setUint32(2, handshake.lo, true);
-  view.setUint32(6, handshake.hi, true);
+  view.setUint16(1, sender, true);
+  view.setUint32(3, handshake.lo, true);
+  view.setUint32(7, handshake.hi, true);
   return HEADER_BYTES;
 }
 
@@ -50,23 +73,25 @@ export function encodeFrame(
   acks: readonly AckEntry[],
   segments: readonly Segment[],
 ): Uint8Array {
-  let size = HEADER_BYTES + 1 + acks.length * 5 + 1;
-  for (const s of segments) size += 1 + 4 + 1 + s.bytes.length;
+  let size = HEADER_BYTES + 2 + acks.length * ACK_BYTES + 2;
+  for (const s of segments) size += SEGMENT_HEADER_BYTES + s.bytes.length;
   const out = new Uint8Array(size);
   const view = new DataView(out.buffer);
   let o = writeHeader(view, PacketType.Frame, sender, handshake);
-  view.setUint8(o++, acks.length);
+  view.setUint16(o, acks.length, true);
+  o += 2;
   for (const a of acks) {
-    view.setUint8(o++, a.seat);
-    view.setUint32(o, a.frontier, true);
-    o += 4;
+    view.setUint16(o, a.seat, true);
+    view.setUint32(o + 2, a.frontier, true);
+    o += ACK_BYTES;
   }
-  view.setUint8(o++, segments.length);
+  view.setUint16(o, segments.length, true);
+  o += 2;
   for (const s of segments) {
-    view.setUint8(o++, s.seat);
-    view.setUint32(o, s.start, true);
-    o += 4;
-    view.setUint8(o++, s.count);
+    view.setUint16(o, s.seat, true);
+    view.setUint32(o + 2, s.start, true);
+    view.setUint16(o + 6, s.count, true);
+    o += SEGMENT_HEADER_BYTES;
     out.set(s.bytes, o);
     o += s.bytes.length;
   }
@@ -96,31 +121,33 @@ export function decodePacket(data: Uint8Array, inputByteLength: number): Packet 
   if (data.length < HEADER_BYTES) throw new WireError('short packet');
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const type = view.getUint8(0);
-  const sender = view.getUint8(1);
-  const handshake: Hash64 = { lo: view.getUint32(2, true), hi: view.getUint32(6, true) };
+  const sender = view.getUint16(1, true);
+  const handshake: Hash64 = { lo: view.getUint32(3, true), hi: view.getUint32(7, true) };
   let o = HEADER_BYTES;
   const need = (n: number) => {
     if (o + n > data.length) throw new WireError('truncated packet');
   };
   switch (type) {
     case PacketType.Frame: {
-      need(1);
-      const ackCount = view.getUint8(o++);
-      need(ackCount * 5);
+      need(2);
+      const ackCount = view.getUint16(o, true);
+      o += 2;
+      need(ackCount * ACK_BYTES);
       const acks: AckEntry[] = [];
       for (let i = 0; i < ackCount; i++) {
-        acks.push({ seat: view.getUint8(o), frontier: view.getUint32(o + 1, true) });
-        o += 5;
+        acks.push({ seat: view.getUint16(o, true), frontier: view.getUint32(o + 2, true) });
+        o += ACK_BYTES;
       }
-      need(1);
-      const segCount = view.getUint8(o++);
+      need(2);
+      const segCount = view.getUint16(o, true);
+      o += 2;
       const segments: Segment[] = [];
       for (let i = 0; i < segCount; i++) {
-        need(6);
-        const seat = view.getUint8(o);
-        const start = view.getUint32(o + 1, true);
-        const count = view.getUint8(o + 5);
-        o += 6;
+        need(SEGMENT_HEADER_BYTES);
+        const seat = view.getUint16(o, true);
+        const start = view.getUint32(o + 2, true);
+        const count = view.getUint16(o + 6, true);
+        o += SEGMENT_HEADER_BYTES;
         if (count > MAX_SEGMENT_TICKS) throw new WireError('segment too long');
         const length = count * inputByteLength;
         need(length);

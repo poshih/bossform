@@ -1,4 +1,5 @@
 import type { Transport } from './transport.ts';
+import { BROADCAST_PEER } from './wire.ts';
 
 /**
  * The slice of the WebSocket API the relay transport needs. Structural on purpose: the engine has no DOM or
@@ -15,6 +16,7 @@ export interface SocketLike {
 
 const SOCKET_OPEN = 1;
 const MAX_BUFFERED_PACKETS = 512;
+const RELAY_HEADER_BYTES = 2;
 
 export interface RelayOptions {
   /** Text frames (room membership, start signals...) are game/app protocol, not lockstep traffic. */
@@ -23,9 +25,10 @@ export interface RelayOptions {
 }
 
 /**
- * Lockstep over a dumb WebSocket relay. Binary frames are [peerId, ...payload]: the peer id is the
- * destination when sending and the origin when receiving; the relay only forwards. Packets that arrive
- * before a receiver is installed (the room-start window) are buffered instead of lost.
+ * Lockstep over a dumb WebSocket relay. Binary frames are [peerId u16 LE, ...payload]: the peer id is the
+ * destination when sending and the origin when receiving. BROADCAST_PEER as a destination means "fan this
+ * packet out to everyone else in the room". Packets that arrive before a receiver is installed (the room-
+ * start window) are buffered instead of lost.
  */
 export class RelayTransport implements Transport {
   private readonly socket: SocketLike;
@@ -41,21 +44,22 @@ export class RelayTransport implements Transport {
         opts.onControl?.(payload);
         return;
       }
-      if (!(payload instanceof ArrayBuffer) || payload.byteLength < 1) return;
+      if (!(payload instanceof ArrayBuffer) || payload.byteLength < RELAY_HEADER_BYTES) return;
       const bytes = new Uint8Array(payload);
-      const data = bytes.subarray(1);
-      if (this.receiver) this.receiver(bytes[0], data);
-      else if (this.buffered.length < MAX_BUFFERED_PACKETS) this.buffered.push({ peer: bytes[0], data });
+      const peer = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint16(0, true);
+      const data = bytes.subarray(RELAY_HEADER_BYTES);
+      if (this.receiver) this.receiver(peer, data);
+      else if (this.buffered.length < MAX_BUFFERED_PACKETS) this.buffered.push({ peer, data });
     };
     socket.onclose = () => opts.onClose?.();
   }
 
   send(peer: number, data: Uint8Array): void {
-    if (this.socket.readyState !== SOCKET_OPEN) return;
-    const frame = new Uint8Array(data.length + 1);
-    frame[0] = peer;
-    frame.set(data, 1);
-    this.socket.send(frame);
+    this.sendFrame(peer, data);
+  }
+
+  broadcast(data: Uint8Array): void {
+    this.sendFrame(BROADCAST_PEER, data);
   }
 
   setReceiver(receiver: ((peer: number, data: Uint8Array) => void) | null): void {
@@ -69,5 +73,13 @@ export class RelayTransport implements Transport {
   close(): void {
     this.receiver = null;
     this.socket.close();
+  }
+
+  private sendFrame(peer: number, data: Uint8Array): void {
+    if (this.socket.readyState !== SOCKET_OPEN) return;
+    const frame = new Uint8Array(data.length + RELAY_HEADER_BYTES);
+    new DataView(frame.buffer).setUint16(0, peer, true);
+    frame.set(data, RELAY_HEADER_BYTES);
+    this.socket.send(frame);
   }
 }

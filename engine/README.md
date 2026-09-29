@@ -4,7 +4,7 @@ Zero dependencies. Pure TypeScript compiled with `lib: ES2023` and **no ambient 
 Node, timers or the console. It knows nothing about rendering, audio or any particular game.
 
 ```ts
-import { createSession, LockstepRunner, fx, SimMemory, field, Rng } from '@metronome/engine';
+import { BROADCAST_PEER, createSession, LockstepRunner, fx, SimMemory, field, Rng } from '@metronome/engine';
 ```
 
 ## What it gives a game
@@ -17,12 +17,23 @@ import { createSession, LockstepRunner, fx, SimMemory, field, Rng } from '@metro
 | `hash.ts` | 64-bit state checksums |
 | `sim.ts` | The contracts: `Simulation`, `InputCodec`, `SessionParams`, handshake hash |
 | `session.ts` | The lockstep session (input delay, redundancy, stalls, checksums, leave, timeouts, replay recording) |
-| `wire.ts`, `transport.ts` | Datagram formats and the `Transport` interface |
+| `wire.ts`, `transport.ts` | Datagram formats, `BROADCAST_PEER`, and the `Transport` interface |
 | `netsim.ts` | `SimulatedNetwork`: latency, jitter, loss, duplication, partitions on a virtual clock (seeded, reproducible) |
 | `relay.ts` | `RelayTransport` over a WebSocket-like object (structural type: no DOM dependency) |
 | `clock.ts` | `TickClock` and `LockstepRunner`: wall-clock to ticks, catch-up limits, render interpolation alpha |
-| `replay.ts` | `ReplayRecorder`, `decodeReplay`, `playReplay` (verifies every recorded checkpoint) |
+| `replay.ts` | `ReplayRecorder`, replay format v2, `decodeReplay`, `playReplay` |
 | `audit.ts` | `auditDeterminism` and `withTripwires` |
+
+## Protocol ceilings and API surface
+
+- `MAX_SEATS = 0xFFFF` is a **wire-format ceiling**, not a gameplay recommendation.
+- Peer ids are `u16` too: valid session peer ids are `0..0xFFFE`; `0xFFFF` is exported as `BROADCAST_PEER` for
+  relay-style transports; `NO_PEER = -1` still means an empty seat.
+- A machine may own any number of seats (`seatOwners[seat] = peer`), including several local players or bots.
+- `Transport` now has optional `broadcast(data)`: when present, `Session` encodes one peer-independent FRAME/CHECK/
+  LEAVE packet and sends it once; otherwise it falls back to `send(peer, data)` with identical bytes per peer.
+- Replay format is **version 2**: each tick stores `ceil(seats / 8)` presence bytes plus `seats * inputByteLength`
+  input bytes. Version 1 is rejected loudly.
 
 ## Minimal use
 
@@ -38,7 +49,7 @@ const session = createSession({
 });
 const runner = new LockstepRunner(session);
 requestAnimationFrame(function frame(now) {
-  const { ticks, alpha, stalled, status } = runner.frame(now);          // ticks simulated this frame
+  const { ticks, alpha, stalled, status } = runner.frame(now);
   render(alpha);
 });
 ```
@@ -58,21 +69,73 @@ requestAnimationFrame(function frame(now) {
 mid-run snapshot must follow the original exactly (this fails if state hides outside memory), and non-deterministic
 globals are replaced by throwing tripwires while `step` runs.
 
-## Lockstep, briefly
+## Lockstep and wire format, briefly
 
-Every seat's input for tick *T* is sampled at *T - inputDelay* and broadcast with the still-unacknowledged inputs
-before it (so loss, duplication and reordering cost nothing but latency). A tick is simulated only when every seat's
-input is present; otherwise the session **stalls** (never guesses). Every `checksumInterval` ticks the peers exchange
-64-bit state hashes; a mismatch stops the session and reports the first divergent interval. The first packet also
-carries a hash of (parameters, input size, memory layout), so a different build or setup aborts before tick 0.
-Inputs are only accepted for seats the sender owns; conflicting duplicates abort the session; malformed packets are
-counted and dropped. A graceful `leave()` makes the seat absent for everyone at the same tick; a vanished peer times
-out and aborts (without an authority there is no deterministic way to continue).
+Every seat's input for tick *T* is sampled at *T - inputDelay* and sent redundantly until every active remote peer
+acknowledges it. A tick is simulated only when every seat's input is present; otherwise the session **stalls**
+(never guesses). Every `checksumInterval` ticks the peers exchange 64-bit state hashes; a mismatch stops the session
+and reports the first divergent interval. The first packet also carries a hash of (parameters, input size, memory
+layout), so a different build or setup aborts before tick 0.
+
+All integers are little-endian. Every packet starts with:
+
+- `type u8`
+- `sender u16`
+- `handshake.lo u32`
+- `handshake.hi u32`
+
+Then:
+
+- `FRAME`: `ackCount u16`, `ackCount x (seat u16, frontier u32)`, `segmentCount u16`, `segmentCount x (seat u16, start u32, count u16, bytes...)`
+- `CHECK`: `tick u32`, `hash.lo u32`, `hash.hi u32`
+- `LEAVE`: `lastTick i32`
+
+FRAME packets are **peer-independent**: the same encoded bytes are valid for every recipient. Acks cover the
+contiguous frontier for every seat owned by some other peer; receivers keep the entries for their own seats and ignore
+all others. Segments carry every locally owned seat from the minimum frontier any still-active remote peer has
+acknowledged, capped by `MAX_SEGMENT_TICKS = 64`.
+
+FRAME size is:
+
+- `15 + 6 * ackCount + sum(8 + count * inputByteLength)` bytes
+
+So the ack table alone crosses a 1200-byte MTU at about **198 seats**, before any input segments are added.
+
+## Transport contract
+
+`Transport` is deliberately tiny:
+
+```ts
+interface Transport {
+  send(peer: number, data: Uint8Array): void;
+  broadcast?(data: Uint8Array): void;
+  setReceiver(receiver: ((peer: number, data: Uint8Array) => void) | null): void;
+  close(): void;
+}
+```
+
+`send()` and `broadcast()` are both best-effort and must not throw for an unreachable peer. `Session` tolerates loss,
+duplication and reordering. `SimulatedNetwork` implements both methods in-process. `RelayTransport` wraps a dumb
+WebSocket relay whose binary frames are `[peer u16 LE, ...payload]`: destination when sending, origin when receiving,
+and `BROADCAST_PEER` as a destination means “fan this out to everyone else in the room”.
+
+## Replays
+
+Replay v2 stores:
+
+- params
+- `inputByteLength` (`u8`)
+- `tickCount` (`u32`)
+- `tickCount x (presenceBitset + per-seat input bytes)`
+- recorded checksum checkpoints
+
+Round-tripping a replay must reproduce every recorded checkpoint and the final state exactly. Presence is a bitset so
+20-seat, 64-seat, and other non-trivial seat counts record compactly without a one-byte mask cap.
 
 ## Verifying the engine
 
 `tools/verify/engine-*.ts` (run with `npm run verify` at the repo root) exercise it with a toy game built only on
-this public API: numerics against exact BigInt/float oracles, audit, replays, networked runs equal to the ideal run
-under 30% loss / duplication / reordering / partitions, desync injection, timeouts, version mismatch, graceful leave,
-5000 garbage packets, spoofed seats and conflicting inputs, and a build with plain `tsc` consumed from outside the
-repository. `tools/verify/cross-engine.ts` replays recordings on V8, SpiderMonkey and JavaScriptCore.
+this public API: numerics against exact BigInt/float oracles, audit, replays, networked runs equal to the ideal run,
+16-peer hostile broadcast and fallback runs, 20-seat multi-owner leave + replay proof, 64-peer cap proof, hostile
+packets, relay framing, and a build with plain `tsc` consumed from outside the repository. `tools/verify/cross-engine.ts`
+replays recordings on V8, SpiderMonkey and JavaScriptCore.

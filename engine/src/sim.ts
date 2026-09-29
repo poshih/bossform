@@ -7,7 +7,8 @@ import type { StateAccess } from './memory.ts';
  * per-seat, per-tick input as fixed-size bytes). Everything else about the game stays on the game's side.
  */
 
-export const MAX_SEATS = 8;
+/** Protocol ceiling imposed by the u16 wire format, not a design target for gameplay. */
+export const MAX_SEATS = 0xffff;
 export const MAX_INPUT_DELAY = 30;
 export const MAX_CONFIG_BYTES = 512;
 

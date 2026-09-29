@@ -9,10 +9,11 @@ import { decodeParams, encodeParams } from './sim.ts';
  * following the recorded timeline and report the first tick where it stops doing so.
  *
  * Layout: "MRPL" | version | params length u16 | params | inputBytes u8 | tickCount u32 |
- *         tickCount x ( presentMask u8 | seats x inputBytes ) | checkpointCount u32 | checkpointCount x (tick, lo, hi)
+ *         tickCount x ( presentBits ceil(seats/8) bytes | seats x inputBytes ) |
+ *         checkpointCount u32 | checkpointCount x (tick, lo, hi)
  */
 const MAGIC = [0x4d, 0x52, 0x50, 0x4c];
-const VERSION = 1;
+const VERSION = 2;
 
 export interface Checkpoint {
   readonly tick: number;
@@ -23,7 +24,7 @@ export interface Replay {
   readonly params: SessionParams;
   readonly inputByteLength: number;
   readonly tickCount: number;
-  /** tickCount records of (1 + seats * inputByteLength) bytes. */
+  /** tickCount records of (ceil(seats/8) + seats * inputByteLength) bytes. */
   readonly records: Uint8Array;
   readonly checkpoints: readonly Checkpoint[];
 }
@@ -31,6 +32,7 @@ export interface Replay {
 export class ReplayRecorder {
   private readonly params: SessionParams;
   private readonly inputByteLength: number;
+  private readonly presenceBytes: number;
   private readonly recordBytes: number;
   private buffer: Uint8Array;
   private ticks = 0;
@@ -39,7 +41,8 @@ export class ReplayRecorder {
   constructor(params: SessionParams, inputByteLength: number) {
     this.params = params;
     this.inputByteLength = inputByteLength;
-    this.recordBytes = 1 + params.seats * inputByteLength;
+    this.presenceBytes = Math.ceil(params.seats / 8);
+    this.recordBytes = this.presenceBytes + params.seats * inputByteLength;
     this.buffer = new Uint8Array(this.recordBytes * 1024);
   }
 
@@ -48,15 +51,16 @@ export class ReplayRecorder {
   }
 
   /** `seatBytes` holds seats * inputByteLength encoded inputs for the tick just simulated. */
-  pushTick(presentMask: number, seatBytes: Uint8Array): void {
+  pushTick(presence: Uint8Array, seatBytes: Uint8Array): void {
+    if (presence.length !== this.presenceBytes) throw new RangeError('ReplayRecorder.pushTick: bad presence bitset length');
     const at = this.ticks * this.recordBytes;
     if (at + this.recordBytes > this.buffer.length) {
       const grown = new Uint8Array(this.buffer.length * 2);
       grown.set(this.buffer);
       this.buffer = grown;
     }
-    this.buffer[at] = presentMask;
-    this.buffer.set(seatBytes, at + 1);
+    this.buffer.set(presence, at);
+    this.buffer.set(seatBytes, at + this.presenceBytes);
     this.ticks++;
   }
 
@@ -95,14 +99,17 @@ export class ReplayRecorder {
 export function decodeReplay(bytes: Uint8Array): Replay {
   if (bytes.length < 12 || MAGIC.some((m, i) => bytes[i] !== m)) throw new RangeError('replay: bad magic');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (view.getUint8(4) !== VERSION) throw new RangeError(`replay: unsupported version ${view.getUint8(4)}`);
+  const version = view.getUint8(4);
+  if (version === 1) throw new RangeError('replay: version 1 is obsolete; re-record with replay format v2');
+  if (version !== VERSION) throw new RangeError(`replay: unsupported version ${version}`);
   const paramsLength = view.getUint16(5, true);
   const params = decodeParams(bytes.subarray(7, 7 + paramsLength));
   let o = 7 + paramsLength;
   const inputByteLength = view.getUint8(o++);
   const tickCount = view.getUint32(o, true);
   o += 4;
-  const recordBytes = 1 + params.seats * inputByteLength;
+  const presenceBytes = Math.ceil(params.seats / 8);
+  const recordBytes = presenceBytes + params.seats * inputByteLength;
   const body = tickCount * recordBytes;
   if (o + body + 4 > bytes.length) throw new RangeError('replay: truncated');
   const records = bytes.subarray(o, o + body);
@@ -136,17 +143,17 @@ export function playReplay<I>(
   if (codec.byteLength !== replay.inputByteLength) throw new RangeError('replay: input codec size differs from the recording');
   const { params } = replay;
   const sim = factory({ seed: params.seed, seats: params.seats, config: params.config });
-  const recordBytes = 1 + params.seats * replay.inputByteLength;
+  const presenceBytes = Math.ceil(params.seats / 8);
+  const recordBytes = presenceBytes + params.seats * replay.inputByteLength;
   let nextCheckpoint = 0;
   let mismatch: ReplayResult['mismatch'] = null;
   for (let tick = 0; tick < replay.tickCount; tick++) {
     const at = tick * recordBytes;
-    const mask = replay.records[at];
     const inputs: I[] = [];
     const present: boolean[] = [];
     for (let seat = 0; seat < params.seats; seat++) {
-      inputs.push(codec.decode(replay.records, at + 1 + seat * replay.inputByteLength));
-      present.push((mask & (1 << seat)) !== 0);
+      inputs.push(codec.decode(replay.records, at + presenceBytes + seat * replay.inputByteLength));
+      present.push((replay.records[at + (seat >> 3)] & (1 << (seat & 7))) !== 0);
     }
     sim.step({ tick, inputs, present });
     onTick?.(tick, sim);
