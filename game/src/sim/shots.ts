@@ -1,92 +1,84 @@
-import { fx } from '@metronome/engine';
-import { ARENA_HALF_H, ARENA_HALF_W, CULL_MARGIN, MAX_SHOTS } from './constants.ts';
-import { explodeSplash, nearestTarget } from './combat.ts';
-import type { World } from './world.ts';
+import { PROJECTILE_SPEED_CAP } from './constants.ts';
 
-const NO_TARGET = -1;
-const NO_HIT = -1;
-const LIMIT_X = ARENA_HALF_W + CULL_MARGIN;
-const LIMIT_Y = ARENA_HALF_H + CULL_MARGIN;
+/** How a projectile is drawn. Behaviour never depends on the kind, only on its shot definition's fields. */
+export const Proj = { Bolt: 0, Dart: 1, Seeker: 2, Shell: 3, Shard: 4, Echo: 5, Orb: 6, Heavy: 7, Needle: 8, Blade: 9 } as const;
+export const PROJ_KIND_COUNT = 10;
+
+/** Seek: steers toward the nearest hostile ship. Inert: touches nothing, exists to detonate (delayed rings). */
+export const ShotFlag = { Seek: 1, Inert: 2 } as const;
+
+/** What a projectile turns into when it hits something or runs out of life: `count` shots evenly around a ring. */
+export interface ShotBurst {
+  readonly count: number;
+  readonly shot: ShotDef;
+}
+
+/** An immutable projectile blueprint. Live projectiles store only the blueprint's index (`id`). */
+export interface ShotDef {
+  readonly id: number;
+  readonly kind: number;
+  /** Launch speed, units/tick. */
+  readonly spd: number;
+  readonly rad: number;
+  readonly dmg: number;
+  /** Ticks until it expires (and detonates, if it has a burst). */
+  readonly life: number;
+  /** Speed gained per tick until `maxSpd`. */
+  readonly acc: number;
+  readonly maxSpd: number;
+  /** Heading change per tick. */
+  readonly turn: number;
+  readonly flags: number;
+  readonly burst: ShotBurst | null;
+}
 
 export interface ShotSpec {
   readonly kind: number;
-  readonly x: number;
-  readonly y: number;
-  readonly ang: number;
   readonly spd: number;
-  readonly dmg: number;
   readonly rad: number;
+  readonly dmg: number;
   readonly life: number;
-  /** Extra enemies the shot passes through before it is spent. */
-  readonly pierce?: number;
-  /** Splash radius (0 = none). */
-  readonly splash?: number;
   readonly acc?: number;
   readonly maxSpd?: number;
-  /** Homing turn rate per tick (0 = flies straight). */
   readonly turn?: number;
+  readonly flags?: number;
+  readonly burst?: ShotBurst;
 }
 
-export function spawnShot(w: World, owner: number, s: ShotSpec): number {
-  const i = w.allocShot();
-  if (i < 0) return -1;
-  const { m } = w;
-  const heading = s.ang & fx.ANGLE_MASK;
-  m.sAlive[i] = 1;
-  m.sKind[i] = s.kind;
-  m.sOwner[i] = owner;
-  m.sPierce[i] = s.pierce ?? 0;
-  m.sX[i] = s.x;
-  m.sY[i] = s.y;
-  m.sAng[i] = heading;
-  m.sSpd[i] = s.spd;
-  m.sVX[i] = fx.mul(fx.cos(heading), s.spd);
-  m.sVY[i] = fx.mul(fx.sin(heading), s.spd);
-  m.sAcc[i] = s.acc ?? 0;
-  m.sMaxSpd[i] = s.maxSpd ?? 0;
-  m.sTurn[i] = s.turn ?? 0;
-  m.sDmg[i] = s.dmg;
-  m.sSplash[i] = s.splash ?? 0;
-  m.sRad[i] = s.rad;
-  m.sAge[i] = 0;
-  m.sLife[i] = s.life;
-  m.sTarget[i] = NO_TARGET;
-  m.sLastHit[i] = NO_HIT;
-  return i;
-}
+const registry: ShotDef[] = [];
+/** Every shot blueprint, indexed by ShotDef.id (what projectile memory stores). Read-only after module load. */
+export const SHOT_DEFS: readonly ShotDef[] = registry;
 
-/** Ends a shot's flight; splash shells detonate where they are. */
-export function detonateShot(w: World, i: number, exclude: number): void {
-  const { m } = w;
-  if (m.sSplash[i] > 0) explodeSplash(w, m.sX[i], m.sY[i], m.sSplash[i], m.sDmg[i], m.sOwner[i], exclude);
-  w.freeShot(i);
-}
-
-export function updateShots(w: World): void {
-  const { m } = w;
-  for (let i = 0; i < MAX_SHOTS; i++) {
-    if (m.sAlive[i] !== 1) continue;
-    m.sAge[i]++;
-    if (m.sTurn[i] > 0) {
-      let target = m.sTarget[i];
-      if (target < 0 || m.eAlive[target] !== 1) {
-        target = nearestTarget(w, m.sX[i], m.sY[i]);
-        m.sTarget[i] = target;
-      }
-      if (target >= 0) m.sAng[i] = fx.turnToward(m.sAng[i], fx.atan2(m.eY[target] - m.sY[i], m.eX[target] - m.sX[i]), m.sTurn[i]);
-    }
-    if (m.sAcc[i] !== 0) {
-      m.sSpd[i] += m.sAcc[i];
-      if (m.sMaxSpd[i] > 0 && m.sSpd[i] > m.sMaxSpd[i]) m.sSpd[i] = m.sMaxSpd[i];
-    }
-    m.sVX[i] = fx.mul(fx.cos(m.sAng[i]), m.sSpd[i]);
-    m.sVY[i] = fx.mul(fx.sin(m.sAng[i]), m.sSpd[i]);
-    m.sX[i] += m.sVX[i];
-    m.sY[i] += m.sVY[i];
-    if (--m.sLife[i] <= 0) {
-      detonateShot(w, i, NO_HIT);
-      continue;
-    }
-    if (Math.abs(m.sX[i]) > LIMIT_X || Math.abs(m.sY[i]) > LIMIT_Y) w.freeShot(i);
-  }
+/**
+ * The single place shots are defined. It enforces the game's speed rule at authoring time: every projectile,
+ * whoever owns it, launches and accelerates only within (0, PROJECTILE_SPEED_CAP].
+ */
+export function shot(spec: ShotSpec): ShotDef {
+  const def: ShotDef = {
+    id: registry.length,
+    kind: spec.kind,
+    spd: spec.spd,
+    rad: spec.rad,
+    dmg: spec.dmg,
+    life: spec.life,
+    acc: spec.acc ?? 0,
+    maxSpd: spec.maxSpd ?? spec.spd,
+    turn: spec.turn ?? 0,
+    flags: spec.flags ?? 0,
+    burst: spec.burst ?? null,
+  };
+  const fail = (why: string): never => {
+    throw new RangeError(`shot #${def.id} (kind ${def.kind}): ${why}`);
+  };
+  if (!(def.kind >= 0 && def.kind < PROJ_KIND_COUNT)) fail('unknown kind');
+  if (!(def.spd > 0 && def.spd <= PROJECTILE_SPEED_CAP)) fail('launch speed must be in (0, cap]');
+  if (!(def.maxSpd >= def.spd && def.maxSpd <= PROJECTILE_SPEED_CAP)) fail('maxSpd must be in [spd, cap]');
+  if (def.acc < 0) fail('acceleration must not be negative');
+  if (def.acc > 0 && def.maxSpd <= def.spd) fail('an accelerating shot needs maxSpd above its launch speed');
+  if (!(def.rad > 0 && def.life >= 1 && def.dmg >= 0)) fail('radius, life and damage must be positive');
+  if ((def.flags & ShotFlag.Seek) !== 0 && def.turn <= 0) fail('a seeking shot needs a turn rate');
+  if ((def.flags & ShotFlag.Inert) !== 0 && (def.dmg !== 0 || def.burst === null)) fail('an inert shot must deal no damage and have a burst');
+  if (def.burst !== null && def.burst.count < 1) fail('burst needs at least one shot');
+  registry.push(Object.freeze(def));
+  return def;
 }

@@ -1,13 +1,12 @@
 import type { SimInit, Simulation, TickInput } from '@metronome/engine';
-import { updateBullets } from './bullets.ts';
-import { collideBodies, collideBullets, collideShots } from './collisions.ts';
-import { updateOrbs } from './combat.ts';
-import { updateEnemies } from './enemies.ts';
-import { checkGameOver, updateFlow } from './flow.ts';
+import { collideProjectiles } from './combat.ts';
 import type { GameInput } from './input.ts';
 import { W } from './layout.ts';
-import { updatePlayers } from './players.ts';
-import { updateShots } from './shots.ts';
+import { resolveMatch, startMatch, updateMatch } from './match.ts';
+import { updateNeutrals } from './neutrals.ts';
+import { updateOrbs } from './orbs.ts';
+import { updateProjectiles } from './projectiles.ts';
+import { updateShips } from './ships.ts';
 import { World } from './world.ts';
 
 /**
@@ -21,21 +20,19 @@ export class GameSim implements Simulation<GameInput> {
   constructor(init: SimInit) {
     this.world = new World(init);
     this.memory = this.world.memory;
+    startMatch(this.world);
   }
 
   step(frame: TickInput<GameInput>): void {
     const w = this.world;
     w.m.world[W.Tick]++;
-    updateFlow(w);
-    updatePlayers(w, frame.inputs, frame.present);
-    updateEnemies(w);
-    updateBullets(w);
-    updateShots(w);
-    collideShots(w);
-    collideBullets(w);
-    collideBodies(w);
+    updateMatch(w);
+    updateShips(w, frame.inputs, frame.present);
+    updateNeutrals(w);
+    updateProjectiles(w);
+    collideProjectiles(w);
     updateOrbs(w);
-    checkGameOver(w);
+    resolveMatch(w);
   }
 }
 

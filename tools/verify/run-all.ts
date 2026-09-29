@@ -4,7 +4,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPTS = ['boundary.ts', 'engine-numerics.ts', 'engine-lockstep.ts', 'engine-hostile.ts', 'engine-standalone.ts', 'engine-scale.ts', 'game-eval.ts'];
+const SCRIPTS = [
+  'boundary.ts', 'engine-numerics.ts', 'engine-lockstep.ts', 'engine-hostile.ts', 'engine-standalone.ts', 'engine-scale.ts',
+  'game-rules.ts', 'game-boss.ts', 'game-match.ts', 'game-determinism.ts',
+];
 
 let failed = 0;
 for (const script of SCRIPTS) {

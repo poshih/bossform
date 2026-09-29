@@ -1,140 +1,147 @@
-import { fx, Rng, SimMemory } from '@metronome/engine';
+import { Rng, SimMemory } from '@metronome/engine';
 import type { MemoryViews, SimInit } from '@metronome/engine';
 import {
-  DIFFICULTY_SCALE, Difficulty, FRAME_COUNT, FRAME_STATS, INTRO_TICKS, MAX_BULLETS, MAX_ENEMIES, MAX_ORBS, MAX_PLAYERS, MAX_SHOTS,
-  Phase, START_LIVES, STAGE_COUNT,
+  ARENA_RADIUS_LIMIT, arenaRadius, capacityFor, MAX_PARTS, MIN_TEAMS, Mode, MODE_COUNT, NO_WINNER, Phase,
 } from './constants.ts';
-import { Banner, Ev, EventQueue } from './events.ts';
-import { LAYOUT, W } from './layout.ts';
+import type { Capacity } from './constants.ts';
+import { EventQueue } from './events.ts';
+import { FRAME_COUNT, FRAME_STATS } from './frames.ts';
+import { layoutFor, W } from './layout.ts';
 
-export type Mem = MemoryViews<typeof LAYOUT>;
+export type Layout = ReturnType<typeof layoutFor>;
+export type Mem = MemoryViews<Layout>;
 
-/** Byte positions inside SimInit.config (the lobby's agreement on how this run is set up). */
-export const Config = { Difficulty: 0, FrameSeat0: 1, FrameSeat1: 2, StartStage: 3, Length: 4 } as const;
+export interface SeatConfig {
+  readonly frame: number;
+  readonly team: number;
+}
 
-const NO_TARGET = -1;
-const SPAWN_Y = fx.fromInt(-140);
-const SPAWN_SPREAD = fx.fromInt(50);
+/** How a match is set up: the lobby's agreement, carried to every peer in SimInit.config. */
+export interface MatchConfig {
+  readonly mode: number;
+  readonly seats: readonly SeatConfig[];
+}
 
-/** Builds the config bytes that SimInit carries (the game's own lobby encoding). */
-export function encodeConfig(difficulty: number, frames: readonly number[], startStage: number): Uint8Array {
-  const out = new Uint8Array(Config.Length);
-  out[Config.Difficulty] = difficulty;
-  out[Config.FrameSeat0] = frames[0] ?? 0;
-  out[Config.FrameSeat1] = frames[1] ?? 0;
-  out[Config.StartStage] = startStage;
+const CONFIG_HEADER_BYTES = 1;
+const CONFIG_BYTES_PER_SEAT = 2;
+
+/** Bytes: [mode, (frame, team) per seat]. Throws on anything the simulation could not run. */
+export function encodeConfig(config: MatchConfig): Uint8Array {
+  const out = new Uint8Array(CONFIG_HEADER_BYTES + CONFIG_BYTES_PER_SEAT * config.seats.length);
+  out[0] = config.mode;
+  config.seats.forEach((seat, i) => {
+    out[CONFIG_HEADER_BYTES + i * CONFIG_BYTES_PER_SEAT] = seat.frame;
+    out[CONFIG_HEADER_BYTES + i * CONFIG_BYTES_PER_SEAT + 1] = seat.team;
+  });
+  decodeConfig(out, config.seats.length);
   return out;
 }
 
-function clampByte(config: Uint8Array, index: number, max: number): number {
-  const v = index < config.length ? config[index] : 0;
-  return v > max ? max : v;
+/** The one validator for match configuration; the bytes come from another machine, so it rejects loudly. */
+export function decodeConfig(bytes: Uint8Array, seats: number): MatchConfig {
+  const expected = CONFIG_HEADER_BYTES + CONFIG_BYTES_PER_SEAT * seats;
+  if (bytes.length !== expected) throw new RangeError(`match config needs ${expected} bytes for ${seats} seats (got ${bytes.length})`);
+  const mode = bytes[0];
+  if (mode >= MODE_COUNT) throw new RangeError(`match config: unknown mode ${mode}`);
+  const list: SeatConfig[] = [];
+  const teams: number[] = [];
+  for (let seat = 0; seat < seats; seat++) {
+    const frame = bytes[CONFIG_HEADER_BYTES + seat * CONFIG_BYTES_PER_SEAT];
+    const team = bytes[CONFIG_HEADER_BYTES + seat * CONFIG_BYTES_PER_SEAT + 1];
+    if (frame >= FRAME_COUNT) throw new RangeError(`match config: seat ${seat} has unknown frame ${frame}`);
+    if (team >= seats) throw new RangeError(`match config: seat ${seat} team ${team} must be below the seat count`);
+    if (!teams.includes(team)) teams.push(team);
+    list.push({ frame, team });
+  }
+  if (teams.length < MIN_TEAMS) throw new RangeError(`match config: needs at least ${MIN_TEAMS} teams`);
+  return { mode, seats: list };
 }
 
 /** Owner of the arena, the RNG and the event queue; passed explicitly to every simulation function. */
 export class World {
-  readonly memory: SimMemory<typeof LAYOUT>;
+  readonly memory: SimMemory<Layout>;
   readonly m: Mem;
   readonly rng: Rng;
   readonly events = new EventQueue();
   readonly seats: number;
-  private readonly speedPct: number;
-  private readonly intervalPct: number;
-  private readonly hpPct: number;
+  readonly cap: Capacity;
+  readonly config: MatchConfig;
+  readonly arenaR: number;
+  /**
+   * Boss-part centres, rebuilt from memory at the top of every collision pass and only read within that
+   * pass. A cache, not state: nothing carries over from one tick to the next.
+   */
+  readonly partX: Int32Array;
+  readonly partY: Int32Array;
 
   constructor(init: SimInit) {
-    this.memory = new SimMemory(LAYOUT);
+    this.seats = init.seats;
+    this.config = decodeConfig(init.config, init.seats);
+    this.arenaR = arenaRadius(init.seats);
+    if (this.arenaR > ARENA_RADIUS_LIMIT) throw new RangeError(`${init.seats} seats need an arena beyond the fixed-point range`);
+    this.cap = capacityFor(init.seats);
+    this.memory = new SimMemory(layoutFor(this.cap));
     this.m = this.memory.f;
     this.rng = new Rng(this.m.rng);
     this.rng.seed(init.seed);
-    this.seats = Math.min(init.seats, MAX_PLAYERS);
+    this.partX = new Int32Array(this.cap.parts);
+    this.partY = new Int32Array(this.cap.parts);
 
-    const difficulty = clampByte(init.config, Config.Difficulty, Difficulty.Hard);
-    [this.hpPct, this.speedPct, this.intervalPct] = DIFFICULTY_SCALE[difficulty];
     const { m } = this;
     const w = m.world;
-    w[W.Difficulty] = difficulty;
-    w[W.Stage] = clampByte(init.config, Config.StartStage, STAGE_COUNT - 1);
-    w[W.Phase] = Phase.Intro;
-    w[W.PhaseTimer] = INTRO_TICKS;
-    w[W.BossSlot] = NO_TARGET;
-
-    for (let i = 0; i < MAX_BULLETS; i++) m.bFree[i] = MAX_BULLETS - 1 - i;
-    for (let i = 0; i < MAX_SHOTS; i++) m.sFree[i] = MAX_SHOTS - 1 - i;
-    for (let i = 0; i < MAX_ENEMIES; i++) m.eFree[i] = MAX_ENEMIES - 1 - i;
-    for (let i = 0; i < MAX_ORBS; i++) m.oFree[i] = MAX_ORBS - 1 - i;
-    w[W.BulletFree] = MAX_BULLETS;
-    w[W.ShotFree] = MAX_SHOTS;
-    w[W.EnemyFree] = MAX_ENEMIES;
-    w[W.OrbFree] = MAX_ORBS;
-
-    for (let p = 0; p < this.seats; p++) {
-      const frame = clampByte(init.config, Config.FrameSeat0 + p, FRAME_COUNT - 1);
-      m.plActive[p] = 1;
-      m.plFrame[p] = frame;
-      m.plHp[p] = FRAME_STATS[frame].maxHp;
-      m.plLives[p] = START_LIVES;
-      m.plX[p] = m.plPX[p] = this.spawnX(p);
-      m.plY[p] = m.plPY[p] = SPAWN_Y;
-      m.plAim[p] = fx.ANGLE_QUARTER;
-    }
-    this.events.push(Ev.Banner, 0, 0, Banner.Stage);
+    w[W.SafeR] = this.arenaR;
+    w[W.Winner] = NO_WINNER;
+    w[W.Round] = 1;
+    w[W.Phase] = Phase.Countdown;
+    for (let i = 0; i < this.cap.projectiles; i++) m.pFree[i] = this.cap.projectiles - 1 - i;
+    for (let i = 0; i < this.cap.neutrals; i++) m.nFree[i] = this.cap.neutrals - 1 - i;
+    for (let i = 0; i < this.cap.orbs; i++) m.oFree[i] = this.cap.orbs - 1 - i;
+    w[W.ProjFree] = this.cap.projectiles;
+    w[W.NeutralFree] = this.cap.neutrals;
+    w[W.OrbFree] = this.cap.orbs;
+    this.config.seats.forEach((seat, i) => {
+      m.plActive[i] = 1;
+      m.plFrame[i] = seat.frame;
+      m.plTeam[i] = seat.team;
+      m.plHp[i] = FRAME_STATS[seat.frame].hp;
+      m.plLastHit[i] = -1;
+    });
   }
 
-  spawnX(seat: number): number {
-    if (this.seats === 1) return 0;
-    return seat === 0 ? -SPAWN_SPREAD : SPAWN_SPREAD;
+  get mode(): number {
+    return this.config.mode;
   }
 
-  get spawnY(): number {
-    return SPAWN_Y;
+  get isDeathmatch(): boolean {
+    return this.config.mode === Mode.Deathmatch;
   }
 
-  // ---- difficulty scalers (integer percent math, applied where things are created) ----
-  scaleSpeed(v: number): number {
-    return Math.floor((v * this.speedPct) / 100);
-  }
-
-  scaleInterval(ticks: number): number {
-    return Math.max(1, Math.floor((ticks * this.intervalPct) / 100));
-  }
-
-  scaleHp(hp: number): number {
-    return Math.max(1, Math.floor((hp * this.hpPct) / 100));
+  /** Index of a seat's first part in the per-part arrays. */
+  partBase(seat: number): number {
+    return seat * MAX_PARTS;
   }
 
   // ---- pools ----
-  allocBullet(): number {
+  allocProjectile(): number {
     const w = this.m.world;
-    return w[W.BulletFree] === 0 ? -1 : this.m.bFree[--w[W.BulletFree]];
+    return w[W.ProjFree] === 0 ? -1 : this.m.pFree[--w[W.ProjFree]];
   }
 
-  freeBullet(i: number): void {
+  freeProjectile(i: number): void {
     const { m } = this;
-    m.bAlive[i] = 0;
-    m.bFree[m.world[W.BulletFree]++] = i;
+    m.pAlive[i] = 0;
+    m.pFree[m.world[W.ProjFree]++] = i;
   }
 
-  allocShot(): number {
+  allocNeutral(): number {
     const w = this.m.world;
-    return w[W.ShotFree] === 0 ? -1 : this.m.sFree[--w[W.ShotFree]];
+    return w[W.NeutralFree] === 0 ? -1 : this.m.nFree[--w[W.NeutralFree]];
   }
 
-  freeShot(i: number): void {
+  freeNeutral(i: number): void {
     const { m } = this;
-    m.sAlive[i] = 0;
-    m.sFree[m.world[W.ShotFree]++] = i;
-  }
-
-  allocEnemy(): number {
-    const w = this.m.world;
-    return w[W.EnemyFree] === 0 ? -1 : this.m.eFree[--w[W.EnemyFree]];
-  }
-
-  freeEnemy(i: number): void {
-    const { m } = this;
-    m.eAlive[i] = 0;
-    m.eFree[m.world[W.EnemyFree]++] = i;
+    m.nAlive[i] = 0;
+    m.nFree[m.world[W.NeutralFree]++] = i;
   }
 
   allocOrb(): number {
@@ -148,36 +155,7 @@ export class World {
     m.oFree[m.world[W.OrbFree]++] = i;
   }
 
-  // ---- queries ----
-  /** A player who can be shot at and can shoot: active, alive, not waiting to respawn. */
-  isPlaying(p: number): boolean {
-    return this.m.plActive[p] === 1 && this.m.plHp[p] > 0 && this.m.plRespawn[p] === 0;
-  }
-
-  /** Index of the closest playing player to (x, y), or -1. Ties go to the lower seat. */
-  nearestPlayer(x: number, y: number): number {
-    const { m } = this;
-    let best = -1;
-    let bestD = Infinity;
-    for (let p = 0; p < this.seats; p++) {
-      if (!this.isPlaying(p)) continue;
-      const d = fx.len2(m.plX[p] - x, m.plY[p] - y);
-      if (d < bestD) {
-        bestD = d;
-        best = p;
-      }
-    }
-    return best;
-  }
-
-  /** Angle from (x, y) toward the nearest player; straight down when nobody is left. */
-  angleToPlayer(x: number, y: number): number {
-    const p = this.nearestPlayer(x, y);
-    if (p < 0) return fx.ANGLE_QUARTER * 3;
-    return fx.atan2(this.m.plY[p] - y, this.m.plX[p] - x);
-  }
-
-  emit(type: number, x = 0, y = 0, a = 0): void {
-    this.events.push(type, x, y, a);
+  emit(type: number, x = 0, y = 0, a = 0, b = 0, c = 0): void {
+    this.events.push(type, x, y, a, b, c);
   }
 }

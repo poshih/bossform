@@ -1,0 +1,129 @@
+import { BOSS_MIN_GAUGE, Form, Phase, SPAWN_PROTECT_TICKS } from './constants.ts';
+import { clearBoss, startMorph, updateBoss, updateMorph } from './boss.ts';
+import { Ev } from './events.ts';
+import { FRAME_STATS, JUGGERNAUT } from './frames.ts';
+import type { Vec } from './geometry.ts';
+import { Button } from './input.ts';
+import type { GameInput } from './input.ts';
+import { W } from './layout.ts';
+import { coast, drive, keepInside } from './movement.ts';
+import { respawnPoint } from './spawn.ts';
+import { fireNormal } from './weapons.ts';
+import type { World } from './world.ts';
+
+/** Puts a ship (back) into play at full health, in its normal form, at a spawn point. */
+export function resetShip(w: World, seat: number, at: Vec, aim: number, protection: number): void {
+  const { m } = w;
+  clearBoss(w, seat);
+  m.plAlive[seat] = 1;
+  m.plHp[seat] = FRAME_STATS[m.plFrame[seat]].hp;
+  m.plGauge[seat] = 0;
+  m.plX[seat] = at.x;
+  m.plY[seat] = at.y;
+  m.plVX[seat] = 0;
+  m.plVY[seat] = 0;
+  m.plAim[seat] = aim;
+  m.plBody[seat] = aim;
+  m.plOrbit[seat] = 0;
+  m.plPrev[seat] = 0;
+  m.plInvuln[seat] = protection;
+  m.plRespawn[seat] = 0;
+  m.plWinEnd[seat] = 0;
+  m.plWinDmg[seat] = 0;
+  m.plFlash[seat] = 0;
+  m.plFireCd[seat] = 0;
+  m.plAltCd[seat] = 0;
+  m.plUltCd[seat] = 0;
+  m.plDash[seat] = 0;
+  m.plBulwark[seat] = 0;
+  m.plLastHit[seat] = -1;
+  m.plEpoch[seat]++;
+}
+
+/** A pilot who left the match: their ship is gone for good. */
+function retire(w: World, seat: number): void {
+  const { m } = w;
+  clearBoss(w, seat);
+  m.plActive[seat] = 0;
+  m.plAlive[seat] = 0;
+  m.plRespawn[seat] = 0;
+  w.emit(Ev.Left, m.plX[seat], m.plY[seat], seat);
+}
+
+function tickTimers(w: World, seat: number): void {
+  const { m } = w;
+  if (m.plInvuln[seat] > 0) m.plInvuln[seat]--;
+  if (m.plFlash[seat] > 0) m.plFlash[seat]--;
+  if (m.plFireCd[seat] > 0) m.plFireCd[seat]--;
+  if (m.plAltCd[seat] > 0) m.plAltCd[seat]--;
+  if (m.plUltCd[seat] > 0) m.plUltCd[seat]--;
+  if (m.plBulwark[seat] > 0) m.plBulwark[seat]--;
+}
+
+function respawnCountdown(w: World, seat: number): void {
+  const { m } = w;
+  if (!w.isDeathmatch || m.world[W.Phase] !== Phase.Battle || m.plRespawn[seat] === 0) return;
+  if (--m.plRespawn[seat] > 0) return;
+  const at: Vec = { x: 0, y: 0 };
+  const aim = respawnPoint(w, seat, at);
+  resetShip(w, seat, at, aim, SPAWN_PROTECT_TICKS);
+  w.emit(Ev.Respawn, at.x, at.y, seat);
+}
+
+function updateNormal(w: World, seat: number, buttons: number, pressed: number, moveX: number, moveY: number): void {
+  const { m } = w;
+  const stats = FRAME_STATS[m.plFrame[seat]];
+  m.plBody[seat] = m.plAim[seat];
+  if ((pressed & Button.Boss) !== 0 && m.plGauge[seat] >= BOSS_MIN_GAUGE) {
+    startMorph(w, seat);
+    return;
+  }
+  fireNormal(w, seat, buttons, moveX, moveY);
+  if (m.plDash[seat] > 0) {
+    m.plDash[seat]--;
+    coast(w, seat);
+  } else {
+    const bulwark = m.plBulwark[seat] > 0;
+    const top = bulwark ? Math.floor((stats.speed * JUGGERNAUT.bulwark.slowPct) / 100) : stats.speed;
+    drive(w, seat, moveX, moveY, top, stats.accel);
+  }
+  keepInside(w, seat, stats.bodyR);
+}
+
+function updateShip(w: World, seat: number, input: GameInput, present: boolean): void {
+  const { m } = w;
+  if (m.plActive[seat] === 0) return;
+  if (!present) {
+    retire(w, seat);
+    return;
+  }
+  tickTimers(w, seat);
+  if (m.plAlive[seat] === 0) {
+    respawnCountdown(w, seat);
+    return;
+  }
+  const fighting = m.world[W.Phase] === Phase.Battle;
+  const buttons = fighting ? input.buttons : 0;
+  const moveX = fighting ? input.moveX : 0;
+  const moveY = fighting ? input.moveY : 0;
+  const pressed = buttons & ~m.plPrev[seat];
+  m.plPrev[seat] = buttons;
+  m.plAim[seat] = input.aim;
+  switch (m.plForm[seat]) {
+    case Form.Normal:
+      updateNormal(w, seat, buttons, pressed, moveX, moveY);
+      break;
+    case Form.Morph:
+      m.plBody[seat] = m.plAim[seat];
+      updateMorph(w, seat);
+      keepInside(w, seat, FRAME_STATS[m.plFrame[seat]].bodyR);
+      break;
+    default:
+      updateBoss(w, seat, buttons, moveX, moveY);
+  }
+}
+
+export function updateShips(w: World, inputs: readonly GameInput[], present: readonly boolean[]): void {
+  for (let seat = 0; seat < w.seats; seat++) updateShip(w, seat, inputs[seat], present[seat]);
+}
+

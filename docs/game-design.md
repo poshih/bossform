@@ -88,11 +88,13 @@ movement). In boss form aim and body turning are slew-limited (§5.5).
 - **Per-robot balance values:** `hp`, `windowCap`, `windowTicks`. Lower-hp, faster robots take a lower cap, so
   the quickest frame is not also unkillable, and the bulkiest can shrug off a heavy shell.
 
-  | Frame | hp | cap per window (60 ticks) | Minimum time to die |
-  |---|---|---|---|
-  | VANGUARD | 120 | 24 | 5 s |
-  | GALE | 80 | 14 | ~5.7 s |
-  | JUGGERNAUT | 220 | 44 | 5 s |
+  | Frame | hp | cap per window (60 ticks) | Windows to die | Fastest possible death |
+  |---|---|---|---|---|
+  | VANGUARD | 120 | 24 | 5 | 4.0 s |
+  | GALE | 80 | 14 | 6 | 5.0 s |
+  | JUGGERNAUT | 220 | 44 | 5 | 4.0 s |
+  The window is anchored: it opens on the first hit and closes `windowTicks` later, so relentless fire kills in exactly
+  `(windows - 1) x windowTicks` ticks.
 - In boss form the same rule applies to the **core**, which carries the robot's own hp and cap; armour and cannon parts
   have their own hit points and are not windowed (§5.5).
 
@@ -161,11 +163,11 @@ they deal to a boss form and a bounty for killing one **[PROPOSED]**, so a boss 
 
 #### 5.5.4 Per-robot boss forms [PROPOSED: behaviour differs, weight is common]
 
-| Robot | Boss form | Top speed | Body turn | Pod turn | Character |
-|---|---|---|---|---|---|
-| VANGUARD | **PALADIN** | 1.2 | 1.5°/tick | 3.0°/tick | balanced: wing plates and shoulder cannons; salvo = 5-fan; siege = seeker-bursting shell; ultima = rotating spiral |
-| GALE | **TEMPEST** | 1.7 | 2.2°/tick | 4.5°/tick | the lightest colossus: four orbiting bit cannons; salvo = aimed streams; siege = bit swarm; ultima = blade rings |
-| JUGGERNAUT | **FORTRESS** | 0.8 | 0.9°/tick | 2.0°/tick | the heaviest: thickest armour, biggest shells; salvo = wide slow volley; siege = huge mortar; ultima = siege barrage |
+| Robot | Boss form | Top speed | Body turn | Pod turn | Wind-ups (salvo / siege / ultima) | Character |
+|---|---|---|---|---|---|---|
+| VANGUARD | **PALADIN** | 1.2 | 1.5°/tick | cannons 3.0, prow 2.0 | 14 / 40 / 96 | balanced: wing plates and shoulder cannons; salvo = 5-fan; siege = seeker-bursting shell; ultima = rotating spiral |
+| GALE | **TEMPEST** | 1.7 | 2.2°/tick | bits 4.5 | 12 / 36 / 90 | the lightest colossus: four orbiting bit cannons; salvo = aimed streams; siege = bit swarm of seekers; ultima = blade rings |
+| JUGGERNAUT | **FORTRESS** | 0.8 | 0.9°/tick | turrets 2.0, mortar 1.0 | 18 / 48 / 110 | the heaviest: thickest armour, biggest shells; salvo = wide slow volley; siege = huge mortar; ultima = siege barrage |
 
 ### 5.6 The three robots in normal form [SET: archetypes; PROPOSED: kits]
 Every weapon obeys the normal-speed rule.
