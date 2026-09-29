@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import type { Beat } from '../beat.ts';
 
 export interface PipelineOptions {
   /** Cap on the device pixel ratio (rendering cost grows with its square). */
@@ -11,6 +12,17 @@ export interface PipelineOptions {
   readonly bloomStrength: number;
   readonly bloomRadius: number;
   readonly bloomThreshold: number;
+}
+
+/** What the frame's post-processing reacts to (built by the Stage each frame). */
+export interface PostInput {
+  /** 0..1 momentary impact from a big event near the camera (a punch instead of camera shake). */
+  readonly punch: number;
+  /** 0..1 an ultima is winding up: the arena darkens toward the threat. */
+  readonly ultima: number;
+  readonly beat: Beat;
+  /** Presentation seconds (FrameContext.time). */
+  readonly time: number;
 }
 
 export const DEFAULT_PIPELINE: PipelineOptions = { maxPixelRatio: 2, msaaSamples: 4, bloomStrength: 0.52, bloomRadius: 0.42, bloomThreshold: 0.92 };
@@ -48,7 +60,7 @@ export class Pipeline {
     this.composer.setSize(width, height);
   }
 
-  render(scene: THREE.Scene, camera: THREE.Camera): void {
+  render(scene: THREE.Scene, camera: THREE.Camera, _post: PostInput): void {
     const pass = this.composer.passes[0] as RenderPass;
     pass.scene = scene;
     pass.camera = camera;

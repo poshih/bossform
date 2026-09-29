@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TEAM_COLORS } from './config.ts';
+import { BeatClock } from './beat.ts';
 import { Pipeline } from './render/pipeline.ts';
 import { AttackPhase, FORMS, Frame, NeutralType } from './sim/index.ts';
 import { createColossus, createNeutral, createRobot } from './view/models/index.ts';
@@ -98,12 +99,15 @@ layout();
 
 let time = num('t', 0);
 let last = performance.now();
+const beatClock = new BeatClock();
 function frame(now: number): void {
-  if (params.get('anim') === '1') time += (now - last) / 1000;
+  const dt = (now - last) / 1000;
+  if (params.get('anim') === '1') time += dt;
   last = now;
   update(time);
   scene.rotation.z = params.get('spin') === '1' ? time * 0.4 : 0;
-  pipeline.render(scene, camera);
+  beatClock.advance(dt, null);
+  pipeline.render(scene, camera, { punch: 0, ultima: 0, beat: beatClock.state, time });
   (window as unknown as { ready?: boolean }).ready = true;
   requestAnimationFrame(frame);
 }

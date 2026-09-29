@@ -123,6 +123,11 @@ export class FxView implements StageView {
   screenFlash = 0;
   ultimaDim = 0;
 
+  /** 0..1 impact this frame for the post-processing (see PostInput.punch). */
+  get punch(): number {
+    return this.screenFlash;
+  }
+
   private readonly pool = makePool();
   private next = 0;
   private readonly teamColors = TEAM_COLORS.map((hex: number) => colorIntoLinear(new THREE.Color(), hex));

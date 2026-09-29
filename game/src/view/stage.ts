@@ -96,7 +96,7 @@ export class Stage {
     };
     for (const view of this.views) view.update(this.previous, this.current, frame);
     this.arena.setUltimaDim(this.fx.ultimaDim);
-    this.pipeline.render(this.scene, this.camera.camera);
+    this.pipeline.render(this.scene, this.camera.camera, { punch: this.fx.punch, ultima: this.fx.ultimaDim, beat, time: this.timeSeconds });
   }
 
   get cameraState(): FollowCamera['state'] {
