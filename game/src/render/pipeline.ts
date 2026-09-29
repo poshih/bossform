@@ -7,8 +7,6 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import type { Beat } from '../beat.ts';
 
 export interface PipelineOptions {
-  /** Cap on the device pixel ratio (rendering cost grows with its square). */
-  readonly maxPixelRatio: number;
   readonly msaaSamples: number;
   readonly bloomStrength: number;
   readonly bloomRadius: number;
@@ -94,7 +92,7 @@ const POST_SHADER = {
   `,
 } as const;
 
-export const DEFAULT_PIPELINE: PipelineOptions = { maxPixelRatio: 2, msaaSamples: 4, bloomStrength: 0.50, bloomRadius: 0.30, bloomThreshold: 0.92 };
+export const DEFAULT_PIPELINE: PipelineOptions = { msaaSamples: 4, bloomStrength: 0.50, bloomRadius: 0.30, bloomThreshold: 0.92 };
 
 /**
  * Full-resolution rendering: an anti-aliased half-float target (so bright edges can exceed 1), a soft bloom, and a
@@ -123,9 +121,9 @@ export class Pipeline {
     this.composer.addPass(new OutputPass());
   }
 
-  /** Sizes are CSS pixels. */
-  resize(width: number, height: number, devicePixelRatio: number): void {
-    this.pixelRatio = Math.min(devicePixelRatio, this.options.maxPixelRatio);
+  /** Sizes are CSS pixels; `pixelRatio` is the resolved backing scale (config.backingScale). */
+  resize(width: number, height: number, pixelRatio: number): void {
+    this.pixelRatio = pixelRatio;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.setSize(width, height, false);
     this.composer.setPixelRatio(this.pixelRatio);

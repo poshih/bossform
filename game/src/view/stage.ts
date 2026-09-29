@@ -53,8 +53,9 @@ export class Stage {
     this.focusSeatIndex = seat;
   }
 
-  resize(cssWidth: number, cssHeight: number, devicePixelRatio: number): void {
-    this.pipeline.resize(cssWidth, cssHeight, devicePixelRatio);
+  /** `pixelRatio` is the resolved backing scale (config.backingScale). */
+  resize(cssWidth: number, cssHeight: number, pixelRatio: number): void {
+    this.pipeline.resize(cssWidth, cssHeight, pixelRatio);
     this.camera.resize(cssWidth, cssHeight);
   }
 

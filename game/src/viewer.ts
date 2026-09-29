@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TEAM_COLORS } from './config.ts';
+import { TEAM_COLORS, backingScale } from './config.ts';
 import { BeatClock } from './beat.ts';
 import { Pipeline } from './render/pipeline.ts';
 import { AttackPhase, FORMS, Frame, NeutralType } from './sim/index.ts';
@@ -86,7 +86,7 @@ if (model in NEUTRAL_OF) {
 }
 
 function layout(): void {
-  pipeline.resize(window.innerWidth, window.innerHeight, window.devicePixelRatio);
+  pipeline.resize(window.innerWidth, window.innerHeight, backingScale(window.innerWidth, window.innerHeight, window.devicePixelRatio));
   camera.aspect = window.innerWidth / window.innerHeight;
   const distance = ((extent * 1.3) / Math.tan(rad(camera.fov / 2))) / num('zoom', 1);
   const tilt = rad(num('tilt', 24));

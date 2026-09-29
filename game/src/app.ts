@@ -3,7 +3,7 @@ import { AudioEngine } from './audio/audio.ts';
 import { AudioDirector } from './audio/director.ts';
 import { BeatClock } from './beat.ts';
 import type { Beat } from './beat.ts';
-import { MAX_DPR } from './config.ts';
+import { backingScale } from './config.ts';
 import { Devices } from './input/devices.ts';
 import { RelayLobby } from './net/lobby.ts';
 import type { OnlineStart } from './net/lobby.ts';
@@ -114,11 +114,11 @@ export class App {
   resize(cssWidth: number, cssHeight: number, devicePixelRatio: number): void {
     this.cssWidth = cssWidth;
     this.cssHeight = cssHeight;
-    this.pixelRatio = Math.min(devicePixelRatio, MAX_DPR);
+    this.pixelRatio = backingScale(cssWidth, cssHeight, devicePixelRatio);
     const { hudCanvas } = this.parts;
     hudCanvas.width = Math.max(1, Math.floor(cssWidth * this.pixelRatio));
     hudCanvas.height = Math.max(1, Math.floor(cssHeight * this.pixelRatio));
-    this.stage?.resize(cssWidth, cssHeight, devicePixelRatio);
+    this.stage?.resize(cssWidth, cssHeight, this.pixelRatio);
   }
 
   // ---- screens ---------------------------------------------------------------------------------------
