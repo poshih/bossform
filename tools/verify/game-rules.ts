@@ -7,7 +7,7 @@ import { fx } from '@metronome/engine';
 import {
   Attack, Button, decodeConfig, encodeConfig, Ev, FORMS, Form, FRAME_STATS, Frame, GALE, GAUGE_MAX, GAUGE_PER_DAMAGE_DEALT,
   GAUGE_PER_DAMAGE_TAKEN, GAUGE_PER_GRAZE, JUGGERNAUT, MIN_WINDUP_TICKS, Mode, NEUTRAL_DEFS, NeutralType, NO_SEAT, ORB_VALUE, Phase,
-  PROJECTILE_SPEED_CAP, SHOT_DEFS, ShotFlag, VANGUARD, W, WAVE_INTERVAL_TICKS, BOSS_DRAIN_PER_TICK,
+  PROJECTILE_SPEED_CAP, SHOT_DEFS, ShotFlag, VANGUARD, W, WAVE_INTERVAL_TICKS, BOSS_DRAIN_PER_TICK, ARENA_RADIUS_LIMIT, RADIAL_SHIFT, inside, span2,
 } from '../../game/src/sim/index.ts';
 import { shot } from '../../game/src/sim/shots.ts';
 import { holding, IDLE, Scenario } from './game-scenario.ts';
@@ -124,6 +124,14 @@ section('the GALE dash leaves its echo where the dash began, and the echo bursts
   check('the echo appears where the dash began, stays there through its fuse, and bursts on that spot',
     dash !== undefined && placed && stayed && burst !== undefined && burst.x === startX && burst.y === startY,
     `placed ${placed}, stayed ${stayed}, burst at ${burst ? ((burst.x - startX) / fx.ONE).toFixed(1) : 'none'}`);
+}
+
+section('arena-scale distances compare exactly, even in the largest arena the fixed-point range allows');
+{
+  const widest = ARENA_RADIUS_LIMIT * 2;
+  check('the squared shifted length of the widest possible vector is an exact integer', Number.isSafeInteger(span2(widest, widest)), `${span2(widest, widest)}`);
+  const r = ARENA_RADIUS_LIMIT;
+  check('a point on the rim is inside, one raw step beyond the shifted grid is not', inside(r, 0, r) && !inside(r + (1 << RADIAL_SHIFT), 0, r));
 }
 
 section('configuration is validated where it enters the simulation');

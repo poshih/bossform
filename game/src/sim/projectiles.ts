@@ -1,7 +1,7 @@
 import { fx } from '@metronome/engine';
 import { PROJECTILE_RIM_MARGIN, SEEK_RANGE } from './constants.ts';
 import { Ev } from './events.ts';
-import { within } from './geometry.ts';
+import { inside, within } from './geometry.ts';
 import { W } from './layout.ts';
 import { nearestHostile } from './query.ts';
 import { SHOT_DEFS, ShotFlag } from './shots.ts';
@@ -85,7 +85,6 @@ function steer(w: World, p: number, def: ShotDef): void {
 export function updateProjectiles(w: World): void {
   const { m } = w;
   const rim = w.arenaR + PROJECTILE_RIM_MARGIN;
-  const rimSquared = rim * rim;
   for (let p = 0; p < w.cap.projectiles; p++) {
     if (m.pAlive[p] !== 1) continue;
     const def = SHOT_DEFS[m.pDef[p]];
@@ -95,7 +94,7 @@ export function updateProjectiles(w: World): void {
     if (m.pSpd[p] < def.maxSpd) m.pSpd[p] = Math.min(def.maxSpd, m.pSpd[p] + def.acc);
     m.pX[p] += fx.mul(fx.cos(m.pAng[p]), m.pSpd[p]);
     m.pY[p] += fx.mul(fx.sin(m.pAng[p]), m.pSpd[p]);
-    if (fx.len2(m.pX[p], m.pY[p]) > rimSquared) w.freeProjectile(p);
+    if (!inside(m.pX[p], m.pY[p], rim)) w.freeProjectile(p);
   }
   for (let p = 0; p < w.cap.projectiles; p++) {
     if (m.pAlive[p] === 1 && m.pAge[p] >= SHOT_DEFS[m.pDef[p]].life) detonate(w, p);

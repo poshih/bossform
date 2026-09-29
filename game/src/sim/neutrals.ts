@@ -2,7 +2,7 @@ import { fx } from '@metronome/engine';
 import { Attack, FLASH_TICKS, GAUGE_PER_DAMAGE_DEALT, NO_SEAT, ORB_VALUE, WARDEN_INTERVAL_TICKS } from './constants.ts';
 import { earn } from './energy.ts';
 import { Ev } from './events.ts';
-import { radial, within } from './geometry.ts';
+import { inside, radial, within } from './geometry.ts';
 import { W } from './layout.ts';
 import { dropOrbs } from './orbs.ts';
 import { fan, launch } from './projectiles.ts';
@@ -210,7 +210,7 @@ function warden(w: World, n: number): void {
 function keepNeutralInside(w: World, n: number): void {
   const { m } = w;
   const limit = w.arenaR - NEUTRAL_DEFS[m.nType[n]].rad;
-  if (within(m.nX[n], m.nY[n], limit)) return;
+  if (inside(m.nX[n], m.nY[n], limit)) return;
   const distance = radial(m.nX[n], m.nY[n]);
   m.nX[n] = fx.mul(fx.div(m.nX[n], distance), limit);
   m.nY[n] = fx.mul(fx.div(m.nY[n], distance), limit);

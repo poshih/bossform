@@ -7,7 +7,7 @@ import {
 import { DamageKind, damageShip } from './damage.ts';
 import { Banner, Ev } from './events.ts';
 import type { Vec } from './geometry.ts';
-import { within } from './geometry.ts';
+import { inside } from './geometry.ts';
 import { W } from './layout.ts';
 import { clearNeutrals, updateWaves } from './neutrals.ts';
 import { clearOrbs } from './orbs.ts';
@@ -72,7 +72,7 @@ function stormTick(w: World): void {
   m.world[W.SafeR] = safe;
   if (t % STORM_INTERVAL !== 0) return;
   for (let seat = 0; seat < w.seats; seat++) {
-    if (isFighting(w, seat) && !within(m.plX[seat], m.plY[seat], safe)) damageShip(w, seat, STORM_DAMAGE, NO_SEAT, DamageKind.Storm);
+    if (isFighting(w, seat) && !inside(m.plX[seat], m.plY[seat], safe)) damageShip(w, seat, STORM_DAMAGE, NO_SEAT, DamageKind.Storm);
   }
 }
 

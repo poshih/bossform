@@ -1,6 +1,6 @@
 import { fx } from '@metronome/engine';
 import { MOVE_MAX } from './input.ts';
-import { radial, within } from './geometry.ts';
+import { inside, radial } from './geometry.ts';
 import type { Vec } from './geometry.ts';
 import type { World } from './world.ts';
 
@@ -88,7 +88,7 @@ export function coast(w: World, seat: number): void {
 export function keepInside(w: World, seat: number, edge: number): void {
   const { m } = w;
   const limit = w.arenaR - edge;
-  if (within(m.plX[seat], m.plY[seat], limit)) return;
+  if (inside(m.plX[seat], m.plY[seat], limit)) return;
   const distance = radial(m.plX[seat], m.plY[seat]);
   const nx = fx.div(m.plX[seat], distance);
   const ny = fx.div(m.plY[seat], distance);

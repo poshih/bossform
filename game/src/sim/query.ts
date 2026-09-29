@@ -2,6 +2,7 @@ import { fx } from '@metronome/engine';
 import { Form, ORB_PICKUP_PAD } from './constants.ts';
 import { FRAME_STATS } from './frames.ts';
 import { FORMS } from './forms.ts';
+import { span2 } from './geometry.ts';
 import type { Vec } from './geometry.ts';
 import type { World } from './world.ts';
 
@@ -17,7 +18,7 @@ export function nearestHostile(w: World, x: number, y: number, team: number): nu
   let bestD = Infinity;
   for (let seat = 0; seat < w.seats; seat++) {
     if (!isFighting(w, seat) || m.plTeam[seat] === team) continue;
-    const d = fx.len2(m.plX[seat] - x, m.plY[seat] - y);
+    const d = span2(m.plX[seat] - x, m.plY[seat] - y);
     if (d < bestD) {
       bestD = d;
       best = seat;
@@ -33,7 +34,7 @@ export function nearestShip(w: World, x: number, y: number): number {
   let bestD = Infinity;
   for (let seat = 0; seat < w.seats; seat++) {
     if (!isFighting(w, seat)) continue;
-    const d = fx.len2(m.plX[seat] - x, m.plY[seat] - y);
+    const d = span2(m.plX[seat] - x, m.plY[seat] - y);
     if (d < bestD) {
       bestD = d;
       best = seat;

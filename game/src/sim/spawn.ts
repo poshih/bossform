@@ -1,5 +1,6 @@
 import { fx } from '@metronome/engine';
 import { RESPAWN_CANDIDATES, SPAWN_RING_PCT } from './constants.ts';
+import { span2 } from './geometry.ts';
 import type { Vec } from './geometry.ts';
 import { isFighting } from './query.ts';
 import type { World } from './world.ts';
@@ -38,7 +39,7 @@ export function respawnPoint(w: World, seat: number, out: Vec): number {
     let nearest = Infinity;
     for (let other = 0; other < w.seats; other++) {
       if (!isFighting(w, other) || m.plTeam[other] === m.plTeam[seat]) continue;
-      nearest = Math.min(nearest, fx.len2(m.plX[other] - at.x, m.plY[other] - at.y));
+      nearest = Math.min(nearest, span2(m.plX[other] - at.x, m.plY[other] - at.y));
     }
     if (nearest > bestNearest) {
       bestNearest = nearest;

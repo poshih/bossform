@@ -20,5 +20,5 @@ export { NEUTRAL_DEFS, NEUTRAL_TYPE_COUNT, NeutralType } from './neutrals.ts';
 export type { NeutralDef } from './neutrals.ts';
 export { AttackBlock, attackBlocker, attackFuel, canStartAttack } from './boss.ts';
 export { isFighting, partCenter, pickupRadius, podMuzzle } from './query.ts';
-export { radial, within } from './geometry.ts';
+export { inside, radial, span2, within } from './geometry.ts';
 export type { Vec } from './geometry.ts';
