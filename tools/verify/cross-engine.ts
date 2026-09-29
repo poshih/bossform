@@ -11,19 +11,19 @@ import { chromium, firefox, webkit } from 'playwright';
 import type { BrowserType } from 'playwright';
 import { checkReplays } from '../../game/src/dev/replayCheck.ts';
 import type { EngineReport } from '../../game/src/dev/replayCheck.ts';
-import { Frame } from '../../game/src/sim/index.ts';
-import { runBots } from './game-run.ts';
+import { Mode } from '../../game/src/sim/index.ts';
+import { freeForAll, rotatingFrames, runBots } from './game-run.ts';
 import { check, finish, info, section } from './lib.ts';
 
 const gameRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../game');
 const CHECK_PORT = 4432;
 
-section('recording the reference matches (Node, autopilot)');
+section('recording the reference matches (Node, bot pilots)');
 const runs = [
-  { name: 'solo VANGUARD, normal', spec: { seats: 1, frames: [Frame.Vanguard], ticks: 12000 } },
-  { name: 'solo GALE, hard', spec: { seats: 1, frames: [Frame.Gale], difficulty: 2, ticks: 12000 } },
-  { name: 'solo JUGGERNAUT, easy, stage 3', spec: { seats: 1, frames: [Frame.Juggernaut], difficulty: 0, stage: 2, ticks: 9000 } },
-  { name: 'co-op GALE + VANGUARD, hard', spec: { seats: 2, frames: [Frame.Gale, Frame.Vanguard], difficulty: 2, ticks: 14000 } },
+  { name: 'deathmatch, 8 pilots, free-for-all', spec: { mode: Mode.Deathmatch, frames: rotatingFrames(8), teams: freeForAll(8), ticks: 8000, seed: 31 } },
+  { name: 'elimination, 2 v 2 (a whole match)', spec: { mode: Mode.Elimination, frames: rotatingFrames(4, 1), teams: [0, 0, 1, 1], ticks: 40000, seed: 32 } },
+  { name: 'elimination, 3 pilots, free-for-all', spec: { mode: Mode.Elimination, frames: rotatingFrames(3, 2), teams: freeForAll(3), ticks: 40000, seed: 33 } },
+  { name: 'deathmatch, 12 pilots, teams of 3', spec: { mode: Mode.Deathmatch, frames: rotatingFrames(12), teams: Array.from({ length: 12 }, (_, s) => Math.floor(s / 3)), ticks: 5000, seed: 34 } },
 ];
 const recordings = runs.map((r) => {
   const run = runBots(r.spec);

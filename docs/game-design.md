@@ -42,7 +42,7 @@ for energy, and when you are charged, become the boss: a colossus that the other
 ## 3. Match structure
 
 - **Players:** 2 to 8 (a game-rule constant; nothing technical prevents more).
-- **Teams:** every seat has a team id; no friendly fire. 2v2, 4v4, 2v2v2v2 and free-for-all all use the same code.
+- **Teams:** every seat has a team id (any byte, so lobby colours carry into the match); no friendly fire. 2v2, 4v4, 2v2v2v2 and free-for-all all use the same code.
 - **Elimination [SET]:** one life per round, last team standing wins the round, best of 3. After 75 s the safe zone
   shrinks (sudden death) and neutral units intensify.
 - **Deathmatch [SET]:** respawn after 3 s with brief protection; team score = kills (a boss-form kill is worth more);

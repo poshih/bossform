@@ -1,4 +1,5 @@
 import { field } from '@metronome/engine';
+import { TEAM_LIMIT } from './constants.ts';
 import type { Capacity } from './constants.ts';
 
 /** Index map for the `world` scalar block. */
@@ -39,8 +40,8 @@ export function layoutFor(cap: Capacity) {
     rng: field.u32(4),
     world: field.i32(W.Count),
 
-    // Teams (indexed by team id, which is below the seat count)
-    teamWins: field.i32(S), teamScore: field.i32(S),
+    // Teams (indexed by team id)
+    teamWins: field.i32(TEAM_LIMIT), teamScore: field.i32(TEAM_LIMIT),
 
     // Ships (one entry per seat)
     plActive: field.u8(S), plAlive: field.u8(S), plFrame: field.u8(S), plTeam: field.u8(S), plForm: field.u8(S), plPrev: field.u8(S),

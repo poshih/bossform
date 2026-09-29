@@ -57,7 +57,7 @@ section('configuration is validated where it enters the simulation');
   check('a wrong length is rejected', throwsRange(() => decodeConfig(new Uint8Array(3), 2)));
   check('an unknown mode is rejected', throwsRange(() => decodeConfig(Uint8Array.of(9, 0, 0, 0, 1), 2)));
   check('an unknown frame is rejected', throwsRange(() => decodeConfig(Uint8Array.of(0, 7, 0, 0, 1), 2)));
-  check('a team id at or above the seat count is rejected', throwsRange(() => decodeConfig(Uint8Array.of(0, 0, 5, 0, 1), 2)));
+  check('team ids are free labels (a lobby\'s team colours survive into the match), as long as two teams exist', decodeConfig(Uint8Array.of(0, 0, 5, 0, 200), 2).seats[1].team === 200);
   check('a match with a single team is rejected', throwsRange(() => decodeConfig(Uint8Array.of(0, 0, 0, 0, 0), 2)));
 }
 

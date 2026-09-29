@@ -158,7 +158,7 @@ const PALADIN = defineForm({
     shot: shot({ kind: Proj.Heavy, spd: fx.lit(1.4), rad: fx.fromInt(12), dmg: 26, life: 210, burst: { count: 8, shot: PALADIN_SEEKER } }),
   },
   ultima: {
-    windup: 96, recovery: 130, cost: 35000, duration: 240, cooldown: 600, interval: 6, arms: 4, step: fx.deg(9),
+    windup: 96, recovery: 130, cost: 30000, duration: 240, cooldown: 600, interval: 6, arms: 4, step: fx.deg(9),
     shot: shot({ kind: Proj.Orb, spd: fx.lit(1.9), rad: fx.fromInt(4), dmg: 9, life: 300 }),
     ringEvery: 60, ringCount: 24,
     ringShot: shot({ kind: Proj.Orb, spd: fx.lit(1.5), rad: fx.fromInt(5), dmg: 10, life: 380 }),
@@ -199,7 +199,7 @@ const TEMPEST = defineForm({
     }),
   },
   ultima: {
-    windup: 90, recovery: 120, cost: 35000, duration: 240, cooldown: 600, interval: 5, arms: 3, step: fx.deg(13),
+    windup: 90, recovery: 120, cost: 30000, duration: 240, cooldown: 600, interval: 5, arms: 3, step: fx.deg(13),
     shot: shot({ kind: Proj.Blade, spd: fx.lit(2.6), rad: fx.lit(3.6), dmg: 8, life: 200 }),
     ringEvery: 45, ringCount: 30,
     ringShot: shot({ kind: Proj.Blade, spd: fx.lit(2), rad: fx.lit(3.2), dmg: 8, life: 260 }),
@@ -239,7 +239,7 @@ const FORTRESS = defineForm({
     }),
   },
   ultima: {
-    windup: 110, recovery: 150, cost: 38000, duration: 240, cooldown: 720, interval: 6, arms: 5, step: fx.deg(7),
+    windup: 110, recovery: 150, cost: 33000, duration: 240, cooldown: 720, interval: 6, arms: 5, step: fx.deg(7),
     shot: shot({ kind: Proj.Orb, spd: fx.lit(1.7), rad: fx.fromInt(5), dmg: 11, life: 320 }),
     ringEvery: 75, ringCount: 36,
     ringShot: shot({ kind: Proj.Heavy, spd: fx.lit(1.3), rad: fx.fromInt(7), dmg: 12, life: 420 }),

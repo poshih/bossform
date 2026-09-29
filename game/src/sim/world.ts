@@ -49,7 +49,6 @@ export function decodeConfig(bytes: Uint8Array, seats: number): MatchConfig {
     const frame = bytes[CONFIG_HEADER_BYTES + seat * CONFIG_BYTES_PER_SEAT];
     const team = bytes[CONFIG_HEADER_BYTES + seat * CONFIG_BYTES_PER_SEAT + 1];
     if (frame >= FRAME_COUNT) throw new RangeError(`match config: seat ${seat} has unknown frame ${frame}`);
-    if (team >= seats) throw new RangeError(`match config: seat ${seat} team ${team} must be below the seat count`);
     if (!teams.includes(team)) teams.push(team);
     list.push({ frame, team });
   }

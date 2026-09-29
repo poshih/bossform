@@ -12,6 +12,8 @@ export const TICK_RATE = 60;
 /** A game rule, not a technical limit: the engine and the simulation layout are sized from the seat count. */
 export const MAX_PLAYERS = 8;
 export const MIN_TEAMS = 2;
+/** Team ids are bytes, so a lobby's team colours survive into the match unchanged. */
+export const TEAM_LIMIT = 256;
 export const Mode = { Elimination: 0, Deathmatch: 1 } as const;
 export const MODE_COUNT = 2;
 export const Phase = { Countdown: 0, Battle: 1, RoundEnd: 2, Over: 3 } as const;
@@ -91,9 +93,9 @@ export const FLASH_TICKS = 8;
 export const GAUGE_SCALE = 100;
 export const GAUGE_MAX = 1000 * GAUGE_SCALE;
 export const BOSS_MIN_GAUGE = 500 * GAUGE_SCALE;
-export const GAUGE_PER_GRAZE = 7 * GAUGE_SCALE;
-export const GAUGE_PER_DAMAGE_DEALT = 40;
-export const GAUGE_PER_DAMAGE_TAKEN = 60;
+export const GAUGE_PER_GRAZE = 3 * GAUGE_SCALE;
+export const GAUGE_PER_DAMAGE_DEALT = 25;
+export const GAUGE_PER_DAMAGE_TAKEN = 40;
 export const GAUGE_PER_ABSORB = 3 * GAUGE_SCALE;
 /** Damage dealt to boss-form parts refuels the attacker at this percent of the normal rate. */
 export const BOSS_PART_GAIN_PCT = 200;
@@ -104,8 +106,8 @@ export const HOT_PART_DAMAGE_PCT = 150;
 export const Form = { Normal: 0, Morph: 1, Boss: 2 } as const;
 export const MORPH_TICKS = 46;
 export const REVERT_PROTECT_TICKS = 30;
-/** Passive fuel burn: 0.35 gauge points per tick, about 21 per second. */
-export const BOSS_DRAIN_PER_TICK = 35;
+/** Passive fuel burn: 0.28 gauge points per tick, about 17 per second. */
+export const BOSS_DRAIN_PER_TICK = 28;
 /** Velocity removed per tick while a rooted boss form brakes (units/tick). */
 export const ROOT_BRAKE = fx.lit(0.25);
 
@@ -116,7 +118,7 @@ export const AttackPhase = { Idle: 0, Windup: 1, Release: 2, Recovery: 3 } as co
 export const MIN_WINDUP_TICKS: readonly number[] = [0, 12, 36, 90];
 
 // ---- Energy orbs ----------------------------------------------------------------------------------------
-export const ORB_VALUE = 12 * GAUGE_SCALE;
+export const ORB_VALUE = 8 * GAUGE_SCALE;
 export const ORB_LIFETIME = 15 * TICK_RATE;
 export const ORB_MAGNET_DELAY = 30;
 export const ORB_MAGNET_RADIUS = fx.fromInt(90);
