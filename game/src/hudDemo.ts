@@ -186,6 +186,7 @@ function frame(now: number): void {
     beat: beatClock.state,
     time: performance.now() / 1000,
     cursor,
+    touch: false,
   });
   if (!ready) {
     ready = true;

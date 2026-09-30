@@ -15,22 +15,25 @@
  *   ROOM_CAPACITY                                          -> members per room (default 8)
  */
 import { WebSocketServer } from 'ws';
+import { BROADCAST_PEER } from '@metronome/engine';
 import type { RawData, WebSocket } from 'ws';
+import {
+  DEFAULT_ROOM_CAPACITY,
+  MAX_FRAME_BYTES,
+  MAX_MEMBER_DATA_CHARS,
+  MAX_SETTINGS_CHARS,
+  MAX_START_CHARS,
+  MAX_TEXT_BYTES,
+  RELAY_HEADER_BYTES,
+} from './protocol.ts';
+import type { RelayControlMessage } from './protocol.ts';
 
 const PORT = Number(process.argv[2] ?? process.env.PORT ?? 4431);
-const ROOM_CAPACITY = Number(process.env.ROOM_CAPACITY ?? 8);
-const MAX_FRAME_BYTES = 1024;
-const MAX_MEMBER_DATA_CHARS = 200;
-const MAX_SETTINGS_CHARS = 1500;
-const MAX_START_CHARS = 4000;
+const ROOM_CAPACITY = Number(process.env.ROOM_CAPACITY ?? DEFAULT_ROOM_CAPACITY);
 const LATENCY_MS = Number(process.env.RELAY_LATENCY_MS ?? 0);
 const JITTER_MS = Number(process.env.RELAY_JITTER_MS ?? 0);
 const LOSS = Number(process.env.RELAY_LOSS ?? 0);
-const RELAY_HEADER_BYTES = 2;
-const BROADCAST_PEER = 0xffff;
 const CLOSE_TRY_AGAIN_LATER = 1013;
-/** Text frames may be longer than binary ones (the start payload lists every seat). */
-const MAX_TEXT_BYTES = 8192;
 
 interface Member {
   socket: WebSocket;
@@ -86,7 +89,7 @@ function scheduleBinary(socket: WebSocket, origin: number, payload: Uint8Array):
 }
 
 function handleText(room: Room, member: Member, raw: string): void {
-  let message: { type?: string; data?: unknown };
+  let message: RelayControlMessage;
   try {
     message = JSON.parse(raw) as typeof message;
   } catch {

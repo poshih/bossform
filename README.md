@@ -16,6 +16,7 @@ Stack: Vite + TypeScript + Three.js (full-resolution MSAA + bloom, sleek vector 
 engine/   @metronome/engine   deterministic lockstep engine: zero dependencies, no DOM, no Node, no game vocabulary
 game/     @bossform/game      the game: deterministic sim (game/src/sim) + Three.js/DOM presentation
 tools/    verify/ relay/      eval scripts (no test framework) and a dev WebSocket relay + room lobby
+cloudflare/                   production WebSocket relay (Worker + one hibernating Durable Object per room)
 docs/                         game design, client architecture
 ```
 
@@ -27,16 +28,19 @@ npm run dev          # http://127.0.0.1:4427
 npm run build        # typecheck everything, then game/dist (relative paths, ~220 KB gzip)
 ```
 
-| | Keyboard + mouse | Gamepad |
-|---|---|---|
-| Move | `W A S D` | left stick |
-| Aim (independent of movement) | mouse cursor (or arrow keys) | right stick |
-| Fire / boss **Salvo** | left click, `J` | `RT`, `RB`, `A` |
-| Alt / boss **Siege shot** | right click, `K` | `LT`, `B` |
-| **Boost** (robot; its first instant dodges through bullets) | `Shift` | `LB` |
-| **Transform** (boss gauge at least 50%) | `Space` | `Y` |
-| Boss **Ultima** | `E` | `X` |
-| Pause / mute | `Esc` `P` / `M` | `Start` |
+| | Keyboard + mouse | Gamepad | Touch (landscape) |
+|---|---|---|---|
+| Move | `W A S D` | left stick | drag left thumb |
+| Aim (independent of movement) | mouse cursor (or arrow keys) | right stick | drag right thumb |
+| Fire / boss **Salvo** | left click, `J` | `RT`, `RB`, `A` | push the right drag outward |
+| Alt / boss **Siege shot** | right click, `K` | `LT`, `B` | tap right |
+| **Boost** (robot; its first instant dodges through bullets) | `Shift` | `LB` | tap left |
+| **Transform** (boss gauge at least 50%) | `Space` | `Y` | hold both thumbs |
+| Boss **Ultima** | `E` | `X` | hold both thumbs |
+| Pause / mute | `Esc` `P` / `M` | `Start` | tap both thumbs / pause menu |
+
+Phones and tablets use a thin top HUD and two floating, nearly invisible thumb traces. Landscape is the supported mobile
+orientation; portrait remains playable enough to rotate without reloading the match.
 
 **Modes.** *Elimination*: one life per round, last team standing, best of three; after 75 s the safe zone shrinks and the
 storm hurts everything outside it. *Deathmatch*: score kills, respawn after 3 s, 3 minutes. Teams are free labels (2v2,
@@ -130,6 +134,40 @@ http://127.0.0.1:4427/?relay=ws://127.0.0.1:4431/&name=ALPHA
 The relay is a dumb room lobby (opaque per-member and room payloads, the lowest peer id is host) plus a datagram forwarder;
 it never sees game state. The host chooses the mode, adds bots (owned by the host's machine) and starts. A static host
 that forbids outbound connections can run everything except online play.
+
+### Cloudflare production hosting
+
+`cloudflare/src/relay.ts` provides the same lobby and binary forwarding protocol as a hibernating Durable Object, one
+object per room. Cloudflare remains a dumb relay: every browser still runs the deterministic lockstep simulation and only
+the five-byte-per-seat inputs cross the network.
+
+Authenticate Wrangler without putting credentials in the repository:
+
+```sh
+npx wrangler login
+# On a headless machine, alternatively set CLOUDFLARE_API_TOKEN in the shell; never commit it.
+```
+
+Deploy the relay and note the `https://bossform-relay.<subdomain>.workers.dev` URL printed by Wrangler:
+
+```sh
+npm run cloudflare:relay:deploy
+curl https://bossform-relay.<subdomain>.workers.dev/health
+```
+
+The browser must use the corresponding `wss://` URL. Inject it when Vite builds the static game, then create and deploy the
+Pages project:
+
+```sh
+VITE_RELAY_URL=wss://bossform-relay.<subdomain>.workers.dev/ npm run build -w @bossform/game
+npm run cloudflare:pages:create                 # first deployment only
+npm run cloudflare:pages:deploy
+```
+
+For a Git-connected Cloudflare Pages project use repository root `/`, build command
+`npm run build -w @bossform/game`, output directory `game/dist`, and set
+`VITE_RELAY_URL=wss://bossform-relay.<subdomain>.workers.dev/` in the Pages build environment. The `?relay=` URL option
+still overrides the build-time relay, and local development still defaults to `ws://127.0.0.1:4431/`.
 
 ## URL options and dev pages (all optional)
 

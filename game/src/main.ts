@@ -15,6 +15,7 @@ const MAX_FRAME_SECONDS = 0.1;
 const DEFAULT_RELAY_PORT = 4431;
 const DEFAULT_PLAYER_NAME = 'PILOT';
 const MAX_TIMESCALE = 8;
+const BUILD_RELAY_URL = import.meta.env.VITE_RELAY_URL?.trim();
 
 const boot = document.getElementById('boot')!;
 const status = document.getElementById('boot-status')!;
@@ -40,6 +41,14 @@ function parseStart(query: URLSearchParams): MatchSetup | null {
   return query.get('autoplay') === '1' ? { ...setup, pilots: setup.pilots.map((pilot) => ({ ...pilot, bot: true })) } : setup;
 }
 
+function relayUrl(query: URLSearchParams): string {
+  return query.get('relay') ?? BUILD_RELAY_URL ?? `ws://${location.hostname}:${DEFAULT_RELAY_PORT}/`;
+}
+
+function onlineEnabled(query: URLSearchParams): boolean {
+  return query.has('relay') || Boolean(BUILD_RELAY_URL) || ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+}
+
 async function start(): Promise<void> {
   const query = new URLSearchParams(location.search);
   const container = document.getElementById('app')!;
@@ -52,9 +61,15 @@ async function start(): Promise<void> {
   let app: App;
   try {
     app = new App(
-      { stageCanvas, hudCanvas, menusRoot: document.getElementById('menus')!, notice: document.getElementById('notice')! },
       {
-        relayUrl: query.get('relay') ?? `ws://${location.hostname}:${DEFAULT_RELAY_PORT}/`,
+        stageCanvas,
+        hudCanvas,
+        menusRoot: document.getElementById('menus')!,
+        notice: document.getElementById('notice')!,
+      },
+      {
+        relayUrl: relayUrl(query),
+        onlineEnabled: onlineEnabled(query),
         playerName: query.get('name') ?? DEFAULT_PLAYER_NAME,
         timescale: Math.min(MAX_TIMESCALE, Math.max(1, Math.floor(Number(query.get('timescale') ?? 1)))),
         start: parseStart(query),

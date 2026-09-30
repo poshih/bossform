@@ -105,6 +105,20 @@ const PART_SCHEMATIC_PAD = 12;
 const SCOREBOARD_WIDTH = 250;
 const FEED_WIDTH = 270;
 const TIMER_WIDTH = 290;
+const TOUCH_CONTROL_WIDTH = 190;
+const TOUCH_CONTROL_HEIGHT = 180;
+const TOUCH_CONTROL_WIDTH_SHARE = 0.34;
+const TOUCH_CONTROL_HEIGHT_SHARE = 0.58;
+const TOUCH_HUD_MAX_WIDTH = 760;
+const TOUCH_HUD_HEIGHT = 74;
+const TOUCH_HUD_CENTER_WIDTH = 122;
+const TOUCH_HUD_PAD = 12;
+const TOUCH_HUD_GAP = 10;
+const TOUCH_HUD_BAR_HEIGHT = 6;
+const TOUCH_HUD_LABEL_Y = 16;
+const TOUCH_HUD_BAR_Y = 21;
+const TOUCH_HUD_SECOND_LABEL_Y = 45;
+const TOUCH_HUD_SECOND_BAR_Y = 50;
 const SAFE_ZONE_STROKE = 2;
 const RADAR_VIEW_CORNERS = [[0, 0], [1, 0], [1, 1], [0, 1]] as const;
 const RADAR_VIEW_STROKE = 'rgba(255,255,255,0.36)';
@@ -339,6 +353,7 @@ export interface HudView {
   readonly beat: Beat;
   readonly time: number;
   readonly cursor: { x: number; y: number } | null;
+  readonly touch: boolean;
 }
 
 export class Hud {
@@ -395,21 +410,32 @@ export class Hud {
     const timerRect = this.rect(width * 0.5 - this.s(TIMER_WIDTH) * 0.5, margin, this.s(TIMER_WIDTH), 0);
     const radarSize = this.s(RADAR_BASE);
     const radarRect = this.rect(margin, height - margin - radarSize, radarSize, radarSize);
-    const localWidth = clamp(width * (this.scale < 0.85 ? 0.28 : 0.33), this.s(300), this.s(440));
-    const localLayout = this.measureLocalPanel(ctx, world, view.seat, localWidth);
-    const localRect = this.rect(width * 0.5 - localWidth * 0.5, height - margin - localLayout.height, localWidth, localLayout.height);
+    const touchControlWidth = Math.min(TOUCH_CONTROL_WIDTH, width * TOUCH_CONTROL_WIDTH_SHARE);
+    const touchControlHeight = Math.min(TOUCH_CONTROL_HEIGHT, height * TOUCH_CONTROL_HEIGHT_SHARE);
     ctx.save();
     ctx.imageSmoothingEnabled = true;
-    this.drawNameTags(ctx, view);
-    // Each panel reports the area it covered (heights depend on the rows drawn): off-screen pointers keep clear of them.
-    const covered: Rect[] = [
-      this.drawScoreboard(ctx, view, scoreboardRect.x, scoreboardRect.y, scoreboardRect.width),
-      this.drawKillFeed(ctx, view, feedRect.x, feedRect.y, feedRect.width),
-      this.drawTimer(ctx, view, timerRect.x, timerRect.y, timerRect.width),
-      this.drawRadar(ctx, view, radarRect.x, radarRect.y, radarRect.width),
-      localRect,
-    ];
-    this.drawLocalPanel(ctx, view, localRect, localLayout);
+    let covered: Rect[];
+    if (view.touch) {
+      const touchHudWidth = Math.min(TOUCH_HUD_MAX_WIDTH, width - margin * 2);
+      covered = [
+        this.drawTouchStrip(ctx, view, (width - touchHudWidth) * 0.5, Math.max(8, margin), touchHudWidth),
+        this.rect(0, height - touchControlHeight, touchControlWidth, touchControlHeight),
+        this.rect(width - touchControlWidth, height - touchControlHeight, touchControlWidth, touchControlHeight),
+      ];
+    } else {
+      const localWidth = clamp(width * (this.scale < 0.85 ? 0.28 : 0.33), this.s(300), this.s(440));
+      const localLayout = this.measureLocalPanel(ctx, world, view.seat, localWidth);
+      const localRect = this.rect(width * 0.5 - localWidth * 0.5, height - margin - localLayout.height, localWidth, localLayout.height);
+      this.drawNameTags(ctx, view);
+      covered = [
+        this.drawScoreboard(ctx, view, scoreboardRect.x, scoreboardRect.y, scoreboardRect.width),
+        this.drawKillFeed(ctx, view, feedRect.x, feedRect.y, feedRect.width),
+        this.drawTimer(ctx, view, timerRect.x, timerRect.y, timerRect.width),
+        this.drawRadar(ctx, view, radarRect.x, radarRect.y, radarRect.width),
+        localRect,
+      ];
+      this.drawLocalPanel(ctx, view, localRect, localLayout);
+    }
     if (this.ultimaAlerts.length > 0) covered.push(this.ultimaBannerRect(width));
     this.drawOffscreenIndicators(ctx, view, covered);
     this.drawUltimaAlert(ctx, view, covered);
@@ -417,6 +443,86 @@ export class Hud {
     this.drawCountdownPulse(ctx, view);
     this.drawStateWarnings(ctx, view, time);
     this.drawReticle(ctx, view);
+    ctx.restore();
+  }
+
+  private drawTouchStrip(ctx: CanvasRenderingContext2D, view: HudView, x: number, y: number, width: number): Rect {
+    const { world, seat } = view;
+    const { m } = world;
+    const frame = m.plFrame[seat];
+    const stats = FRAME_STATS[frame];
+    const motion = this.seatMotion[seat];
+    const accent = cssHex(teamColor(m.plTeam[seat]));
+    const pad = this.s(TOUCH_HUD_PAD);
+    const gap = this.s(TOUCH_HUD_GAP);
+    const centerWidth = Math.min(TOUCH_HUD_CENTER_WIDTH, width * 0.24);
+    const sideWidth = (width - pad * 2 - centerWidth - gap * 2) * 0.5;
+    const leftX = x + pad;
+    const centerX = leftX + sideWidth + gap;
+    const rightX = centerX + centerWidth + gap;
+    const barHeight = Math.max(4, this.s(TOUCH_HUD_BAR_HEIGHT));
+    const labelY = y + this.s(TOUCH_HUD_LABEL_Y);
+    const barY = y + this.s(TOUCH_HUD_BAR_Y);
+    const secondLabelY = y + this.s(TOUCH_HUD_SECOND_LABEL_Y);
+    const secondBarY = y + this.s(TOUCH_HUD_SECOND_BAR_Y);
+    this.drawPanel(ctx, x, y, width, TOUCH_HUD_HEIGHT, accent);
+
+    this.drawMetricRow(ctx, 'HP', `${Math.max(0, m.plHp[seat])}/${stats.hp}`, leftX, labelY, sideWidth, accent, accent);
+    this.drawMeter(ctx, leftX, barY, sideWidth, barHeight, motion.hpFill, accent, 'rgba(255,255,255,0.08)', { ghost: motion.hpGhost });
+    if (m.plForm[seat] === Form.Boss) {
+      this.drawMetricRow(ctx, 'FUEL', `${Math.floor(m.plGauge[seat] / GAUGE_SCALE)}`, leftX, secondLabelY, sideWidth, UI_TEXT_DIM, UI_TEXT);
+      this.drawMeter(ctx, leftX, secondBarY, sideWidth, barHeight, motion.energyFill, UI_ACCENT);
+    } else {
+      this.drawMetricRow(ctx, 'ENERGY', `${m.plEnergy[seat]}`, leftX, secondLabelY, sideWidth, UI_TEXT_DIM, UI_TEXT);
+      this.drawMeter(ctx, leftX, secondBarY, sideWidth, barHeight, motion.poolFill, m.plShield[seat] === 1 ? ENERGY_SHIELD_COLOR : ENERGY_OPEN_COLOR);
+    }
+
+    const phase = m.world[W.Phase];
+    const roundTick = m.world[W.RoundTick];
+    const timeText = phase === Phase.Countdown
+      ? formatCompactSeconds(m.world[W.PhaseTimer] / TICK_RATE)
+      : world.isDeathmatch
+        ? formatClock((DEATHMATCH_TICKS - roundTick) / TICK_RATE)
+        : formatClock(Math.max(0, (SUDDEN_DEATH_TICKS - roundTick) / TICK_RATE));
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = UI_TEXT_DIM;
+    ctx.font = `${LABEL_FONT_WEIGHT} ${this.s(9)}px ${UI_FONT_STACK}`;
+    ctx.fillText(world.isDeathmatch ? 'DEATHMATCH' : `ROUND ${m.world[W.Round]}`, centerX + centerWidth * 0.5, labelY);
+    ctx.fillStyle = UI_TEXT;
+    ctx.font = `${TITLE_FONT_WEIGHT} ${this.s(24)}px ${UI_FONT_STACK}`;
+    ctx.fillText(timeText, centerX + centerWidth * 0.5, y + this.s(42));
+    ctx.restore();
+
+    if (m.plForm[seat] === Form.Boss) {
+      const attack = m.plAtk[seat];
+      const tell = attack === Attack.None ? FORM_NAMES[frame] : `${ATTACK_LABELS[attack]} ${PHASE_LABELS[m.plAtkPhase[seat]]}`;
+      this.drawMetricHeader(ctx, 'BOSS FORM', rightX, labelY, accent);
+      this.drawTouchStatus(ctx, tell, rightX, barY + this.s(10), sideWidth, attack === Attack.None ? UI_TEXT : UI_WARNING);
+      this.drawTouchStatus(ctx, canStartAttack(world, seat, Attack.Ultima) ? 'ULTIMA READY' : 'ULTIMA CHARGING', rightX, secondLabelY + this.s(7), sideWidth, canStartAttack(world, seat, Attack.Ultima) ? UI_SUCCESS : UI_TEXT_DIM);
+    } else {
+      this.drawMetricRow(ctx, 'BOSS GAUGE', `${Math.floor(m.plGauge[seat] / GAUGE_SCALE)}`, rightX, labelY, sideWidth, UI_TEXT_DIM, UI_TEXT);
+      this.drawMeter(ctx, rightX, barY, sideWidth, barHeight, motion.energyFill, UI_ACCENT);
+      const boost = canBoost(world, seat) ? 'BOOST READY' : 'BOOST WAIT';
+      const alt = canUseAlt(world, seat) ? 'ALT READY' : 'ALT WAIT';
+      const form = m.plGauge[seat] >= BOSS_MIN_GAUGE ? 'FORM READY' : `FORM ${Math.floor((m.plGauge[seat] * 100) / BOSS_MIN_GAUGE)}%`;
+      this.drawTouchStatus(ctx, `${boost} · ${alt} · ${form}`, rightX, secondLabelY + this.s(7), sideWidth, m.plGauge[seat] >= BOSS_MIN_GAUGE ? UI_SUCCESS : UI_TEXT_DIM);
+    }
+    return this.rect(x, y, width, TOUCH_HUD_HEIGHT);
+  }
+
+  private drawTouchStatus(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, width: number, color: string): void {
+    ctx.save();
+    let size = this.s(9);
+    ctx.font = `${LABEL_FONT_WEIGHT} ${size}px ${UI_FONT_STACK}`;
+    const measured = ctx.measureText(text).width;
+    if (measured > width) {
+      size = Math.max(this.s(7), size * (width / measured));
+      ctx.font = `${LABEL_FONT_WEIGHT} ${size}px ${UI_FONT_STACK}`;
+    }
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.fillText(text, x + width * 0.5, y);
     ctx.restore();
   }
 

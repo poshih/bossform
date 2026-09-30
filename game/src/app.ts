@@ -28,6 +28,7 @@ export interface AppParts {
 
 export interface AppOptions {
   readonly relayUrl: string;
+  readonly onlineEnabled: boolean;
   readonly playerName: string;
   /** Development and test aid for single-machine matches: simulate this many times faster (whole number, at most the clock's catch-up limit). */
   readonly timescale: number;
@@ -102,7 +103,11 @@ export class App {
       onRematch: () => this.rematch(),
       onToggleMute: () => this.toggleMute(),
     });
-    audio.onMuteChange = () => undefined;
+    this.menus.setOnlineAvailable(options.onlineEnabled);
+    audio.onMuteChange = (muted) => {
+      this.menus.setMuted(muted);
+    };
+    audio.onMuteChange(audio.isMuted());
   }
 
   /** Starts the application: a requested match at once, else the title screen over a bot match. */
@@ -333,6 +338,7 @@ export class App {
       beat,
       time: this.elapsedSeconds,
       cursor: this.screen === 'play' && run.localSeat >= 0 && isFighting(world, run.localSeat) ? this.devices.cursor : null,
+      touch: this.devices.touchActive,
     });
   }
 

@@ -260,17 +260,20 @@ Hostile to everyone: pressure and an energy source, never a substitute for PvP.
 
 ## 6. Controls
 
-| | Keyboard + mouse | Gamepad |
-|---|---|---|
-| Move | `W A S D` | left stick |
-| Aim | mouse cursor (or arrows) | right stick |
-| Fire / **Salvo** | left click, `J` | `RT`, `RB`, `A` |
-| Alt / **Siege shot** | right click, `K` | `LT`, `B` |
-| **Boost** (robot) | `Shift` | `LB` |
-| Transform | `Space` | `Y` |
-| **Ultima** (boss form) | `E` | `X` |
-| Pause | `Esc`, `P` | `Start` |
-| Mute | `M` | none |
+| | Keyboard + mouse | Gamepad | Touch (landscape) |
+|---|---|---|---|
+| Move | `W A S D` | left stick | drag left thumb |
+| Aim | mouse cursor (or arrows) | right stick | drag right thumb |
+| Fire / **Salvo** | left click, `J` | `RT`, `RB`, `A` | push the right drag outward |
+| Alt / **Siege shot** | right click, `K` | `LT`, `B` | tap right |
+| **Boost** (robot) | `Shift` | `LB` | tap left |
+| Transform | `Space` | `Y` | hold both thumbs |
+| **Ultima** (boss form) | `E` | `X` | hold both thumbs |
+| Pause | `Esc`, `P` | `Start` | tap both thumbs |
+| Mute | `M` | none | pause menu |
+
+Mobile play uses floating twin-stick gestures with only a faint trace under each active thumb. Essential status moves to a
+thin safe-area-aware strip at the top. Landscape is the supported orientation; rotating does not restart or alter the match.
 
 ## 7. Presentation
 

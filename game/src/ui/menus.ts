@@ -24,8 +24,6 @@ const TITLE_TAGLINE = 'VECTOR MECH ARENA';
 const RESULT_COUNT_SECONDS = 0.72;
 const SETUP_TEAM_PRESETS = ['free-for-all', 'two-teams', 'four-teams'] as const;
 type SetupTeamPreset = typeof SETUP_TEAM_PRESETS[number];
-const SETUP_VARIANTS = ['quick', 'custom'] as const;
-type SetupVariant = typeof SETUP_VARIANTS[number];
 const SCREEN_IDS = ['title', 'setup', 'lobby', 'help', 'pause', 'results'] as const;
 export type MenuScreenId = typeof SCREEN_IDS[number];
 export const MenuScreen = {
@@ -38,7 +36,6 @@ export const MenuScreen = {
 } as const satisfies Record<string, MenuScreenId>;
 
 interface SetupState {
-  variant: SetupVariant;
   mode: number;
   frame: number;
   opponents: number;
@@ -70,9 +67,10 @@ export class Menus {
   private readonly shell: HTMLDivElement;
   private readonly screenEls: Record<MenuScreenId, HTMLElement>;
   private readonly roomInput: HTMLInputElement;
+  private readonly titleOnline: HTMLButtonElement;
   private readonly titleMute: HTMLButtonElement;
+  private readonly pauseMute: HTMLButtonElement;
   private readonly setupInfo: HTMLDivElement;
-  private readonly setupStartLabel: HTMLSpanElement;
   private readonly lobbyModeWrap: HTMLDivElement;
   private readonly lobbyContent: HTMLDivElement;
   private readonly resultsContent: HTMLDivElement;
@@ -81,7 +79,6 @@ export class Menus {
   private lobbyState: LobbyState | null = null;
   private helpPage = 0;
   private readonly setupState: SetupState = {
-    variant: 'quick',
     mode: Mode.Elimination,
     frame: Frame.Vanguard,
     opponents: 3,
@@ -108,9 +105,10 @@ export class Menus {
     Object.values(this.screenEls).forEach((screen) => this.shell.append(screen));
     root.append(this.shell);
     this.roomInput = this.screenEls.lobby.querySelector('[data-room-input]') as HTMLInputElement;
+    this.titleOnline = this.screenEls.title.querySelector('[data-title-action="online"]') as HTMLButtonElement;
     this.titleMute = this.screenEls.title.querySelector('[data-mute-toggle]') as HTMLButtonElement;
+    this.pauseMute = this.screenEls.pause.querySelector('[data-pause-action="mute"]') as HTMLButtonElement;
     this.setupInfo = this.screenEls.setup.querySelector('[data-setup-info]') as HTMLDivElement;
-    this.setupStartLabel = this.screenEls.setup.querySelector('[data-setup-start-label]') as HTMLSpanElement;
     this.lobbyModeWrap = this.screenEls.lobby.querySelector('[data-lobby-mode-wrap]') as HTMLDivElement;
     this.lobbyContent = this.screenEls.lobby.querySelector('[data-lobby-content]') as HTMLDivElement;
     this.resultsContent = this.screenEls.results.querySelector('[data-results-content]') as HTMLDivElement;
@@ -142,9 +140,15 @@ export class Menus {
     this.root.hidden = true;
   }
 
+  setOnlineAvailable(available: boolean): void {
+    this.titleOnline.hidden = !available;
+  }
+
   setMuted(muted: boolean): void {
     this.titleMute.textContent = muted ? 'Audio: Off' : 'Audio: On';
     this.titleMute.setAttribute('aria-pressed', String(muted));
+    this.pauseMute.textContent = muted ? 'Audio: Off' : 'Audio: On';
+    this.pauseMute.setAttribute('aria-pressed', String(muted));
   }
 
   update(lobby: LobbyState): void {
@@ -178,8 +182,7 @@ export class Menus {
         <div class="bf-title-mark">BOSSFORM</div>
         <div class="bf-title-tag">${TITLE_TAGLINE}</div>
         <div class="bf-title-grid">
-          <button type="button" class="bf-action" data-title-action="quick" data-autofocus>Quick Battle</button>
-          <button type="button" class="bf-action" data-title-action="custom">Custom Match</button>
+          <button type="button" class="bf-action" data-title-action="quick" data-autofocus>Offline Match</button>
           <button type="button" class="bf-action" data-title-action="online">Online</button>
           <button type="button" class="bf-action" data-title-action="help">How to Play</button>
         </div>
@@ -218,12 +221,12 @@ export class Menus {
       <div class="bf-card bf-setup-card">
         <div class="bf-head-row">
           <div>
-            <div class="bf-screen-title">Quick / Custom Match</div>
+            <div class="bf-screen-title">Offline Match</div>
             <div class="bf-screen-copy">Build a sharp vector duel. Bots fill every empty seat.</div>
           </div>
           <button type="button" class="bf-ghost" data-screen="title">Back</button>
         </div>
-        <div class="bf-subtitle" data-setup-variant></div>
+        <div class="bf-subtitle">Choose the mode, frame, opponents, and team layout.</div>
         <div class="bf-grid-2">${modeCards}</div>
         <div class="bf-grid-3">${frameCards}</div>
         <div class="bf-grid-3">${teamCards}</div>
@@ -233,7 +236,7 @@ export class Menus {
         <div class="bf-setup-info" data-setup-info></div>
         <div class="bf-footer-actions">
           <button type="button" class="bf-ghost" data-screen="help">Controls</button>
-          <button type="button" class="bf-action" data-setup-start><span data-setup-start-label>Start Match</span></button>
+          <button type="button" class="bf-action" data-setup-start>Start Match</button>
         </div>
       </div>`;
     return section;
@@ -292,6 +295,7 @@ export class Menus {
         <div class="bf-title-grid bf-single-column">
           <button type="button" class="bf-action" data-pause-action="resume" data-autofocus>Resume</button>
           <button type="button" class="bf-action" data-pause-action="controls">Controls</button>
+          <button type="button" class="bf-action" data-pause-action="mute" aria-pressed="false">Audio: On</button>
           <button type="button" class="bf-action" data-pause-action="quit">Quit to Title</button>
         </div>
       </div>`;
@@ -331,13 +335,6 @@ export class Menus {
     }
     const titleAction = target.closest<HTMLElement>('[data-title-action]')?.dataset.titleAction;
     if (titleAction === 'quick') {
-      this.setupState.variant = 'quick';
-      this.renderSetup();
-      this.show(MenuScreen.Setup);
-      return;
-    }
-    if (titleAction === 'custom') {
-      this.setupState.variant = 'custom';
       this.renderSetup();
       this.show(MenuScreen.Setup);
       return;
@@ -420,6 +417,10 @@ export class Menus {
       this.show(MenuScreen.Help);
       return;
     }
+    if (pauseAction === 'mute') {
+      this.callbacks.onToggleMute();
+      return;
+    }
     if (pauseAction === 'quit') {
       this.callbacks.onQuitToTitle();
       return;
@@ -488,8 +489,6 @@ export class Menus {
   }
 
   private renderSetup(): void {
-    this.screenEls.setup.querySelector('[data-setup-variant]')!.textContent = this.setupState.variant === 'quick' ? 'Quick preset with bots — tune it, then launch.' : 'Custom local match — pick the frame, mode, and team layout.';
-    this.setupStartLabel.textContent = this.setupState.variant === 'quick' ? 'Launch Quick Battle' : 'Start Custom Match';
     this.screenEls.setup.querySelectorAll<HTMLElement>('[data-setup-mode]').forEach((node) => node.dataset.active = String(Number(node.dataset.setupMode) === this.setupState.mode));
     this.screenEls.setup.querySelectorAll<HTMLElement>('[data-setup-frame]').forEach((node) => node.dataset.active = String(Number(node.dataset.setupFrame) === this.setupState.frame));
     this.screenEls.setup.querySelectorAll<HTMLElement>('[data-setup-preset]').forEach((node) => node.dataset.active = String(node.dataset.setupPreset === this.setupState.preset));
@@ -585,17 +584,18 @@ export class Menus {
       content.innerHTML = `
         <div class="bf-help-page">
           <div class="bf-screen-copy">Controls</div>
-          <table class="bf-table"><tbody>
-            <tr><th>Move</th><td>WASD</td><td>Left Stick</td></tr>
-            <tr><th>Aim</th><td>Mouse</td><td>Right Stick</td></tr>
-            <tr><th>Fire / Salvo</th><td>LMB</td><td>RT</td></tr>
-            <tr><th>Alt / Siege</th><td>RMB</td><td>LT</td></tr>
-            <tr><th>Boost</th><td>Shift</td><td>LB</td></tr>
-            <tr><th>Transform</th><td>Space</td><td>Y</td></tr>
-            <tr><th>Ultima</th><td>E</td><td>X</td></tr>
-            <tr><th>Pause</th><td>Esc</td><td>Start</td></tr>
-            <tr><th>Mute</th><td>M</td><td>—</td></tr>
-          </tbody></table>
+          <div class="bf-table-scroll"><table class="bf-table"><tbody>
+            <tr><th>Move</th><td>WASD</td><td>Left Stick</td><td>Left drag</td></tr>
+            <tr><th>Aim</th><td>Mouse</td><td>Right Stick</td><td>Right drag</td></tr>
+            <tr><th>Fire / Salvo</th><td>LMB</td><td>RT</td><td>Push right drag outward</td></tr>
+            <tr><th>Alt / Siege</th><td>RMB</td><td>LT</td><td>Tap right</td></tr>
+            <tr><th>Boost</th><td>Shift</td><td>LB</td><td>Tap left</td></tr>
+            <tr><th>Transform</th><td>Space</td><td>Y</td><td>Hold both thumbs</td></tr>
+            <tr><th>Ultima</th><td>E</td><td>X</td><td>Hold both thumbs</td></tr>
+            <tr><th>Pause</th><td>Esc</td><td>Start</td><td>Tap both thumbs</td></tr>
+            <tr><th>Mute</th><td>M</td><td>—</td><td>Pause menu</td></tr>
+          </tbody></table></div>
+          <div class="bf-screen-copy">Touch sticks float under your thumbs and only show a faint direction trace while held.</div>
         </div>`;
     } else {
       content.innerHTML = `
@@ -683,7 +683,7 @@ function ensureStyles(): void {
       --bf-track: ${UI_CAPS_SPACING};
     }
     .bf-menu-root { position: absolute; inset: 0; font-family: var(--bf-font); color: var(--bf-copy); }
-    .bf-menu-shell { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: clamp(16px, 4vw, 40px); background: radial-gradient(circle at 50% 20%, rgba(31,62,99,.36), rgba(4,7,15,.92) 58%), linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.44)); }
+    .bf-menu-shell { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: max(clamp(16px, 4vw, 40px), env(safe-area-inset-top)) max(clamp(16px, 4vw, 40px), env(safe-area-inset-right)) max(clamp(16px, 4vw, 40px), env(safe-area-inset-bottom)) max(clamp(16px, 4vw, 40px), env(safe-area-inset-left)); background: radial-gradient(circle at 50% 20%, rgba(31,62,99,.36), rgba(4,7,15,.92) 58%), linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.44)); }
     .bf-menu-shell::before { content: ""; position: fixed; inset: -20%; pointer-events: none; background: linear-gradient(115deg, transparent 0 42%, rgba(111,227,255,.08) 47%, transparent 52% 100%); animation: bf-scan 4.8s linear infinite; }
     .bf-menu-shell::after { content: ""; position: fixed; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), radial-gradient(circle at 20% 20%, rgba(255,106,128,.12), transparent 28%); background-size: 100% 5px, auto; mix-blend-mode: screen; opacity: .38; }
     .bf-screen { width: min(100%, 1100px); max-height: 100%; margin: auto; animation: bf-screen-in .2s ease-out both; }
@@ -731,6 +731,8 @@ function ensureStyles(): void {
     .bf-mini { min-height: 34px; padding: 0 10px; font-size: 12px; }
     .bf-status-chip { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; color: var(--bf-accent); }
     .bf-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+    .bf-table-scroll { overflow-x: auto; margin-top: 14px; }
+    .bf-table-scroll .bf-table { min-width: 540px; margin-top: 0; }
     .bf-table th, .bf-table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.08); }
     .bf-table th { color: var(--bf-copy-dim); font-size: 11px; letter-spacing: var(--bf-track); text-transform: uppercase; }
     .bf-help-list { margin: 14px 0 0; padding-left: 18px; display: grid; gap: 10px; color: var(--bf-copy); line-height: 1.6; }
@@ -745,6 +747,15 @@ function ensureStyles(): void {
       .bf-screen-title { letter-spacing: .08em; }
       .bf-card { padding: 18px; }
       .bf-title-mark { font-size: clamp(28px, 10vw, 48px); letter-spacing: clamp(.03em, .6vw, .08em); }
+    }
+    @media (max-height: 420px) and (orientation: landscape) {
+      .bf-menu-shell { place-items: start center; }
+      .bf-card { padding: 14px 16px; }
+      .bf-title-mark { font-size: clamp(28px, 10vh, 42px); }
+      .bf-title-tag, .bf-subtitle { margin-top: 6px; }
+      .bf-title-grid { gap: 8px; margin-top: 14px; }
+      .bf-title-card > .bf-toggle { margin-top: 8px; }
+      .bf-screen-title { font-size: 24px; }
     }
     @keyframes bf-screen-in { from { opacity: 0; transform: translate3d(24px, 0, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
     @keyframes bf-card-sweep { 0%, 42% { transform: translateX(-120%); opacity: 0; } 55% { opacity: .7; } 72%, 100% { transform: translateX(120%); opacity: 0; } }

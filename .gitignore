@@ -1,4 +1,7 @@
 node_modules
+.wrangler
+.dev.vars
+.dev.vars.*
 dist
 engine/dist
 game/dist

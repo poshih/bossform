@@ -6,15 +6,20 @@
   "description": "BOSSFORM (arena shmup) built on METRONOME (standalone deterministic lockstep engine).",
   "workspaces": [
     "engine",
-    "game"
+    "game",
+    "cloudflare"
   ],
   "scripts": {
     "dev": "npm run dev -w @bossform/game",
     "build": "npm run typecheck && npm run build -w @bossform/game",
-    "typecheck": "tsc -p engine/tsconfig.json && tsc -p game/tsconfig.json && tsc -p tools/tsconfig.json",
+    "typecheck": "tsc -p engine/tsconfig.json && tsc -p game/tsconfig.json && tsc -p tools/tsconfig.json && tsc -p cloudflare/tsconfig.json",
     "verify": "node tools/verify/run-all.ts",
     "verify:browsers": "node tools/verify/browsers.ts",
-    "relay": "node tools/relay/server.ts"
+    "relay": "node tools/relay/server.ts",
+    "cloudflare:relay:dev": "npm run dev -w @bossform/cloudflare",
+    "cloudflare:relay:deploy": "npm run deploy:relay -w @bossform/cloudflare",
+    "cloudflare:pages:create": "wrangler pages project create bossform --production-branch master",
+    "cloudflare:pages:deploy": "wrangler pages deploy game/dist --project-name bossform"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

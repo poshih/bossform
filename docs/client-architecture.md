@@ -13,7 +13,7 @@ game/src/
   view/models procedural robots, colossi and neutral units (contract: view/models/types.ts)
   ui/         HUD (canvas 2D) and menus / lobby / results (DOM)
   audio/      procedural synth engine + AudioDirector (events -> sound)
-  input/      keyboard, mouse and gamepad -> GameInput
+  input/      keyboard, mouse, gamepad and touch controls -> GameInput
   net/        relay room client (lobby, start message, transport)
   app.ts run.ts main.ts setup.ts config.ts   application shell (state machine, match runner, shared setup types)
 ```
@@ -104,9 +104,8 @@ edges clear of those areas, with their labels on the side facing the screen cent
 
 ### Menus (`ui/menus.ts`, DOM overlay)
 
-Screens: title / quick match setup, offline match setup (mode, your frame, opponents, teams), online lobby (`LobbyState`
-and `LobbyEdits` in `setup.ts`), pause, results. The class reports user intent through callbacks and never starts a match
-itself.
+Screens: title, offline match setup (mode, your frame, opponents, teams), online lobby (`LobbyState` and `LobbyEdits` in
+`setup.ts`), pause, results. The class reports user intent through callbacks and never starts a match itself.
 
 ### AudioDirector (`audio/director.ts`)
 
@@ -137,4 +136,3 @@ class AudioDirector {
   it is genuinely good, not merely working. `game/viewer.html` (see `src/viewer.ts` for its URL parameters) shows one
   model posed from the URL.
 - Do not `git commit` and do not touch files owned by another area; report anything you need from them instead.
-

@@ -1,6 +1,7 @@
 import { fx } from '@metronome/engine';
 import { Button, MOVE_MAX } from '../sim/index.ts';
 import type { GameInput } from '../sim/index.ts';
+import { TouchControls } from './touch.ts';
 
 /** Controls (design doc §6). Move and aim are separate: the ship slides one way while its guns point another. */
 const KEYS = {
@@ -15,13 +16,14 @@ const PAD = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, start: 9, up: 
 const PAD_AXIS = { moveX: 0, moveY: 1, aimX: 2, aimY: 3 } as const;
 const MOVE_DEADZONE = 0.22;
 const AIM_DEADZONE = 0.35;
+const TOUCH_AIM_DEADZONE = 0.16;
 
 /** Actions that are not part of a tick's input. */
 export type DeviceAction = 'pause' | 'mute';
 
 const ACTION_KEYS: Readonly<Record<string, DeviceAction>> = { Escape: 'pause', KeyP: 'pause', KeyM: 'mute' };
 
-type AimSource = 'mouse' | 'keys' | 'pad';
+type AimSource = 'mouse' | 'keys' | 'pad' | 'touch';
 
 export interface Cursor {
   readonly x: number;
@@ -29,11 +31,12 @@ export interface Cursor {
 }
 
 /**
- * Keyboard + mouse and the first gamepad, merged into one pilot's GameInput. Sampling is pull-based: the session asks
- * for an input once per tick, and the aim is resolved through the camera at that moment.
+ * Keyboard + mouse, touch controls and the first gamepad, merged into one pilot's GameInput. Sampling is pull-based: the
+ * session asks for an input once per tick, and pointer aim is resolved through the camera at that moment.
  */
 export class Devices {
   private readonly surface: HTMLElement;
+  private readonly touch: TouchControls;
   private readonly held = new Set<string>();
   /** Keys pressed since the last sample: a tap shorter than one tick still counts for that tick. */
   private readonly tapped = new Set<string>();
@@ -50,6 +53,7 @@ export class Devices {
 
   constructor(surface: HTMLElement) {
     this.surface = surface;
+    this.touch = new TouchControls(surface);
     this.listen(window, 'keydown', (e) => this.onKeyDown(e as KeyboardEvent));
     this.listen(window, 'keyup', (e) => this.held.delete((e as KeyboardEvent).code));
     this.listen(window, 'blur', () => this.releaseAll());
@@ -73,11 +77,16 @@ export class Devices {
   setCapturing(capturing: boolean): void {
     this.capturing = capturing;
     this.releaseAll();
+    this.touch.setCapturing(capturing);
   }
 
   /** Pointer position in CSS pixels relative to the surface, or null before the mouse has ever moved over it. */
   get cursor(): Cursor | null {
     return this.cursor_;
+  }
+
+  get touchActive(): boolean {
+    return this.touch.active;
   }
 
   private onKeyDown(e: KeyboardEvent): void {
@@ -94,6 +103,7 @@ export class Devices {
   }
 
   private onPointer(e: PointerEvent): void {
+    if (e.pointerType !== 'mouse') return;
     const box = this.surface.getBoundingClientRect();
     this.cursor_ = { x: e.clientX - box.left, y: e.clientY - box.top };
     if (!this.capturing) return;
@@ -107,6 +117,7 @@ export class Devices {
     this.tapped.clear();
     this.mouseButtons = 0;
     this.mouseTapped = 0;
+    this.touch.releaseAll();
   }
 
   /** Once per rendered frame: pad-only actions (Start) and everything queued by the keyboard since the last call. */
@@ -114,6 +125,7 @@ export class Devices {
     const pad = this.pad();
     const start = pad !== null && pad.buttons[PAD.start]?.pressed === true;
     if (start && !this.padPauseHeld) this.actions.add('pause');
+    if (this.touch.takePause()) this.actions.add('pause');
     this.padPauseHeld = start;
     const out = [...this.actions];
     this.actions.clear();
@@ -136,6 +148,7 @@ export class Devices {
    */
   sample(aimFromCursor: (cssX: number, cssY: number) => number): GameInput {
     const pad = this.pad();
+    const touch = this.touch.sample();
     const button = (index: number) => pad !== null && pad.buttons[index]?.pressed === true;
     const axis = (index: number) => (pad !== null ? pad.axes[index] ?? 0 : 0);
 
@@ -151,6 +164,10 @@ export class Devices {
     if (button(PAD.right)) moveX = 1;
     if (button(PAD.up)) moveY = 1;
     if (button(PAD.down)) moveY = -1;
+    if (touch.moveActive) {
+      moveX = touch.moveX;
+      moveY = touch.moveY;
+    }
     const length = Math.hypot(moveX, moveY);
     const scale = length > 1 ? 1 / length : 1;
 
@@ -161,12 +178,16 @@ export class Devices {
     if (this.key(KEYS.transform) || button(PAD.y)) buttons |= Button.Boss;
     if (this.key(KEYS.ultima) || button(PAD.x)) buttons |= Button.Ultima;
     if (this.key(KEYS.boost) || button(PAD.lb)) buttons |= Button.Boost;
+    buttons |= touch.buttons;
 
     const keyX = (this.key(KEYS.aimRight) ? 1 : 0) - (this.key(KEYS.aimLeft) ? 1 : 0);
     const keyY = (this.key(KEYS.aimUp) ? 1 : 0) - (this.key(KEYS.aimDown) ? 1 : 0);
     const padAimX = axis(PAD_AXIS.aimX);
     const padAimY = -axis(PAD_AXIS.aimY);
-    if (keyX !== 0 || keyY !== 0) {
+    if (touch.aimActive && Math.hypot(touch.aimX, touch.aimY) > TOUCH_AIM_DEADZONE) {
+      this.aimSource = 'touch';
+      this.lastAim = fx.fromRadians(Math.atan2(touch.aimY, touch.aimX));
+    } else if (keyX !== 0 || keyY !== 0) {
       this.aimSource = 'keys';
       this.lastAim = fx.fromRadians(Math.atan2(keyY, keyX));
     } else if (Math.hypot(padAimX, padAimY) > AIM_DEADZONE) {
@@ -182,6 +203,7 @@ export class Devices {
   }
 
   dispose(): void {
+    this.touch.dispose();
     for (const undo of this.cleanup) undo();
   }
 }

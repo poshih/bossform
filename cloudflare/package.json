@@ -1,0 +1,17 @@
+{
+  "name": "@bossform/cloudflare",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 4431",
+    "deploy:relay": "wrangler deploy"
+  },
+  "dependencies": {
+    "@metronome/engine": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260930.1",
+    "wrangler": "^4.144.0"
+  }
+}
