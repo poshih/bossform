@@ -2,19 +2,25 @@ import * as THREE from 'three';
 import {
   Attack,
   AttackPhase,
+  BeamKind,
   Ev,
   FORMS,
   MAX_PARTS,
   PartKind,
+  Pattern,
+  ReflectKind,
+  RONIN,
   Role,
+  SHOT_DEFS,
   podMuzzle,
   type World,
 } from '../sim/index.ts';
 import { NEUTRAL_COLORS, TEAM_COLORS } from '../config.ts';
 import { DrawLayer } from '../render/layers.ts';
 import type { FrameContext, StageView } from './frame.ts';
-import type { WorldSnapshot } from './snapshot.ts';
-import { clamp01, colorIntoLinear, toWorld } from './shared.ts';
+import { drawnMuzzle } from './models/index.ts';
+import { hiddenFrom, type WorldSnapshot } from './snapshot.ts';
+import { binaryAngleToRadians, clamp01, colorIntoLinear, toWorld } from './shared.ts';
 
 const FX_CAPACITY = 1536;
 const KIND_RING = 0;
@@ -23,6 +29,8 @@ const KIND_ARC = 2;
 const KIND_DISC = 3;
 const KIND_DASH = 4;
 const KIND_MARKER = 5;
+/** A ring segment facing +x (the quad's heading), ±80 degrees: RONIN's parry flash. */
+const KIND_CRESCENT = 6;
 const PUNCH_DECAY_SECONDS = 0.3;
 const PUNCH_DECAY_RATE = 1 / PUNCH_DECAY_SECONDS;
 const BIG_EVENT_PUNCH_RADIUS = 360;
@@ -36,6 +44,15 @@ const PART_DOWN_SHARDS_MIN = 6;
 const PART_DOWN_SHARDS_SPAN = 7;
 const STORM_CRACKLES = 5;
 const GRAZE_SEAT_CAP = 256;
+const WHITE_HOT = new THREE.Color(1.6, 1.6, 1.7);
+const BLAST_SHARDS = 14;
+const CLOAK_WISPS = 9;
+const REFLECT_SPARKS = 8;
+const GLINT_LENGTH = 26;
+/** A colossus catching its giant fist: the catch ring and flash grow by this much. */
+const BOSS_CATCH_SCALE = 1.9;
+/** Siege tells for the new patterns: how large the ring over each landing point is drawn, world units. */
+const LANDING_RING_RADIUS = 14;
 
 const VERTEX = /* glsl */ `
 attribute vec3 iCenter;
@@ -86,10 +103,13 @@ void main() {
     }
   } else if (vKind < 3.5) d = length(vLocal) - 0.95;
   else if (vKind < 4.5) d = capsule(vLocal, vec2(0.95, 0.20));
-  else {
+  else if (vKind < 5.5) {
     float dash = step(0.45, fract((vLocal.x * 0.5 + 0.5) * 8.0 + vPhase));
     d = capsule(vLocal, vec2(0.95, 0.10));
     d = max(d, 0.5 - dash);
+  } else {
+    float r = length(vLocal);
+    d = max(abs(r - 0.8) - 0.035, 0.17 * r - vLocal.x);
   }
   float edge = fwidth(d) * 1.4;
   float alpha = (1.0 - smoothstep(0.0, edge, d)) * vColor.a;
@@ -166,7 +186,6 @@ export class FxView implements StageView {
   private readonly colorAttr: THREE.InstancedBufferAttribute;
   private readonly phaseAttr: THREE.InstancedBufferAttribute;
   private readonly tellPosition = { x: 0, y: 0 };
-  private readonly tellBurst = { x: 0, y: 0 };
   private readonly grazeCombo = new Float32Array(GRAZE_SEAT_CAP);
 
   constructor() {
@@ -203,7 +222,7 @@ export class FxView implements StageView {
     this.root.add(this.mesh);
   }
 
-  handleEvents(world: World, focusSeat: number): void {
+  handleEvents(world: World, focusSeat: number, viewerTeam: number): void {
     const focusTeam = focusSeat >= 0 && focusSeat < world.seats ? world.m.plTeam[focusSeat] : -999;
     const focusX = focusSeat >= 0 && focusSeat < world.seats ? toWorld(world.m.plX[focusSeat]) : 0;
     const focusY = focusSeat >= 0 && focusSeat < world.seats ? toWorld(world.m.plY[focusSeat]) : 0;
@@ -226,6 +245,7 @@ export class FxView implements StageView {
           this.ring(x, y, 25, 0.28, new THREE.Color(0.45, 1.1, 1.45), 0.42);
           break;
         case Ev.Graze:
+          if (hiddenFrom(world.m, a, viewerTeam)) break;
           this.grazeCombo[a] = Math.min(1, this.grazeCombo[a] + 0.18);
           this.graze(world, x, y, a);
           break;
@@ -261,6 +281,7 @@ export class FxView implements StageView {
           this.ring(x, y, 18, 0.32, new THREE.Color(0.9, 1.5, 1.8), 0.7);
           break;
         case Ev.OrbPickup:
+          if (hiddenFrom(world.m, a, viewerTeam)) break;
           this.disc(x, y, world.events.b[i] === 1 ? 18 : 12, 0.2, new THREE.Color(0.6, 1.4, 1.8), 0.26);
           this.burst(x, y, 6, 20, 0.24, new THREE.Color(0.55, 1.35, 1.8), 0.68);
           break;
@@ -289,6 +310,45 @@ export class FxView implements StageView {
           break;
         case Ev.StormHit:
           this.crackle(x, y);
+          break;
+        case Ev.Blast:
+          this.blast(x, y, toWorld(SHOT_DEFS[b].blastR), a >= 0 ? this.teamColor(world.m.plTeam[a]) : this.neutralColor);
+          break;
+        case Ev.Catch: {
+          // b is the catching part + 1: a colossus's giant fist docks with a ring to match.
+          const size = b > 0 ? BOSS_CATCH_SCALE : 1;
+          this.ring(x, y, 16 * size, 0.26, this.teamColor(world.m.plTeam[a]), 0.85);
+          this.disc(x, y, 8 * size, 0.12, WHITE_HOT, 0.3);
+          this.burst(x, y, 6, 22 * size, 0.22, this.teamColor(world.m.plTeam[a]), 0.8);
+          break;
+        }
+        case Ev.Cloak:
+          this.cloak(x, y, this.teamColor(world.m.plTeam[a]));
+          break;
+        case Ev.Reveal:
+          this.ring(x, y, 26, 0.34, this.teamColor(world.m.plTeam[a]), 0.8);
+          this.disc(x, y, 14, 0.14, WHITE_HOT, 0.24);
+          this.burst(x, y, 8, 26, 0.28, this.teamColor(world.m.plTeam[a]), 0.7);
+          break;
+        case Ev.ChargeFull:
+          this.glint(world, a);
+          break;
+        case Ev.BeamOn:
+          this.disc(x, y, c === BeamKind.Boss ? 16 : 9, 0.16, WHITE_HOT, 0.34);
+          this.ring(x, y, c === BeamKind.Boss ? 24 : 14, 0.24, this.teamColor(world.m.plTeam[a]), 0.8);
+          break;
+        case Ev.LanceFire:
+          this.disc(x, y, 12, 0.14, WHITE_HOT, 0.36);
+          this.ring(x, y, 20, 0.3, this.teamColor(world.m.plTeam[a]), 0.9);
+          this.burst(x, y, 10, 40, 0.3, this.teamColor(world.m.plTeam[a]), 0.9);
+          break;
+        case Ev.ParryUp:
+          this.crescent(world, a);
+          break;
+        case Ev.Reflect:
+          this.disc(x, y, c === ReflectKind.Beam ? 10 : 7, 0.1, WHITE_HOT, 0.4);
+          this.ring(x, y, 12, 0.18, WHITE_HOT, 0.8);
+          this.burst(x, y, REFLECT_SPARKS, 46, 0.2, this.teamColor(world.m.plTeam[a]), 1.1);
           break;
         case Ev.Release:
           if (b === Attack.Siege) {
@@ -353,17 +413,45 @@ export class FxView implements StageView {
       const progress = attack === Attack.Salvo ? clamp01(1 - current.plAtkTimer[seat] / form.salvo.windup)
         : attack === Attack.Siege ? clamp01(1 - current.plAtkTimer[seat] / form.siege.windup)
           : clamp01(1 - current.plAtkTimer[seat] / form.ultima.windup);
-      if (attack === Attack.Siege) {
+      // A beam siege is told by its lasers (beams.ts); the others by a line to where their shells will land.
+      if (attack === Attack.Siege && form.siege.pattern !== Pattern.Beam) {
+        const siege = form.siege;
         for (let k = 0; k < form.parts.length; k++) {
           const part = form.parts[k];
-          if (part.kind !== PartKind.Pod || (part.roles & Role.Siege) === 0 || current.ptHp[seat * MAX_PARTS + k] <= 0) continue;
+          const at = seat * MAX_PARTS + k;
+          // A pod whose weapon is away cannot fire: it shows no tell.
+          if (part.kind !== PartKind.Pod || (part.roles & Role.Siege) === 0 || current.ptHp[at] <= 0 || current.ptAway[at] === 1) continue;
           podMuzzle(world, seat, k, this.tellPosition);
-          const angle = current.ptAng[seat * MAX_PARTS + k];
-          const shot = form.siege.shot;
-          const reach = shot.spd * shot.life;
-          this.tellBurst.x = toWorld(this.tellPosition.x + Math.cos((angle / 65536) * Math.PI * 2) * reach);
-          this.tellBurst.y = toWorld(this.tellPosition.y + Math.sin((angle / 65536) * Math.PI * 2) * reach);
-          count = this.appendMarker(count, toWorld(this.tellPosition.x), toWorld(this.tellPosition.y), this.tellBurst.x, this.tellBurst.y, progress);
+          const angle = binaryAngleToRadians(current.ptAng[at]);
+          const x0 = toWorld(this.tellPosition.x);
+          const y0 = toWorld(this.tellPosition.y);
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+          switch (siege.pattern) {
+            case Pattern.Volley: {
+              const reach = toWorld(siege.shot.spd * siege.shot.life);
+              count = this.appendLine(count, x0, y0, x0 + cos * reach, y0 + sin * reach, progress);
+              count = this.appendRing(count, x0 + cos * reach, y0 + sin * reach, LANDING_RING_RADIUS, progress);
+              break;
+            }
+            case Pattern.Artillery: {
+              const reach = toWorld(siege.range);
+              count = this.appendLine(count, x0, y0, x0 + cos * reach, y0 + sin * reach, progress);
+              count = this.appendRing(count, x0 + cos * reach, y0 + sin * reach, toWorld(siege.radius), progress);
+              break;
+            }
+            case Pattern.Carpet: {
+              const last = toWorld(siege.first + siege.gap * (siege.count - 1));
+              count = this.appendLine(count, x0, y0, x0 + cos * last, y0 + sin * last, progress);
+              for (let bomb = 0; bomb < siege.count; bomb++) {
+                const at = toWorld(siege.first + siege.gap * bomb);
+                count = this.appendRing(count, x0 + cos * at, y0 + sin * at, LANDING_RING_RADIUS, progress);
+              }
+              break;
+            }
+            default:
+              throw new RangeError(`no siege tell for pattern ${(siege as { pattern: number }).pattern}`);
+          }
         }
       } else if (attack === Attack.Ultima) {
         const i3 = count * 3;
@@ -402,45 +490,47 @@ export class FxView implements StageView {
     this.material.dispose();
   }
 
-  private appendMarker(count: number, x0: number, y0: number, x1: number, y1: number, progress: number): number {
-    const mx = (x0 + x1) * 0.5;
-    const my = (y0 + y1) * 0.5;
+  /** The dashed line of a siege tell, from the pod's muzzle to where its shells will land. */
+  private appendLine(count: number, x0: number, y0: number, x1: number, y1: number, progress: number): number {
+    if (count >= FX_CAPACITY) return count;
+    const i3 = count * 3;
+    const i2 = count * 2;
+    const i4 = count * 4;
     const dx = x1 - x0;
     const dy = y1 - y0;
-    const line = count;
-    let i3 = line * 3;
-    let i2 = line * 2;
-    let i4 = line * 4;
-    this.centers[i3] = mx;
-    this.centers[i3 + 1] = my;
+    this.centers[i3] = (x0 + x1) * 0.5;
+    this.centers[i3 + 1] = (y0 + y1) * 0.5;
     this.centers[i3 + 2] = 1.6;
     this.scales[i2] = Math.hypot(dx, dy) * 0.5;
     this.scales[i2 + 1] = 1.6;
-    this.angles[line] = Math.atan2(dy, dx);
-    this.kinds[line] = KIND_MARKER;
+    this.angles[count] = Math.atan2(dy, dx);
+    this.kinds[count] = KIND_MARKER;
     this.colors[i4] = 1.1;
     this.colors[i4 + 1] = 0.7;
     this.colors[i4 + 2] = 0.45;
     this.colors[i4 + 3] = 0.42 + progress * 0.3;
-    this.phases[line] = progress * 2;
-    count++;
+    this.phases[count] = progress * 2;
+    return count + 1;
+  }
 
-    const ring = count;
-    i3 = ring * 3;
-    i2 = ring * 2;
-    i4 = ring * 4;
-    this.centers[i3] = x1;
-    this.centers[i3 + 1] = y1;
+  /** The ring of a siege tell over a landing point, growing as the wind-up runs. */
+  private appendRing(count: number, x: number, y: number, radius: number, progress: number): number {
+    if (count >= FX_CAPACITY) return count;
+    const i3 = count * 3;
+    const i2 = count * 2;
+    const i4 = count * 4;
+    this.centers[i3] = x;
+    this.centers[i3 + 1] = y;
     this.centers[i3 + 2] = 1.8;
-    this.scales[i2] = 14 + progress * 6;
-    this.scales[i2 + 1] = 14 + progress * 6;
-    this.angles[ring] = 0;
-    this.kinds[ring] = KIND_RING;
+    this.scales[i2] = radius + progress * 6;
+    this.scales[i2 + 1] = radius + progress * 6;
+    this.angles[count] = 0;
+    this.kinds[count] = KIND_RING;
     this.colors[i4] = 1.15;
     this.colors[i4 + 1] = 0.65;
     this.colors[i4 + 2] = 0.35;
     this.colors[i4 + 3] = 0.55;
-    this.phases[ring] = 0;
+    this.phases[count] = 0;
     return count + 1;
   }
 
@@ -476,6 +566,45 @@ export class FxView implements StageView {
     this.arc(x, y, 10 + combo * 9, 0.16, sparkColor, 0.72 + combo * 0.28);
     this.streak((x + shipX) * 0.5, (y + shipY) * 0.5, angle, 2.4 + combo * 2.2, GRAZE_STREAK_LENGTH, 0.18, sparkColor, 0.58 + combo * 0.28);
     this.burst(x, y, 4 + Math.floor(combo * 8), 28 + combo * 24, 0.16, sparkColor, 0.75);
+  }
+
+  /** A lobbed shell's blast: a flash filling its radius and a ring breaking out through it. */
+  private blast(x: number, y: number, radius: number, color: THREE.Color): void {
+    this.disc(x, y, radius * 0.8, 0.14, WHITE_HOT, 0.3);
+    this.ring(x, y, radius * 0.72, 0.34, color, 0.9);
+    this.ring(x, y, radius * 0.4, 0.22, WHITE_HOT, 0.6);
+    this.burst(x, y, BLAST_SHARDS, radius * 1.6, 0.34, color, 0.9);
+  }
+
+  /** A pilot folding into its cloak: wisps drawn in to where it stood, and a fading ring. */
+  private cloak(x: number, y: number, color: THREE.Color): void {
+    this.ring(x, y, 18, 0.32, color, 0.55);
+    for (let i = 0; i < CLOAK_WISPS; i++) {
+      const angle = (Math.PI * 2 * i) / CLOAK_WISPS + 0.3;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      this.spawn(KIND_STREAK, x + cos * 20, y + sin * 20, 2.3, -cos * 44, -sin * 44, angle, 0, 7, 1.6, 0.3, color, 0.55, 0);
+    }
+  }
+
+  /** LONGBOW's rail reached full charge: a star glint at its muzzle. */
+  private glint(world: World, seat: number): void {
+    const { m } = world;
+    const aim = binaryAngleToRadians(m.plAim[seat]);
+    const muzzle = drawnMuzzle(m.plFrame[seat]);
+    const x = toWorld(m.plX[seat]) + Math.cos(aim) * muzzle;
+    const y = toWorld(m.plY[seat]) + Math.sin(aim) * muzzle;
+    this.streak(x, y, aim + Math.PI * 0.25, 1.3, GLINT_LENGTH, 0.28, WHITE_HOT, 0.8);
+    this.streak(x, y, aim - Math.PI * 0.25, 1.3, GLINT_LENGTH, 0.28, WHITE_HOT, 0.8);
+    this.disc(x, y, 5, 0.2, WHITE_HOT, 0.4);
+    this.ring(x, y, 10, 0.26, this.teamColor(m.plTeam[seat]), 0.7);
+  }
+
+  /** RONIN's parry snapping up: a thin crescent sweeping out across its guarded front. */
+  private crescent(world: World, seat: number): void {
+    const { m } = world;
+    const radius = toWorld(RONIN.parry.radius);
+    this.spawn(KIND_CRESCENT, toWorld(m.plX[seat]), toWorld(m.plY[seat]), 2.4, 0, 0, binaryAngleToRadians(m.plAim[seat]), 0, radius * 0.9, radius * 0.9, 0.18, this.teamColor(m.plTeam[seat]), 0.8, 0);
   }
 
   private robotDeath(x: number, y: number, color: THREE.Color): void {

@@ -206,6 +206,7 @@ export class App {
     this.run = run;
     this.stage = new Stage(this.parts.stageCanvas, run.world);
     this.stage.resize(this.cssWidth, this.cssHeight, this.pixelRatio);
+    this.stage.viewer(run.localSeat);
     this.focusSeat = Math.max(0, run.localSeat);
     this.shotsBySeat.length = 0;
     this.colossusDeathDistances.length = 0;
@@ -225,6 +226,7 @@ export class App {
   private leaveRun(): void {
     if (this.run === null) return;
     this.run.leave();
+    this.director.silence();
     this.stage?.dispose();
     this.run = null;
     this.stage = null;
@@ -260,6 +262,11 @@ export class App {
     return this.focusSeat;
   }
 
+  /** The team a cloaked pilot is hidden from: the local pilot's, even while the camera follows someone else (or theirs). */
+  private viewerTeam(run: MatchRun, world: World): number {
+    return world.m.plTeam[run.localSeat >= 0 ? run.localSeat : this.focusSeat];
+  }
+
   // ---- frame ------------------------------------------------------------------------------------------
 
   /** One call per rendered frame. `nowMs` is the animation-frame timestamp, `dtSeconds` the time since the last frame. */
@@ -288,7 +295,7 @@ export class App {
     stage.handleEvents(world);
     if (!attract) {
       this.hud.handleEvents(world);
-      this.director.handleEvents(world, this.focusSeat);
+      this.director.handleEvents(world, this.focusSeat, this.viewerTeam(run, world));
     }
     this.tallyEvents(world);
     world.events.clear();
@@ -329,6 +336,7 @@ export class App {
     this.hud.draw(ctx, {
       world,
       seat: this.focusSeat,
+      viewerTeam: this.viewerTeam(run, world),
       names: run.setup.pilots.map((pilot) => pilot.name),
       width: this.cssWidth,
       height: this.cssHeight,

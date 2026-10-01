@@ -1,5 +1,5 @@
-import { W, type World } from '../sim/index.ts';
-import { lerp, toWorld } from './shared.ts';
+import { FORMS, MAX_PARTS, W, type World } from '../sim/index.ts';
+import { binaryAngleToRadians, lerp, lerpBinaryAngle, toWorld } from './shared.ts';
 
 export class WorldSnapshot {
   readonly seats: number;
@@ -42,21 +42,37 @@ export class WorldSnapshot {
   readonly plShieldBreak: Int32Array;
   readonly plBoost: Int32Array;
   readonly plBoostCd: Int32Array;
+  readonly plCharge: Int32Array;
+  readonly plSpin: Int32Array;
+  readonly plParry: Int32Array;
+  readonly plCloak: Int32Array;
+  readonly plBeam: Int32Array;
+  readonly plBeamAng: Int32Array;
+  readonly plBeamLen: Int32Array;
+  readonly plLance: Int32Array;
+  readonly plLanceAng: Int32Array;
+  readonly plSide: Uint8Array;
 
   readonly ptHp: Int32Array;
   readonly ptAng: Int32Array;
   readonly ptFlash: Int32Array;
   readonly ptHeat: Int32Array;
+  readonly ptBeamLen: Int32Array;
+  readonly ptAway: Uint8Array;
 
   readonly pAlive: Uint8Array;
   readonly pAttack: Uint8Array;
+  readonly pPart: Uint8Array;
+  readonly pMode: Uint8Array;
   readonly pDef: Uint16Array;
   readonly pOwner: Int32Array;
   readonly pTeam: Int32Array;
   readonly pX: Int32Array;
   readonly pY: Int32Array;
   readonly pAng: Int32Array;
+  readonly pSpd: Int32Array;
   readonly pAge: Int32Array;
+  readonly pFuse: Int32Array;
 
   readonly nAlive: Uint8Array;
   readonly nType: Uint8Array;
@@ -113,21 +129,37 @@ export class WorldSnapshot {
     this.plShieldBreak = new Int32Array(this.seats);
     this.plBoost = new Int32Array(this.seats);
     this.plBoostCd = new Int32Array(this.seats);
+    this.plCharge = new Int32Array(this.seats);
+    this.plSpin = new Int32Array(this.seats);
+    this.plParry = new Int32Array(this.seats);
+    this.plCloak = new Int32Array(this.seats);
+    this.plBeam = new Int32Array(this.seats);
+    this.plBeamAng = new Int32Array(this.seats);
+    this.plBeamLen = new Int32Array(this.seats);
+    this.plLance = new Int32Array(this.seats);
+    this.plLanceAng = new Int32Array(this.seats);
+    this.plSide = new Uint8Array(this.seats);
 
     this.ptHp = new Int32Array(this.parts);
     this.ptAng = new Int32Array(this.parts);
     this.ptFlash = new Int32Array(this.parts);
     this.ptHeat = new Int32Array(this.parts);
+    this.ptBeamLen = new Int32Array(this.parts);
+    this.ptAway = new Uint8Array(this.parts);
 
     this.pAlive = new Uint8Array(this.projectiles);
     this.pAttack = new Uint8Array(this.projectiles);
+    this.pPart = new Uint8Array(this.projectiles);
+    this.pMode = new Uint8Array(this.projectiles);
     this.pDef = new Uint16Array(this.projectiles);
     this.pOwner = new Int32Array(this.projectiles);
     this.pTeam = new Int32Array(this.projectiles);
     this.pX = new Int32Array(this.projectiles);
     this.pY = new Int32Array(this.projectiles);
     this.pAng = new Int32Array(this.projectiles);
+    this.pSpd = new Int32Array(this.projectiles);
     this.pAge = new Int32Array(this.projectiles);
+    this.pFuse = new Int32Array(this.projectiles);
 
     this.nAlive = new Uint8Array(this.neutrals);
     this.nType = new Uint8Array(this.neutrals);
@@ -187,21 +219,37 @@ export class WorldSnapshot {
     this.plShieldBreak.set(m.plShieldBreak);
     this.plBoost.set(m.plBoost);
     this.plBoostCd.set(m.plBoostCd);
+    this.plCharge.set(m.plCharge);
+    this.plSpin.set(m.plSpin);
+    this.plParry.set(m.plParry);
+    this.plCloak.set(m.plCloak);
+    this.plBeam.set(m.plBeam);
+    this.plBeamAng.set(m.plBeamAng);
+    this.plBeamLen.set(m.plBeamLen);
+    this.plLance.set(m.plLance);
+    this.plLanceAng.set(m.plLanceAng);
+    this.plSide.set(m.plSide);
 
     this.ptHp.set(m.ptHp);
     this.ptAng.set(m.ptAng);
     this.ptFlash.set(m.ptFlash);
     this.ptHeat.set(m.ptHeat);
+    this.ptBeamLen.set(m.ptBeamLen);
+    this.ptAway.set(m.ptAway);
 
     this.pAlive.set(m.pAlive);
     this.pAttack.set(m.pAttack);
+    this.pPart.set(m.pPart);
+    this.pMode.set(m.pMode);
     this.pDef.set(m.pDef);
     this.pOwner.set(m.pOwner);
     this.pTeam.set(m.pTeam);
     this.pX.set(m.pX);
     this.pY.set(m.pY);
     this.pAng.set(m.pAng);
+    this.pSpd.set(m.pSpd);
     this.pAge.set(m.pAge);
+    this.pFuse.set(m.pFuse);
 
     this.nAlive.set(m.nAlive);
     this.nType.set(m.nType);
@@ -242,4 +290,32 @@ export function drawnSeatPoint(previous: WorldSnapshot, current: WorldSnapshot, 
   const t = seatBlend(previous, current, seat, alpha);
   out.x = lerp(toWorld(previous.plX[seat]), toWorld(current.plX[seat]), t);
   out.y = lerp(toWorld(previous.plY[seat]), toWorld(current.plY[seat]), t);
+}
+
+/** Where a boss-form part is drawn this frame, world units: the drawn core plus the part's offset turned by the drawn body or orbit. */
+export function drawnPartCenter(previous: WorldSnapshot, current: WorldSnapshot, seat: number, part: number, alpha: number, out: { x: number; y: number }): void {
+  const def = FORMS[current.plFrame[seat]].parts[part];
+  const t = seatBlend(previous, current, seat, alpha);
+  const angle = binaryAngleToRadians(def.orbit
+    ? lerpBinaryAngle(previous.plOrbit[seat], current.plOrbit[seat], t)
+    : lerpBinaryAngle(previous.plBody[seat], current.plBody[seat], t));
+  drawnSeatPoint(previous, current, seat, alpha, out);
+  const x = toWorld(def.x);
+  const y = toWorld(def.y);
+  out.x += x * Math.cos(angle) - y * Math.sin(angle);
+  out.y += x * Math.sin(angle) + y * Math.cos(angle);
+}
+
+/** Where a pod's barrel points this frame, radians (interpolated like the ship). */
+export function drawnPodFacing(previous: WorldSnapshot, current: WorldSnapshot, seat: number, part: number, alpha: number): number {
+  const k = seat * MAX_PARTS + part;
+  return binaryAngleToRadians(lerpBinaryAngle(previous.ptAng[k], current.ptAng[k], seatBlend(previous, current, seat, alpha)));
+}
+
+/**
+ * A cloaked pilot is hidden from everyone not on its team: its robot, rings, glows, shield, boost wake and graze sparks are
+ * not drawn for them (its shots still are). Reads either a snapshot or the live memory (event handlers).
+ */
+export function hiddenFrom(state: { readonly plCloak: ArrayLike<number>; readonly plTeam: ArrayLike<number> }, seat: number, viewerTeam: number): boolean {
+  return state.plCloak[seat] > 0 && state.plTeam[seat] !== viewerTeam;
 }

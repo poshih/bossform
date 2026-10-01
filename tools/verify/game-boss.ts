@@ -8,7 +8,7 @@ import {
   FRAME_STATS, GAUGE_MAX, GAUGE_PER_DAMAGE_DEALT, HOT_PART_DAMAGE_PCT, KILL_ORBS, MIN_WINDUP_TICKS, Mode, MORPH_TICKS, PartKind, podMuzzle,
   REVERT_PROTECT_TICKS, Role, VANGUARD, W, attackFuel, canStartAttack,
 } from '../../game/src/sim/index.ts';
-import type { Vec } from '../../game/src/sim/index.ts';
+import type { Vec, VolleyAttack } from '../../game/src/sim/index.ts';
 import { exposedPoint, holding, IDLE, Scenario } from './game-scenario.ts';
 import { check, finish, info, section } from './lib.ts';
 
@@ -144,9 +144,9 @@ for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
       if (k < 0 || !salvoPods.includes(k)) return false;
       podMuzzle(s.w, PILOT, k, at);
       const spread = Math.abs(fx.angleDiff(s.m.ptAng[k], s.m.pAng[p]));
-      return Math.hypot(s.m.pX[p] - at.x, s.m.pY[p] - at.y) / fx.ONE < 8 && spread <= (form.salvo.spread >> 1) + fx.deg(1);
+      return Math.hypot(s.m.pX[p] - at.x, s.m.pY[p] - at.y) / fx.ONE < 8 && spread <= ((form.salvo as VolleyAttack).spread >> 1) + fx.deg(1);
     });
-    check('every shot leaves a live salvo pod\'s muzzle, fanned around that pod\'s own facing', fromMuzzles && podsUsed.size === salvoPods.length && shots.length === salvoPods.length * form.salvo.count, `${shots.length} shots from ${podsUsed.size} pods`);
+    check('every shot leaves a live salvo pod\'s muzzle, fanned around that pod\'s own facing', fromMuzzles && podsUsed.size === salvoPods.length && shots.length === salvoPods.length * (form.salvo as VolleyAttack).count, `${shots.length} shots from ${podsUsed.size} pods`);
     check('the pods that fired are hot for the whole recovery', salvoPods.every((k) => s.m.ptHeat[k] === form.salvo.recovery));
     check('the machine is not rooted by a salvo (it only ever slows the turn and fire rate)', s.m.plAtkPhase[PILOT] === AttackPhase.Recovery);
   }
@@ -187,7 +187,7 @@ for (const frame of [Frame.Vanguard, Frame.Gale, Frame.Juggernaut]) {
     const windup = s.events(Ev.Windup)[0];
     check(`wind-up lasts exactly ${form.siege.windup} ticks (tell minimum ${MIN_WINDUP_TICKS[Attack.Siege]}) and the body cannot be steered meanwhile`, windup !== undefined && first - windup.tick === form.siege.windup && rooted, `${first - windup?.tick}, rooted ${rooted}`);
     const siegePods = form.parts.filter((p) => p.kind === PartKind.Pod && (p.roles & Role.Siege) !== 0).length;
-    check('the shells leave the siege pods, and the whole machine is thrown backwards', shots.length === siegePods * form.siege.count && shots.every((p) => s.m.pAttack[p] === Attack.Siege) && s.m.plVX[PILOT] < 0);
+    check('the shells leave the siege pods, and the whole machine is thrown backwards', shots.length === siegePods * (form.siege as VolleyAttack).count && shots.every((p) => s.m.pAttack[p] === Attack.Siege) && s.m.plVX[PILOT] < 0);
     check('the cost of a siege shot is far above a salvo\'s', before - s.m.plGauge[PILOT] >= form.siege.cost && form.siege.cost > form.salvo.cost);
   }
 

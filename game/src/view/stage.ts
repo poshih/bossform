@@ -4,6 +4,7 @@ import { ArenaFloor } from '../render/arena.ts';
 import { FollowCamera } from '../render/camera.ts';
 import type { Beat } from '../beat.ts';
 import { Ev, Form, type World } from '../sim/index.ts';
+import { BeamsView } from './beams.ts';
 import type { FrameContext, StageView } from './frame.ts';
 import { FxView } from './fx.ts';
 import { NeutralsView } from './neutrals.ts';
@@ -27,6 +28,7 @@ export class Stage {
   private previous: WorldSnapshot;
   private current: WorldSnapshot;
   private focusSeatIndex = 0;
+  private viewerSeatIndex = -1;
   private timeSeconds = 0;
   private alpha = 0;
   private readonly focusPoint = { x: 0, y: 0 };
@@ -45,6 +47,7 @@ export class Stage {
       new NeutralsView(world.cap.neutrals),
       new ShipsView(world.seats),
       new ShieldsBoostView(world.seats),
+      new BeamsView(world.seats),
       this.fx,
     ];
     for (const view of this.views) this.scene.add(view.root);
@@ -53,6 +56,19 @@ export class Stage {
   focus(seat: number): void {
     if (seat < 0 || seat >= this.current.seats) throw new RangeError(`seat ${seat} is out of range`);
     this.focusSeatIndex = seat;
+  }
+
+  /**
+   * The local pilot, whose eyes decide what a cloak hides even while the camera follows someone else (FrameContext.viewerTeam);
+   * -1 when no one plays (attract): then the followed pilot's.
+   */
+  viewer(seat: number): void {
+    if (seat < -1 || seat >= this.current.seats) throw new RangeError(`seat ${seat} is out of range`);
+    this.viewerSeatIndex = seat;
+  }
+
+  private viewerTeam(state: { readonly plTeam: ArrayLike<number> }): number {
+    return state.plTeam[this.viewerSeatIndex >= 0 ? this.viewerSeatIndex : this.focusSeatIndex];
   }
 
   /** `pixelRatio` is the resolved backing scale (config.backingScale). */
@@ -70,7 +86,8 @@ export class Stage {
   }
 
   handleEvents(world: World): void {
-    for (const view of this.views) view.handleEvents(world, this.focusSeatIndex);
+    const viewerTeam = this.viewerTeam(world.m);
+    for (const view of this.views) view.handleEvents(world, this.focusSeatIndex, viewerTeam);
     const events = world.events;
     for (let i = 0; i < events.count; i++) {
       if (events.type[i] !== Ev.Death || events.c[i] !== 1) continue;
@@ -95,6 +112,7 @@ export class Stage {
       time: this.timeSeconds,
       focusSeat: seat,
       focusTeam: this.current.plTeam[seat],
+      viewerTeam: this.viewerTeam(this.current),
       beat,
     };
     for (const view of this.views) view.update(this.previous, this.current, frame);

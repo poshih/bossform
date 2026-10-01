@@ -6,7 +6,7 @@ import {
 import { refuel } from './gauge.ts';
 import { Ev } from './events.ts';
 import { within } from './geometry.ts';
-import { isFighting, pickupRadius } from './query.ts';
+import { isFighting, pickupRadius, targetable } from './query.ts';
 import type { World } from './world.ts';
 
 const SCATTER_MIN_PCT = 40;
@@ -42,13 +42,13 @@ export function clearOrbs(w: World): void {
   for (let o = 0; o < w.cap.orbs; o++) if (w.m.oAlive[o] === 1) w.freeOrb(o);
 }
 
-/** Nearest fighting ship within `radius` of a point, or -1 (ties go to the lower seat). */
-function nearestWithin(w: World, x: number, y: number, radius: (seat: number) => number): number {
+/** Nearest ship within `radius` of a point that `counts` (fighting, or targetable), or -1 (ties go to the lower seat). */
+function nearestWithin(w: World, x: number, y: number, radius: (seat: number) => number, counts: (w: World, seat: number) => boolean): number {
   const { m } = w;
   let best = -1;
   let bestD = Infinity;
   for (let seat = 0; seat < w.seats; seat++) {
-    if (!isFighting(w, seat)) continue;
+    if (!counts(w, seat)) continue;
     const dx = m.plX[seat] - x;
     const dy = m.plY[seat] - y;
     if (!within(dx, dy, radius(seat))) continue;
@@ -75,7 +75,8 @@ export function updateOrbs(w: World): void {
     m.oVX[o] = fx.mulDiv(m.oVX[o], ORB_DRAG_PCT, 100);
     m.oVY[o] = fx.mulDiv(m.oVY[o], ORB_DRAG_PCT, 100);
     if (m.oAge[o] >= ORB_MAGNET_DELAY) {
-      const puller = nearestWithin(w, m.oX[o], m.oY[o], magnet);
+      // A cloaked pilot pulls nothing: an orb drifting toward empty floor would give it away. It still takes what it touches.
+      const puller = nearestWithin(w, m.oX[o], m.oY[o], magnet, targetable);
       if (puller >= 0) {
         const heading = fx.atan2(m.plY[puller] - m.oY[o], m.plX[puller] - m.oX[o]);
         m.oVX[o] += fx.mul(fx.cos(heading), ORB_ACCEL);
@@ -89,7 +90,7 @@ export function updateOrbs(w: World): void {
     }
     m.oX[o] += m.oVX[o];
     m.oY[o] += m.oVY[o];
-    const taker = nearestWithin(w, m.oX[o], m.oY[o], pickup);
+    const taker = nearestWithin(w, m.oX[o], m.oY[o], pickup, isFighting);
     if (taker >= 0) {
       refuel(w, taker, m.oVal[o]);
       w.emit(Ev.OrbPickup, m.oX[o], m.oY[o], taker, m.plForm[taker] === Form.Boss ? 1 : 0);

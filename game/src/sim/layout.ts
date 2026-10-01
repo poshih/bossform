@@ -57,14 +57,26 @@ export function layoutFor(cap: Capacity) {
     plBoost: field.i32(S), plBoostCd: field.i32(S),
     plLastHit: field.i32(S), plLastHitAt: field.i32(S), plEpoch: field.i32(S),
     plKills: field.i32(S), plDeaths: field.i32(S), plDealt: field.i32(S), plGrazes: field.i32(S),
+    // Robot kits (weapons.ts, <robot>-weapons.ts): LONGBOW's charge, HAILSTORM's spin, RONIN's parry and SHADE's cloak (ticks
+    // left), PRISM's beam (0 idle, 1..tell telling, then firing; its angle; how far it reaches before something stops it) and
+    // lance (ticks left in its locked tell; its angle), and the side (0 or 1) the next alternating shot leaves from.
+    plCharge: field.i32(S), plSpin: field.i32(S), plParry: field.i32(S), plCloak: field.i32(S),
+    plBeam: field.i32(S), plBeamAng: field.i32(S), plBeamLen: field.i32(S), plLance: field.i32(S), plLanceAng: field.i32(S),
+    plSide: field.u8(S),
 
     // Boss-form parts: MAX_PARTS entries per seat
     ptHp: field.i32(K), ptAng: field.i32(K), ptFlash: field.i32(K), ptHeat: field.i32(K),
+    // Length of the beam the pod fired this tick (where it was stopped); 0 on any tick it fired none. Away: 1 while a returning
+    // shot the pod threw is out (its weapon is away: it cannot fire until the shot is caught or gone).
+    ptBeamLen: field.i32(K), ptAway: field.u8(K),
 
     // Projectiles: one pool for every owner
     pAlive: field.u8(P), pAttack: field.u8(P), pPart: field.u8(P), pDef: field.u16(P),
     pOwner: field.i32(P), pTeam: field.i32(P), pX: field.i32(P), pY: field.i32(P), pAng: field.i32(P), pSpd: field.i32(P),
     pAge: field.i32(P), pGraze: field.i32(P), pFree: field.i32(P),
+    // Returning shots: ReturnMode, and the last thing struck (a seat, -2 - n for neutral unit n, or -1). Lobbed shells: the age
+    // at which they land and detonate (0: the blueprint's life).
+    pMode: field.u8(P), pLast: field.i32(P), pFuse: field.i32(P),
 
     // Neutral units
     nAlive: field.u8(N), nType: field.u8(N),

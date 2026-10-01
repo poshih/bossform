@@ -46,9 +46,31 @@ export function evenTeams(count: number, teams: number): number[] {
   return Array.from({ length: count }, (_, seat) => Math.floor((seat * teams) / count));
 }
 
-export const FRAME_NAMES = ['VANGUARD', 'GALE', 'JUGGERNAUT'] as const;
-export const FORM_NAMES = ['PALADIN', 'TEMPEST', 'FORTRESS'] as const;
-export const FRAME_TAGLINES = ['VERSATILE', 'FAST', 'HEAVY'] as const;
+/** A presentation table indexed by frame id: it must name every frame, in frame order (menu order is id order). */
+function perFrame<T extends readonly string[]>(table: string, entries: T): T {
+  if (entries.length !== FRAME_COUNT) throw new RangeError(`${table} lists ${entries.length} frames, the simulation has ${FRAME_COUNT}`);
+  return entries;
+}
+
+// The single owner of every robot's presentation names: menus, HUD, docs and tools read them from here.
+export const FRAME_NAMES = perFrame('FRAME_NAMES', ['VANGUARD', 'GALE', 'JUGGERNAUT', 'LONGBOW', 'PRISM', 'HAILSTORM', 'RONIN', 'SHADE', 'GAUNTLET'] as const);
+export const FORM_NAMES = perFrame('FORM_NAMES', ['PALADIN', 'TEMPEST', 'FORTRESS', 'BALLISTA', 'HELIOS', 'ARMADA', 'SHOGUN', 'KITSUNE', 'ATLAS'] as const);
+export const FRAME_TAGLINES = perFrame('FRAME_TAGLINES', ['VERSATILE', 'FAST', 'HEAVY', 'SNIPER', 'BEAM', 'ARSENAL', 'DUELIST', 'STEALTH', 'BRAWLER'] as const);
+/** One honest line per robot: what it is good at, and what it pays for it. */
+export const FRAME_BLURBS = perFrame('FRAME_BLURBS', [
+  'A fan rifle for every range and two slow seeker orbs to finish the job.',
+  'Rapid twin darts and a phase dash that slips through fire. Light on armour.',
+  'Slow mortar shells and a bulwark that swallows bullets. Hard to move, harder to kill.',
+  'Hold to charge a rail shot, mine the approaches. Deadly far away, weak up close.',
+  'A held beam that sweeps slowly and a lance that fires where its laser points. Every shot is told.',
+  'A cannon that spins up the longer it fires, carpet bombs that deny ground. Big and slow.',
+  'Wide katana slashes and a parry that sends shots back. Lethal up close, if it gets there.',
+  'Curving shuriken and a veil that hides it from eyes and radar until it strikes. Fragile.',
+  'Knuckle shots that shove and a rocket fist that flies out and comes back. Built to brawl.',
+] as const);
+/** The primary weapon (fire) and the alt (right click / tap right) of each robot, as the HUD and the menus name them. */
+export const PRIMARY_LABELS = perFrame('PRIMARY_LABELS', ['FAN RIFLE', 'TWIN DARTS', 'MORTAR', 'RAIL RIFLE', 'PRISM BEAM', 'ROTARY CANNON', 'KATANA', 'SHURIKEN', 'KNUCKLE CANNON'] as const);
+export const ALT_LABELS = perFrame('ALT_LABELS', ['SEEKERS', 'PHASE DASH', 'BULWARK', 'TRIPMINE', 'LANCE', 'CARPET BOMB', 'PARRY', 'SHADOW VEIL', 'ROCKET PUNCH'] as const);
 export const MODE_NAMES = ['ELIMINATION', 'DEATHMATCH'] as const;
 export const MODE_BLURBS = ['Last team standing. Best of three. Sudden death shrinks the arena.', 'Score kills. Respawn after three seconds. Three minutes.'] as const;
 

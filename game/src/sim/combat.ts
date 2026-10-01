@@ -1,8 +1,7 @@
 import { fx } from '@metronome/engine';
-import {
-  BOSS_PART_GAIN_PCT, FLASH_TICKS, Form, GAUGE_PER_ABSORB, GAUGE_PER_DAMAGE_DEALT, GAUGE_PER_GRAZE, HOT_PART_DAMAGE_PCT, SHIELD_COST_PER_DAMAGE,
-} from './constants.ts';
-import { dodging } from './boost.ts';
+import { Form, GAUGE_PER_ABSORB, GAUGE_PER_GRAZE, SHIELD_COST_PER_DAMAGE } from './constants.ts';
+import { detonate } from './blast.ts';
+import { dodging, knockBack } from './boost.ts';
 import { DamageKind, damageShip } from './damage.ts';
 import { absorbShot, spendEnergy } from './energy.ts';
 import { earn } from './gauge.ts';
@@ -12,8 +11,10 @@ import { FRAME_STATS, JUGGERNAUT } from './frames.ts';
 import { within } from './geometry.ts';
 import type { Vec } from './geometry.ts';
 import { damageNeutral, NEUTRAL_DEFS } from './neutrals.ts';
-import { detonate } from './projectiles.ts';
+import { damagePart } from './parts.ts';
+import { struckNeutral, turnBack } from './projectiles.ts';
 import { isFighting, partCenter } from './query.ts';
+import { parries, reflect } from './ronin-weapons.ts';
 import { SHOT_DEFS, ShotFlag } from './shots.ts';
 import type { ShotDef } from './shots.ts';
 import type { World } from './world.ts';
@@ -47,19 +48,40 @@ function bulwarkCatches(w: World, seat: number, dx: number, dy: number, def: Sho
 }
 
 /**
- * Returns true if the projectile was used up. In order: the bulwark wedge; protection (spawn, phase dash) lets everything
- * pass; a boost's dodge ticks let everything pass, a touch of the core included, which only grazes; a raised shield stops
- * and smothers whatever reaches it (the graze radius is its radius); otherwise a touch of the core hurts and a near miss grazes.
+ * Projectile `p` struck something and was stopped without going off (a shield smothered it, a bulwark swallowed it): it is
+ * used up, unless it is a returning shot, which turns for home instead (`struck`: a seat, or struckNeutral(n)).
+ */
+function smother(w: World, p: number, def: ShotDef, struck: number): void {
+  if ((def.flags & ShotFlag.Return) !== 0) turnBack(w, p, struck);
+  else w.freeProjectile(p);
+}
+
+/** Projectile `p` struck something and hurt it: it detonates, unless it is a returning shot, which turns for home instead. */
+function impact(w: World, p: number, def: ShotDef, struck: number): void {
+  if ((def.flags & ShotFlag.Return) !== 0) turnBack(w, p, struck);
+  else detonate(w, p);
+}
+
+/**
+ * Returns true if the projectile was used up (or, a returning shot, turned back). In order: a RONIN's parry arc sends it back;
+ * the bulwark wedge; protection (spawn, phase dash) lets everything pass; a boost's dodge ticks let everything pass, a touch
+ * of the core included, which only grazes; a raised shield stops and smothers whatever reaches it (the graze radius is its
+ * radius); otherwise a touch of the core hurts and a near miss grazes. A shot that stops at the shield or hurts the core
+ * knocks the robot back by its `knock`.
  */
 function hitRobot(w: World, seat: number, p: number, def: ShotDef): boolean {
   const { m } = w;
   const stats = FRAME_STATS[m.plFrame[seat]];
   const dx = m.pX[p] - m.plX[seat];
   const dy = m.pY[p] - m.plY[seat];
+  if (parries(w, seat, dx, dy, def.rad)) {
+    reflect(w, seat, p, def);
+    return true;
+  }
   if (bulwarkCatches(w, seat, dx, dy, def)) {
     earn(w, seat, GAUGE_PER_ABSORB);
     w.emit(Ev.Absorb, m.pX[p], m.pY[p], seat);
-    w.freeProjectile(p);
+    smother(w, p, def, seat);
     return true;
   }
   if (m.plInvuln[seat] > 0 || !within(dx, dy, stats.grazeR + def.rad)) return false;
@@ -67,12 +89,14 @@ function hitRobot(w: World, seat: number, p: number, def: ShotDef): boolean {
     if (m.plShield[seat] === 1) {
       // The shield smothers what it stops: a shell that would burst into shrapnel does not.
       absorbShot(w, seat, def.dmg, m.pOwner[p], m.pX[p], m.pY[p]);
-      w.freeProjectile(p);
+      knockBack(w, seat, m.pAng[p], def.knock);
+      smother(w, p, def, seat);
       return true;
     }
     if (within(dx, dy, stats.hurtR + def.rad)) {
       damageShip(w, seat, def.dmg, m.pOwner[p], DamageKind.Bullet);
-      detonate(w, p);
+      knockBack(w, seat, m.pAng[p], def.knock);
+      impact(w, p, def, seat);
       return true;
     }
   }
@@ -86,19 +110,8 @@ function hitRobot(w: World, seat: number, p: number, def: ShotDef): boolean {
 }
 
 function hitPart(w: World, seat: number, part: number, p: number, def: ShotDef): void {
-  const { m } = w;
-  const at = w.partBase(seat) + part;
-  const damage = m.ptHeat[at] > 0 ? fx.mulDiv(def.dmg, HOT_PART_DAMAGE_PCT, 100) : def.dmg;
-  const applied = Math.min(damage, m.ptHp[at]);
-  m.ptHp[at] -= applied;
-  m.ptFlash[at] = FLASH_TICKS;
-  const attacker = m.pOwner[p];
-  if (attacker >= 0) {
-    earn(w, attacker, fx.mulDiv(applied * GAUGE_PER_DAMAGE_DEALT, BOSS_PART_GAIN_PCT, 100));
-    m.plDealt[attacker] += applied;
-  }
-  w.emit(m.ptHp[at] === 0 ? Ev.PartDown : Ev.PartHit, w.partX[at], w.partY[at], seat, part);
-  detonate(w, p);
+  damagePart(w, seat, part, def.dmg, w.m.pOwner[p]);
+  impact(w, p, def, seat);
 }
 
 /** Parts soak up bullets first; only the core, once nothing live covers the bullet's path, hurts the pilot. */
@@ -119,14 +132,16 @@ function hitBoss(w: World, seat: number, p: number, def: ShotDef): boolean {
   }
   if (!within(dx, dy, form.coreR + def.rad)) return false;
   damageShip(w, seat, def.dmg, m.pOwner[p], DamageKind.Bullet);
-  detonate(w, p);
+  impact(w, p, def, seat);
   return true;
 }
 
+/** A returning shot never strikes what it struck last. */
 function hitShips(w: World, p: number, def: ShotDef): boolean {
   const { m } = w;
+  const returning = (def.flags & ShotFlag.Return) !== 0;
   for (let seat = 0; seat < w.seats; seat++) {
-    if (!isFighting(w, seat) || m.plTeam[seat] === m.pTeam[p]) continue;
+    if (!isFighting(w, seat) || m.plTeam[seat] === m.pTeam[p] || (returning && m.pLast[p] === seat)) continue;
     const used = m.plForm[seat] === Form.Boss ? hitBoss(w, seat, p, def) : hitRobot(w, seat, p, def);
     if (used) return true;
   }
@@ -135,18 +150,38 @@ function hitShips(w: World, p: number, def: ShotDef): boolean {
 
 function hitNeutrals(w: World, p: number, def: ShotDef): void {
   const { m } = w;
+  const returning = (def.flags & ShotFlag.Return) !== 0;
   for (let n = 0; n < w.cap.neutrals; n++) {
-    if (m.nAlive[n] !== 1) continue;
+    if (m.nAlive[n] !== 1 || (returning && m.pLast[p] === struckNeutral(n))) continue;
     if (!within(m.pX[p] - m.nX[n], m.pY[p] - m.nY[n], NEUTRAL_DEFS[m.nType[n]].rad + def.rad)) continue;
     damageNeutral(w, n, def.dmg, m.pOwner[p]);
-    detonate(w, p);
+    impact(w, p, def, struckNeutral(n));
     return;
   }
 }
 
 /**
+ * An armed mine is set off by a hostile ship coming within its trigger radius of the ship's body (a colossus's whole reach),
+ * cloaked or not, or, if a pilot laid it, by a neutral unit.
+ */
+function tripped(w: World, p: number, def: ShotDef): boolean {
+  const { m } = w;
+  for (let seat = 0; seat < w.seats; seat++) {
+    if (!isFighting(w, seat) || m.plTeam[seat] === m.pTeam[p]) continue;
+    const body = m.plForm[seat] === Form.Boss ? FORMS[m.plFrame[seat]].reach : FRAME_STATS[m.plFrame[seat]].bodyR;
+    if (within(m.plX[seat] - m.pX[p], m.plY[seat] - m.pY[p], body + def.trigger)) return true;
+  }
+  if (m.pOwner[p] < 0) return false;
+  for (let n = 0; n < w.cap.neutrals; n++) {
+    if (m.nAlive[n] === 1 && within(m.nX[n] - m.pX[p], m.nY[n] - m.pY[p], NEUTRAL_DEFS[m.nType[n]].rad + def.trigger)) return true;
+  }
+  return false;
+}
+
+/**
  * Projectiles against ships (never their own team), boss-form parts and neutral units. Shots from players also hurt
- * neutral units; neutral shots hurt ships only. Projectiles born this tick (age 0) wait until next tick.
+ * neutral units; neutral shots hurt ships only. Inert projectiles touch nothing, but an armed mine is set off by what comes
+ * near it. Projectiles born this tick (age 0) wait until next tick.
  */
 export function collideProjectiles(w: World): void {
   const { m } = w;
@@ -154,7 +189,10 @@ export function collideProjectiles(w: World): void {
   for (let p = 0; p < w.cap.projectiles; p++) {
     if (m.pAlive[p] !== 1 || m.pAge[p] === 0) continue;
     const def = SHOT_DEFS[m.pDef[p]];
-    if ((def.flags & ShotFlag.Inert) !== 0) continue;
+    if ((def.flags & ShotFlag.Inert) !== 0) {
+      if ((def.flags & ShotFlag.Proximity) !== 0 && m.pAge[p] >= def.arm && tripped(w, p, def)) detonate(w, p);
+      continue;
+    }
     if (hitShips(w, p, def)) continue;
     if (m.pOwner[p] >= 0) hitNeutrals(w, p, def);
   }

@@ -16,6 +16,11 @@ export interface FrameContext {
   /** The pilot the camera follows (the local pilot, or whoever is being spectated). */
   readonly focusSeat: number;
   readonly focusTeam: number;
+  /**
+   * The team a cloaked pilot is hidden from (snapshot.ts hiddenFrom): the local pilot's, even while it spectates someone
+   * else after dying, or the followed pilot's when no one plays (attract).
+   */
+  readonly viewerTeam: number;
   readonly beat: Beat;
 }
 
@@ -26,7 +31,7 @@ export interface FrameContext {
 export interface StageView {
   readonly root: THREE.Object3D;
   /** The events of the ticks simulated since the last frame (world.events), before they are cleared. */
-  handleEvents(world: World, focusSeat: number): void;
+  handleEvents(world: World, focusSeat: number, viewerTeam: number): void;
   update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void;
   dispose(): void;
 }

@@ -1,12 +1,13 @@
 import * as THREE from 'three';
-import { Ev, SHOT_DEFS, type World } from '../sim/index.ts';
+import { Ev, Proj, ReturnMode, SHOT_DEFS, ShotFlag, type ShotDef, type World } from '../sim/index.ts';
 import { NEUTRAL_COLORS, TEAM_COLORS } from '../config.ts';
 import { DrawLayer } from '../render/layers.ts';
 import type { FrameContext, StageView } from './frame.ts';
 import type { WorldSnapshot } from './snapshot.ts';
-import { clamp01, colorIntoLinear, easeOutBack, easeOutExpo, lerp, lerpBinaryAngle, toWorld } from './shared.ts';
+import { binaryAngleToRadians, clamp01, colorIntoLinear, easeOutBack, easeOutExpo, lerp, lerpBinaryAngle, toWorld } from './shared.ts';
 
 const NEUTRAL_EDGE = colorIntoLinear(new THREE.Color(), NEUTRAL_COLORS.accent);
+const FRIENDLY_MARK_ALPHA = 0.45;
 const WHITE_CORE = new THREE.Color(1.55, 1.7, 1.95);
 const FRIENDLY_EDGE_GAIN = 0.42;
 const FRIENDLY_CORE_GAIN = 0.55;
@@ -25,6 +26,35 @@ const TRAIL_SPEED_GAIN = 6.8;
 const SEEKER_WIGGLE = 0.14;
 const BLADE_SPIN_RATE = 0.36;
 const SHARD_TUMBLE_RATE = 0.22;
+const SHURIKEN_SPIN_RATE = 0.5;
+const MINE_TURN_RATE = 0.02;
+const MISSILE_WOBBLE = 0.08;
+/** A missile's exhaust (and a rocket fist's, flying out): its trail is this much longer and brighter than a plain shot's. */
+const EXHAUST_LENGTH_GAIN = 1.9;
+const EXHAUST_ALPHA_GAIN = 1.6;
+/** Lobbed shells rise on an arc whose apex is this share of the flight distance, within these heights (world units). */
+const LOB_ARC_SHARE = 0.26;
+const LOB_ARC_MIN = 16;
+const LOB_ARC_MAX = 96;
+/** A lobbed shell grows this much at the top of its arc (it is nearer the camera, and it is what the arena watches fall). */
+const LOB_APEX_GROWTH = 0.7;
+/** The marker's closing ring starts this many blast radii out and tightens onto the blast radius at impact. */
+const LOB_CLOSING_START = 1.7;
+const LOB_MARK_MIN_ALPHA = 0.3;
+const LOB_MARK_MAX_ALPHA = 0.95;
+const LOB_SHADOW_RADIUS = 1.6;
+const LOB_SHADOW_ALPHA = 0.5;
+/** The shadow is the shell's own colour, dimmed: a dark one would vanish into the floor. */
+const LOB_SHADOW_GAIN = 0.45;
+/** Shells that burst into shrapnel instead of a blast mark a ring this many shell radii wide where they land. */
+const LOB_SHRAPNEL_MARK_RADII = 3;
+const MINE_TRIGGER_ALPHA = 0.22;
+const MARK_Z = 0.3;
+const MARK_KIND_BLAST = 0;
+const MARK_KIND_CLOSING = 1;
+const MARK_KIND_TRIGGER = 2;
+const MARK_KIND_SHADOW = 3;
+const MARKS_PER_PROJECTILE = 3;
 const EVENT_MEMORY = 256;
 const EVENT_NEAR_RADIUS = 18;
 const EVENT_NEAR_RADIUS_SQ = EVENT_NEAR_RADIUS * EVENT_NEAR_RADIUS;
@@ -61,6 +91,7 @@ attribute float iBoss;
 attribute float iPulse;
 attribute float iAge;
 attribute float iLife;
+attribute float iAux;
 varying vec2 vLocal;
 varying vec3 vColor;
 varying vec3 vCore;
@@ -70,6 +101,7 @@ varying float vBoss;
 varying float vPulse;
 varying float vAge;
 varying float vLife;
+varying float vAux;
 void main() {
   float c = cos(iAngle);
   float s = sin(iAngle);
@@ -84,6 +116,7 @@ void main() {
   vPulse = iPulse;
   vAge = iAge;
   vLife = iLife;
+  vAux = iAux;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(world, iCenter.z, 1.0);
 }`;
 
@@ -97,6 +130,8 @@ varying float vBoss;
 varying float vPulse;
 varying float vAge;
 varying float vLife;
+/** Mines: 0 -> 1 while arming (dim until armed). Fists: 1 while a rocket fist flies home (its wrist port lit). */
+varying float vAux;
 
 float capsule(vec2 p, vec2 h) {
   vec2 q = abs(p) - h;
@@ -142,10 +177,37 @@ void main() {
   } else if (vKind < 8.5) {
     d = capsule(p, vec2(1.0, 0.048));
     line = abs(p.y) - 0.014;
-  } else {
+  } else if (vKind < 9.5) {
     vec2 q = p + vec2(0.18, 0.0);
     d = max(length(q) - 0.84, -(length(q - vec2(0.30, 0.0)) - 0.58));
     line = max(abs(abs(p.x) - abs(p.y)) - 0.045, length(p) - 0.92);
+  } else if (vKind < 10.5) {
+    // Slash: a crescent sliver, convex side forward.
+    d = max(length(p - vec2(-0.75, 0.0)) - 1.0, -(length(p - vec2(-1.05, 0.0)) - 1.0));
+    line = abs(length(p - vec2(-0.9, 0.0)) - 1.0) - 0.022;
+  } else if (vKind < 11.5) {
+    // Shuriken: a four-point star (two crossed rhombi) around a hub.
+    vec2 q = abs(p);
+    d = min(q.x + q.y * 3.4 - 1.0, q.x * 3.4 + q.y - 1.0) * 0.28;
+    line = ring(p, 0.2, 0.03);
+  } else if (vKind < 12.5) {
+    // Missile: a slim body with a pointed nose and a spine.
+    d = max(capsule(p, vec2(0.72, 0.3)), p.x * 0.7 + abs(p.y) * 1.3 - 0.62);
+    line = max(abs(p.y) - 0.03, abs(p.x + 0.1) - 0.5);
+  } else if (vKind < 13.5) {
+    // Mine: a hexagonal disc with a hub.
+    d = hex(p, 0.7);
+    line = min(abs(hex(p, 0.42)) - 0.03, length(p) - 0.12);
+  } else if (vKind < 14.5) {
+    // Fist: a chunky knuckle block, knuckles forward.
+    vec2 q = abs(p) - vec2(0.56, 0.62);
+    d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - 0.22;
+    line = min(abs(p.x - 0.36) - 0.035, max(abs(abs(p.y) - 0.28) - 0.03, 0.36 - p.x));
+  } else {
+    // Bomb: a round body with a tail.
+    vec2 c = p - vec2(0.12, 0.0);
+    d = min(length(c) - 0.6, capsule(p + vec2(0.62, 0.0), vec2(0.24, 0.36)));
+    line = abs(length(c) - 0.36) - 0.03;
   }
 
   float edgeSoft = fwidth(d) * 1.25;
@@ -170,6 +232,18 @@ void main() {
   alpha += outer * 0.42;
   alpha += hardCore * mix(0.48, 0.13, vFriendly);
   alpha += hotHead * mix(0.54, 0.18, vFriendly);
+  // A slash is a short sweep of the blade: it thins out over the end of its life instead of popping.
+  if (vKind > 9.5 && vKind < 10.5) alpha *= 1.0 - smoothstep(0.6, 1.0, vLife);
+  if (vKind > 12.5 && vKind < 13.5) {
+    float blink = step(0.999, vAux) * (0.5 + 0.5 * sin(vAge * 0.35));
+    color *= mix(0.35, 1.0, vAux) + blink * 0.45;
+    alpha *= mix(0.5, 1.0, vAux);
+  }
+  if (vKind > 13.5 && vKind < 14.5) {
+    float wrist = vAux * (1.0 - smoothstep(0.06, 0.32, length(p - vec2(-0.62, 0.0))));
+    color += vCore * wrist * 0.9 * pulse;
+    alpha += wrist * mix(0.6, 0.2, vFriendly);
+  }
   if (alpha <= 0.001) discard;
   gl_FragColor = vec4(color, alpha);
 }`;
@@ -253,6 +327,63 @@ void main() {
   gl_FragColor = vec4(vColor.rgb, alpha);
 }`;
 
+const MARK_VERTEX = /* glsl */ `
+attribute vec3 iCenter;
+attribute float iRadius;
+attribute float iKind;
+attribute vec4 iColor;
+attribute float iPhase;
+varying vec2 vLocal;
+varying float vRadius;
+varying float vKind;
+varying vec4 vColor;
+varying float vPhase;
+void main() {
+  // The quad is a little larger than the mark's radius so the rim ring is not clipped by it.
+  vec2 local = position.xy * 1.12;
+  vLocal = local;
+  vRadius = iRadius;
+  vKind = iKind;
+  vColor = iColor;
+  vPhase = iPhase;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(iCenter.xy + local * iRadius, iCenter.z, 1.0);
+}`;
+
+// Marks painted on the floor, in radii of the mark (vLocal); line widths are in world units, whatever the radius.
+const MARK_FRAGMENT = /* glsl */ `
+varying vec2 vLocal;
+varying float vRadius;
+varying float vKind;
+varying vec4 vColor;
+varying float vPhase;
+const float TWO_PI = 6.2831853;
+float dashes(vec2 p, float count, float phase) {
+  // atan is only taken away from the centre: atan(0, 0) is undefined.
+  if (length(p) < 0.5) return 1.0;
+  return step(0.5, fract(atan(p.y, p.x) * count / TWO_PI + phase));
+}
+void main() {
+  float r = length(vLocal);
+  float aa = fwidth(r) * 1.5 + 0.0005;
+  float lineW = 0.55 / max(vRadius, 1.0);
+  float rim = 1.0 - smoothstep(lineW, lineW + aa, abs(r - 1.0));
+  float alpha;
+  if (vKind < 0.5) {
+    float fill = (1.0 - smoothstep(1.0 - aa, 1.0 + aa, r)) * 0.07;
+    float crosshair = (1.0 - smoothstep(lineW, lineW + aa, min(abs(vLocal.x), abs(vLocal.y)))) * (1.0 - smoothstep(0.2, 0.2 + aa, r));
+    alpha = rim + fill + crosshair * 0.8;
+  } else if (vKind < 1.5) {
+    alpha = rim * dashes(vLocal, 24.0, vPhase) * 0.85;
+  } else if (vKind < 2.5) {
+    alpha = rim * dashes(vLocal, 36.0, vPhase) * 0.7;
+  } else {
+    alpha = (1.0 - smoothstep(0.35, 1.0, r)) * 0.8 + rim * 0.25;
+  }
+  alpha *= vColor.a;
+  if (alpha <= 0.001) discard;
+  gl_FragColor = vec4(vColor.rgb, min(alpha, 1.0));
+}`;
+
 interface EndPool {
   readonly alive: Uint8Array;
   readonly kind: Uint8Array;
@@ -299,6 +430,15 @@ export class ProjectilesView implements StageView {
   private readonly endMesh: THREE.Mesh;
   private readonly endGeometry: THREE.InstancedBufferGeometry;
   private readonly endMaterial: THREE.ShaderMaterial;
+  private readonly markGeometry: THREE.InstancedBufferGeometry;
+  private readonly markMaterial: THREE.ShaderMaterial;
+  private readonly markCapacity: number;
+  private readonly markCenters: Float32Array;
+  private readonly markRadii: Float32Array;
+  private readonly markKinds: Float32Array;
+  private readonly markColors: Float32Array;
+  private readonly markPhases: Float32Array;
+  private readonly markAttrs: readonly THREE.InstancedBufferAttribute[];
   private readonly centers: Float32Array;
   private readonly angles: Float32Array;
   private readonly scales: Float32Array;
@@ -310,6 +450,7 @@ export class ProjectilesView implements StageView {
   private readonly pulses: Float32Array;
   private readonly ages: Float32Array;
   private readonly lifes: Float32Array;
+  private readonly auxes: Float32Array;
   private readonly trailCenters: Float32Array;
   private readonly trailAngles: Float32Array;
   private readonly trailScales: Float32Array;
@@ -329,6 +470,9 @@ export class ProjectilesView implements StageView {
   private readonly eventX = new Float32Array(EVENT_MEMORY);
   private readonly eventY = new Float32Array(EVENT_MEMORY);
   private eventCount = 0;
+  private markCount = 0;
+  /** The snapshot whose vanished shots were last given their end effects (detectDisappearances). */
+  private endedTick = -1;
   private readonly endPool = makeEndPool();
   private nextEnd = 0;
 
@@ -346,6 +490,7 @@ export class ProjectilesView implements StageView {
     this.pulses = new Float32Array(max);
     this.ages = new Float32Array(max);
     this.lifes = new Float32Array(max);
+    this.auxes = new Float32Array(max);
     this.bulletAttrs = [
       this.attr(this.bulletGeometry, 'iCenter', this.centers, 3),
       this.attr(this.bulletGeometry, 'iAngle', this.angles, 1),
@@ -358,6 +503,7 @@ export class ProjectilesView implements StageView {
       this.attr(this.bulletGeometry, 'iPulse', this.pulses, 1),
       this.attr(this.bulletGeometry, 'iAge', this.ages, 1),
       this.attr(this.bulletGeometry, 'iLife', this.lifes, 1),
+      this.attr(this.bulletGeometry, 'iAux', this.auxes, 1),
     ];
     this.bulletMaterial = new THREE.ShaderMaterial({ vertexShader: BULLET_VERTEX, fragmentShader: BULLET_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.NormalBlending });
     this.bulletMesh = new THREE.Mesh(this.bulletGeometry, this.bulletMaterial);
@@ -402,7 +548,26 @@ export class ProjectilesView implements StageView {
     this.endMesh.frustumCulled = false;
     this.endMesh.renderOrder = DrawLayer.Projectiles;
 
-    this.root.add(this.trailMesh, this.endMesh, this.bulletMesh);
+    this.markGeometry = this.makeGeometry();
+    this.markCapacity = max * MARKS_PER_PROJECTILE;
+    this.markCenters = new Float32Array(this.markCapacity * 3);
+    this.markRadii = new Float32Array(this.markCapacity);
+    this.markKinds = new Float32Array(this.markCapacity);
+    this.markColors = new Float32Array(this.markCapacity * 4);
+    this.markPhases = new Float32Array(this.markCapacity);
+    this.markAttrs = [
+      this.attr(this.markGeometry, 'iCenter', this.markCenters, 3),
+      this.attr(this.markGeometry, 'iRadius', this.markRadii, 1),
+      this.attr(this.markGeometry, 'iKind', this.markKinds, 1),
+      this.attr(this.markGeometry, 'iColor', this.markColors, 4),
+      this.attr(this.markGeometry, 'iPhase', this.markPhases, 1),
+    ];
+    this.markMaterial = new THREE.ShaderMaterial({ vertexShader: MARK_VERTEX, fragmentShader: MARK_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.NormalBlending });
+    const markMesh = new THREE.Mesh(this.markGeometry, this.markMaterial);
+    markMesh.frustumCulled = false;
+    markMesh.renderOrder = DrawLayer.FloorMarks;
+
+    this.root.add(markMesh, this.trailMesh, this.endMesh, this.bulletMesh);
     this.teamColors = TEAM_COLORS.map((hex) => colorIntoLinear(new THREE.Color(), hex));
   }
 
@@ -422,9 +587,14 @@ export class ProjectilesView implements StageView {
 
   update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
     const { alpha, focusTeam, time: timeSeconds, dt: dtSeconds, beat } = frame;
-    this.detectDisappearances(previous, current);
+    // Once per new snapshot: frames between ticks see the same pair (and no events), and would end every shot again.
+    if (current.tick !== this.endedTick) {
+      this.endedTick = current.tick;
+      this.detectDisappearances(previous, current);
+    }
     let count = 0;
     let trailCount = 0;
+    this.markCount = 0;
     for (let p = 0; p < current.projectiles; p++) {
       if (current.pAlive[p] !== 1) continue;
       const def = SHOT_DEFS[current.pDef[p]];
@@ -441,16 +611,23 @@ export class ProjectilesView implements StageView {
       const beatPulse = beat.pulse * BEAT_GLOW_GAIN;
       const bossPulse = boss === 1 ? 0.08 + 0.06 * Math.sin(timeSeconds * 4.2 + p * 0.11) : 0;
       const radius = toWorld(def.rad) * (boss === 1 ? BOSS_SCALE : 1);
-      const length = this.lengthFor(def.kind, radius, boss === 1);
-      const spawnScale = this.spawnScale(current.pAge[p]);
+      const lift = (def.flags & ShotFlag.Lob) !== 0 ? this.lob(current, p, def, x, y, lerp(current.pAge[p] - 1, current.pAge[p], snap), hostile, baseColor, timeSeconds) : 0;
+      const grow = lift > 0 ? 1 + LOB_APEX_GROWTH * lift / LOB_ARC_MAX : 1;
+      if ((def.flags & ShotFlag.Proximity) !== 0 && current.pAge[p] >= def.arm) {
+        this.mark(MARK_KIND_TRIGGER, x, y, toWorld(def.trigger), baseColor, markGain(hostile), MINE_TRIGGER_ALPHA * markFade(hostile), timeSeconds * 0.05);
+      }
+      const spawnScale = this.spawnScale(current.pAge[p]) * grow;
+      // A rocket fist flies out knuckles first on its wrist rocket and comes home wrist first, to dock, its wrist port lit.
+      const rocketFist = def.kind === Proj.Fist && (def.flags & ShotFlag.Return) !== 0;
+      const homeward = rocketFist && current.pMode[p] === ReturnMode.Returning;
       const i3 = count * 3;
       const i2 = count * 2;
       this.centers[i3] = x;
       this.centers[i3 + 1] = y;
-      this.centers[i3 + 2] = BULLET_Z;
-      this.angles[count] = angle;
-      this.scales[i2] = length * spawnScale;
-      this.scales[i2 + 1] = radius * spawnScale;
+      this.centers[i3 + 2] = BULLET_Z + lift;
+      this.angles[count] = homeward ? angle + Math.PI : angle;
+      this.scales[i2] = this.lengthFor(def.kind, radius, boss === 1) * spawnScale;
+      this.scales[i2 + 1] = this.widthFor(def.kind, radius) * spawnScale;
       this.kinds[count] = def.kind;
       const edgeGain = current.pOwner[p] < 0 ? NEUTRAL_EDGE_GAIN : hostile ? HOSTILE_EDGE_GAIN : FRIENDLY_EDGE_GAIN;
       const coreGain = hostile ? HOSTILE_CORE_GAIN : FRIENDLY_CORE_GAIN;
@@ -465,20 +642,64 @@ export class ProjectilesView implements StageView {
       this.pulses[count] = beatPulse + bossPulse;
       this.ages[count] = current.pAge[p];
       this.lifes[count] = clamp01(ageNorm);
+      this.auxes[count] = def.kind === Proj.Fist ? (homeward ? 1 : 0) : def.arm > 0 ? clamp01(current.pAge[p] / def.arm) : 1;
       count++;
       // A trail says where a bullet came from: a fuse that stands still has none.
-      if (def.spd > 0) trailCount = this.appendTrail(trailCount, x, y, angle, def.spd, radius, baseColor, hostile, friendly, timeSeconds, p);
+      if (def.spd > 0) {
+        const exhaust = def.kind === Proj.Missile || (rocketFist && !homeward);
+        trailCount = this.appendTrail(trailCount, x, y, TRAIL_Z + lift, angle, toWorld(def.spd), exhaust, radius, baseColor, hostile, friendly, timeSeconds, p);
+      }
     }
     const endCount = this.updateEndFx(dtSeconds);
     this.bulletGeometry.instanceCount = count;
     this.trailGeometry.instanceCount = trailCount;
     this.endGeometry.instanceCount = endCount;
+    this.markGeometry.instanceCount = this.markCount;
     this.markNeedsUpdate(this.bulletAttrs);
     this.markNeedsUpdate(this.trailAttrs);
     this.markNeedsUpdate(this.endAttrs);
+    this.markNeedsUpdate(this.markAttrs);
+  }
+
+  /**
+   * A lobbed shell flies over everything to a ground point: it is drawn up on its arc (the height it returns), its shadow on
+   * the ground track, and from launch its landing marker shows the blast radius, with a ring that tightens as impact nears.
+   */
+  private lob(current: WorldSnapshot, p: number, def: ShotDef, x: number, y: number, age: number, hostile: boolean, color: THREE.Color, timeSeconds: number): number {
+    const fuse = current.pFuse[p] > 0 ? current.pFuse[p] : def.life;
+    const speed = toWorld(current.pSpd[p]);
+    const progress = clamp01(age / fuse);
+    const apex = Math.min(LOB_ARC_MAX, Math.max(LOB_ARC_MIN, speed * fuse * LOB_ARC_SHARE));
+    const heading = binaryAngleToRadians(current.pAng[p]);
+    const remaining = speed * (fuse - current.pAge[p]);
+    const landX = toWorld(current.pX[p]) + Math.cos(heading) * remaining;
+    const landY = toWorld(current.pY[p]) + Math.sin(heading) * remaining;
+    const radius = landingRadius(def);
+    const alpha = lerp(LOB_MARK_MIN_ALPHA, LOB_MARK_MAX_ALPHA, progress * progress) * markFade(hostile);
+    this.mark(MARK_KIND_BLAST, landX, landY, radius, color, markGain(hostile), alpha, 0);
+    this.mark(MARK_KIND_CLOSING, landX, landY, radius * lerp(LOB_CLOSING_START, 1, progress), color, markGain(hostile), alpha, timeSeconds * 0.4);
+    this.mark(MARK_KIND_SHADOW, x, y, toWorld(def.rad) * LOB_SHADOW_RADIUS, color, LOB_SHADOW_GAIN, LOB_SHADOW_ALPHA * markFade(hostile) * (1 - 0.4 * Math.sin(progress * Math.PI)), 0);
+    return 4 * apex * progress * (1 - progress);
+  }
+
+  private mark(kind: number, x: number, y: number, radius: number, color: THREE.Color, gain: number, alpha: number, phase: number): void {
+    if (this.markCount >= this.markCapacity) return;
+    const i = this.markCount++;
+    this.markCenters[i * 3] = x;
+    this.markCenters[i * 3 + 1] = y;
+    this.markCenters[i * 3 + 2] = MARK_Z;
+    this.markRadii[i] = radius;
+    this.markKinds[i] = kind;
+    this.markColors[i * 4] = color.r * gain;
+    this.markColors[i * 4 + 1] = color.g * gain;
+    this.markColors[i * 4 + 2] = color.b * gain;
+    this.markColors[i * 4 + 3] = alpha;
+    this.markPhases[i] = phase;
   }
 
   dispose(): void {
+    this.markGeometry.dispose();
+    this.markMaterial.dispose();
     this.bulletGeometry.dispose();
     this.bulletMaterial.dispose();
     this.trailGeometry.dispose();
@@ -504,20 +725,19 @@ export class ProjectilesView implements StageView {
     for (const attr of attrs) attr.needsUpdate = true;
   }
 
-  private appendTrail(count: number, x: number, y: number, angle: number, speedRaw: number, radius: number, color: THREE.Color, hostile: boolean, friendly: number, timeSeconds: number, index: number): number {
-    const speed = toWorld(speedRaw);
-    const length = Math.max(TRAIL_MIN_LENGTH, speed * TRAIL_SPEED_GAIN + radius * 2.4);
+  private appendTrail(count: number, x: number, y: number, z: number, angle: number, speed: number, exhaust: boolean, radius: number, color: THREE.Color, hostile: boolean, friendly: number, timeSeconds: number, index: number): number {
+    const length = Math.max(TRAIL_MIN_LENGTH, speed * TRAIL_SPEED_GAIN + radius * 2.4) * (exhaust ? EXHAUST_LENGTH_GAIN : 1);
     const back = length * 0.52;
     const i3 = count * 3;
     const i2 = count * 2;
     const i4 = count * 4;
     this.trailCenters[i3] = x - Math.cos(angle) * back;
     this.trailCenters[i3 + 1] = y - Math.sin(angle) * back;
-    this.trailCenters[i3 + 2] = TRAIL_Z;
+    this.trailCenters[i3 + 2] = z;
     this.trailAngles[count] = angle;
     this.trailScales[i2] = length;
     this.trailScales[i2 + 1] = radius * TRAIL_WIDTH_GAIN;
-    const alpha = hostile ? 0.22 : 0.08 + friendly * 0.03;
+    const alpha = (hostile ? 0.22 : 0.08 + friendly * 0.03) * (exhaust ? EXHAUST_ALPHA_GAIN : 1);
     this.trailColors[i4] = color.r * (hostile ? 1.05 : 0.46);
     this.trailColors[i4 + 1] = color.g * (hostile ? 1.05 : 0.46);
     this.trailColors[i4 + 2] = color.b * (hostile ? 1.05 : 0.46);
@@ -570,9 +790,13 @@ export class ProjectilesView implements StageView {
       const y = toWorld(previous.pY[p]);
       const color = this.colorForProjectile(previous.pOwner[p], previous.pTeam[p]);
       const nearby = this.nearEventType(x, y);
+      // The effects view draws blasts and catches; a lobbed shell that bursts still sprays its shrapnel here.
+      if (nearby === Ev.Catch || ((def.flags & ShotFlag.Lob) !== 0 && def.burst === null)) continue;
       if (nearby === Ev.Burst || def.burst !== null) this.endBurst(x, y, color, true);
       else if (nearby !== 0) this.endImpact(x, y, color);
-      else if (previous.pAge[p] >= def.life - 1) this.endExpiry(x, y, color);
+      else if (previous.pAge[p] >= def.life - 1) {
+        if (def.kind !== Proj.Slash) this.endExpiry(x, y, color);
+      }
       else this.endImpact(x, y, color);
     }
   }
@@ -595,7 +819,7 @@ export class ProjectilesView implements StageView {
   }
 
   private isImpactEvent(type: number): boolean {
-    return type === Ev.Hit || type === Ev.PartHit || type === Ev.Blocked || type === Ev.Absorb || type === Ev.NeutralHit || type === Ev.Burst;
+    return type === Ev.Hit || type === Ev.PartHit || type === Ev.Blocked || type === Ev.Absorb || type === Ev.NeutralHit || type === Ev.Burst || type === Ev.Catch;
   }
 
   private muzzleFlash(x: number, y: number, color: THREE.Color): void {
@@ -657,21 +881,69 @@ export class ProjectilesView implements StageView {
     this.endPool.color[i4 + 3] = alpha;
   }
 
+  /** Half-length of a projectile's quad along its heading (the shader's shapes are drawn in that quad). */
   private lengthFor(kind: number, radius: number, boss: boolean): number {
-    if (kind === 1) return radius * (boss ? 7.2 : 6.3);
-    if (kind === 8) return radius * 8.0;
-    if (kind === 2) return radius * 2.5;
-    if (kind === 3) return radius * 1.65;
-    if (kind === 5) return radius * 1.35;
-    if (kind === 9) return radius * 1.75;
-    return radius * 2.0;
+    switch (kind) {
+      case Proj.Dart:
+        return radius * (boss ? 7.2 : 6.3);
+      case Proj.Needle:
+        return radius * 8.0;
+      case Proj.Seeker:
+        return radius * 2.5;
+      case Proj.Shell:
+        return radius * 1.65;
+      case Proj.Echo:
+        return radius * 1.35;
+      case Proj.Blade:
+        return radius * 1.75;
+      case Proj.Missile:
+        return radius * 2.3;
+      case Proj.Slash:
+      case Proj.Shuriken:
+      case Proj.Mine:
+      case Proj.Fist:
+      case Proj.Bomb:
+        return this.widthFor(kind, radius);
+      default:
+        return radius * 2.0;
+    }
+  }
+
+  /** Half-width of a projectile's quad across its heading: the radius, but square quads for the shapes drawn round. */
+  private widthFor(kind: number, radius: number): number {
+    switch (kind) {
+      case Proj.Slash:
+        return radius * 1.55;
+      case Proj.Shuriken:
+        return radius * 1.5;
+      case Proj.Mine:
+        return radius * 1.3;
+      case Proj.Bomb:
+        return radius * 1.5;
+      case Proj.Fist:
+        return radius * 1.25;
+      default:
+        return radius;
+    }
   }
 
   private kindMotionAngle(kind: number, age: number, index: number): number {
-    if (kind === 2) return Math.sin(age * 0.24 + index * 0.37) * SEEKER_WIGGLE;
-    if (kind === 4) return age * SHARD_TUMBLE_RATE + index * 0.19;
-    if (kind === 9) return age * BLADE_SPIN_RATE;
-    return 0;
+    switch (kind) {
+      case Proj.Seeker:
+        return Math.sin(age * 0.24 + index * 0.37) * SEEKER_WIGGLE;
+      case Proj.Shard:
+        return age * SHARD_TUMBLE_RATE + index * 0.19;
+      case Proj.Blade:
+        return age * BLADE_SPIN_RATE;
+      case Proj.Shuriken:
+        return age * SHURIKEN_SPIN_RATE;
+      case Proj.Mine:
+        return age * MINE_TURN_RATE + index * 0.4;
+      case Proj.Missile:
+        return Math.sin(age * 0.3 + index * 0.53) * MISSILE_WOBBLE;
+      default:
+        return 0;
+    }
   }
 
   private spawnScale(age: number): number {
@@ -688,4 +960,23 @@ export class ProjectilesView implements StageView {
     if (team < 0) return NEUTRAL_EDGE;
     return this.teamColors[team % this.teamColors.length];
   }
+}
+
+/**
+ * The radius a lobbed shell's landing marker shows, world units: its blast; for a shell that bursts into a proximity mine,
+ * the mine's trigger radius; for one that bursts into shrapnel, a ring a few shell radii wide round the burst point.
+ */
+function landingRadius(def: ShotDef): number {
+  if (def.blastR > 0) return toWorld(def.blastR);
+  if (def.burst !== null && (def.burst.shot.flags & ShotFlag.Proximity) !== 0) return toWorld(def.burst.shot.trigger);
+  return toWorld(def.rad) * LOB_SHRAPNEL_MARK_RADII;
+}
+
+/** Marks are tinted like the shots that make them: hostile ones bright, the viewer's own team's ghosted. */
+function markGain(hostile: boolean): number {
+  return hostile ? HOSTILE_EDGE_GAIN : FRIENDLY_EDGE_GAIN;
+}
+
+function markFade(hostile: boolean): number {
+  return hostile ? 1 : FRIENDLY_MARK_ALPHA;
 }

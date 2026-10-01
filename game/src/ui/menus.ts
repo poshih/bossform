@@ -12,12 +12,12 @@
  * The class reports user intent only through MenuCallbacks. It never starts a match itself.
  */
 import { fx } from '@metronome/engine';
-import { DEFAULT_NAMES, evenTeams, FRAME_NAMES, FRAME_TAGLINES, freeForAllTeams, MODE_BLURBS, MODE_NAMES } from '../setup.ts';
+import { ALT_LABELS, DEFAULT_NAMES, evenTeams, FORM_NAMES, FRAME_BLURBS, FRAME_NAMES, FRAME_TAGLINES, freeForAllTeams, MODE_BLURBS, MODE_NAMES, PRIMARY_LABELS } from '../setup.ts';
 import type { LobbyEdits, LobbyState, MatchSetup } from '../setup.ts';
 import { FRAME_COUNT, FRAME_STATS, Frame, MAX_PLAYERS, Mode, TICK_RATE, W } from '../sim/index.ts';
 import type { World } from '../sim/index.ts';
-import { frameEmblemSvg } from './icons.ts';
-import { cssHex, teamColor, teamCss, UI_ACCENT, UI_BACKGROUND, UI_CAPS_SPACING, UI_EDGE, UI_EDGE_SOFT, UI_FONT_STACK, UI_PANEL, UI_PANEL_STRONG, UI_SUCCESS, UI_TEXT, UI_TEXT_DIM, UI_WARNING } from './theme.ts';
+import { FRAME_EMBLEM_COLORS, frameEmblemSvg } from './icons.ts';
+import { cssHex, teamCss, UI_ACCENT, UI_BACKGROUND, UI_CAPS_SPACING, UI_EDGE, UI_EDGE_SOFT, UI_FONT_STACK, UI_PANEL, UI_PANEL_STRONG, UI_SUCCESS, UI_TEXT, UI_TEXT_DIM, UI_WARNING } from './theme.ts';
 
 const STYLE_ID = 'bossform-menus-style';
 const TITLE_TAGLINE = 'VECTOR MECH ARENA';
@@ -199,12 +199,13 @@ export class Menus {
         <span class="bf-choice-title">${MODE_NAMES[mode]}</span>
         <span class="bf-choice-copy">${MODE_BLURBS[mode]}</span>
       </button>`).join('');
-    const frameCards = [Frame.Vanguard, Frame.Gale, Frame.Juggernaut].map((frame) => `
-      <button type="button" class="bf-choice-card bf-frame-card" data-nav-group="setup-frame" data-setup-frame="${frame}" aria-label="${FRAME_NAMES[frame]}">
-        <span class="bf-choice-kicker">Frame</span>
-        <span class="bf-choice-title">${FRAME_NAMES[frame]}</span>
-        <span class="bf-choice-copy">${FRAME_TAGLINES[frame]}</span>
+    const frameCards = Array.from({ length: FRAME_COUNT }, (_, frame) => `
+      <button type="button" class="bf-choice-card bf-frame-card" data-nav-group="setup-frame" data-setup-frame="${frame}" aria-label="${FRAME_NAMES[frame]}, ${FRAME_TAGLINES[frame]}" style="--frame:${cssHex(FRAME_EMBLEM_COLORS[frame])}">
         <span class="bf-emblem" data-frame-emblem="${frame}"></span>
+        <span class="bf-frame-text">
+          <span class="bf-frame-name">${FRAME_NAMES[frame]}</span>
+          <span class="bf-frame-tag">${FRAME_TAGLINES[frame]}</span>
+        </span>
       </button>`).join('');
     const teamCards = [
       { id: 'free-for-all', title: 'FREE-FOR-ALL', copy: 'Every pilot is their own team.' },
@@ -228,7 +229,8 @@ export class Menus {
         </div>
         <div class="bf-subtitle">Choose the mode, frame, opponents, and team layout.</div>
         <div class="bf-grid-2">${modeCards}</div>
-        <div class="bf-grid-3">${frameCards}</div>
+        <div class="bf-section-label">Frame</div>
+        <div class="bf-frame-grid" role="group" aria-label="Frame">${frameCards}</div>
         <div class="bf-grid-3">${teamCards}</div>
         <div class="bf-inline-fields">
           <label class="bf-field"><span>Opponents</span><select data-setup-opponents aria-label="Opponent count">${options}</select></label>
@@ -483,7 +485,8 @@ export class Menus {
     event.preventDefault();
     const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
     const delta = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
-    const columns = group === 'setup-frame' || group === 'setup-preset' ? 3 : 2;
+    // Grids reflow with the screen size: the row length is however many cards share the first card's row right now.
+    const columns = peers.filter((node) => node.offsetTop === peers[0].offsetTop).length;
     const next = horizontal ? index + delta : index + delta * columns;
     peers[(next + peers.length) % peers.length]?.focus();
   }
@@ -495,14 +498,17 @@ export class Menus {
     (this.screenEls.setup.querySelector('[data-setup-opponents]') as HTMLSelectElement).value = String(this.setupState.opponents);
     this.screenEls.setup.querySelectorAll<HTMLElement>('[data-frame-emblem]').forEach((node) => {
       const frame = Number(node.dataset.frameEmblem);
-      node.innerHTML = frameEmblemSvg(frame, cssHex(teamColor(frame)));
+      node.innerHTML = frameEmblemSvg(frame, cssHex(FRAME_EMBLEM_COLORS[frame]));
     });
-    const stats = FRAME_STATS[this.setupState.frame];
+    const frame = this.setupState.frame;
+    const stats = FRAME_STATS[frame];
     const pilotCount = this.setupState.opponents + 1;
     const teams = this.teamList(pilotCount);
     this.setupInfo.innerHTML = `
       <div class="bf-setup-summary">
-        <div><strong>${FRAME_NAMES[this.setupState.frame]}</strong> — ${FRAME_TAGLINES[this.setupState.frame]}</div>
+        <div><strong>${FRAME_NAMES[frame]}</strong> — ${FRAME_TAGLINES[frame]} · Boss form ${FORM_NAMES[frame]}</div>
+        <div class="bf-setup-blurb">${FRAME_BLURBS[frame]}</div>
+        <div>Fire ${PRIMARY_LABELS[frame]} · Alt ${ALT_LABELS[frame]}</div>
         <div>HP ${stats.hp} · Window ${stats.windowCap} / ${(stats.windowTicks / TICK_RATE).toFixed(1)}s · Speed ${fx.toFloat(stats.speed).toFixed(1)}</div>
         <div>Pilots ${pilotCount} · Teams ${Array.from(new Set(teams)).length} · ${MODE_BLURBS[this.setupState.mode]}</div>
       </div>`;
@@ -558,7 +564,7 @@ export class Menus {
       return;
     }
     const teamOptions = Array.from({ length: lobby.maxPlayers }, (_, team) => `<option value="${team}" ${team === self.team ? 'selected' : ''}>Team ${team + 1}</option>`).join('');
-    const frameOptions = [Frame.Vanguard, Frame.Gale, Frame.Juggernaut].map((frame) => `<option value="${frame}" ${frame === self.frame ? 'selected' : ''}>${FRAME_NAMES[frame]}</option>`).join('');
+    const frameOptions = Array.from({ length: FRAME_COUNT }, (_, frame) => `<option value="${frame}" ${frame === self.frame ? 'selected' : ''}>${FRAME_NAMES[frame]} — ${FRAME_TAGLINES[frame]}</option>`).join('');
     const players = lobby.players.map((player, index) => `
       <div class="bf-lobby-row" style="--team:${teamCss(player.team)}">
         <div>
@@ -606,6 +612,8 @@ export class Menus {
             <li>Energy feeds both your guns and your shield. Let go of the trigger and it refills fast.</li>
             <li>Boost with Shift toward where you steer. Its first instant dodges straight through bullets.</li>
             <li>All bullets are slow enough to read. Graze danger and land hits to fill your boss gauge.</li>
+            <li>Beams and lances are instant, but a thin laser always shows first exactly where they will fire: step off the line.</li>
+            <li>Lobbed shells fly over everything and burst inside the ring drawn where they will land.</li>
             <li>Your core can only take so much damage per window. Saturate, reposition, punish.</li>
             <li>With a half-full boss gauge, transform into a colossus. Boss form burns the gauge as fuel.</li>
             <li>Only the boss core deals real damage — tear off armour plates and pods first.</li>
@@ -708,8 +716,18 @@ function ensureStyles(): void {
     .bf-choice-kicker { color: var(--bf-copy-dim); font-size: 10px; letter-spacing: var(--bf-track); }
     .bf-choice-title { font-size: 18px; font-weight: 700; letter-spacing: .08em; }
     .bf-choice-copy { color: var(--bf-copy-dim); font-size: 13px; line-height: 1.45; text-transform: none; letter-spacing: normal; }
-    .bf-frame-card .bf-emblem { margin-top: auto; width: 76px; height: 76px; }
-    .bf-frame-card .bf-emblem svg { width: 100%; height: 100%; }
+    .bf-section-label { margin-top: 20px; color: var(--bf-copy-dim); font-size: 11px; letter-spacing: var(--bf-track); text-transform: uppercase; }
+    .bf-frame-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+    .bf-frame-card { flex-direction: row; align-items: center; gap: 12px; min-height: 64px; padding: 10px 14px; }
+    .bf-frame-card .bf-emblem { flex: 0 0 auto; width: 44px; height: 44px; }
+    .bf-frame-card .bf-emblem svg { display: block; width: 100%; height: 100%; }
+    .bf-frame-text { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .bf-frame-name { font-size: 15px; font-weight: 700; letter-spacing: .08em; }
+    .bf-frame-tag { color: var(--bf-copy-dim); font-size: 10px; letter-spacing: var(--bf-track); }
+    .bf-frame-card[data-active="true"] { border-color: var(--frame); background: color-mix(in srgb, var(--frame) 7%, rgba(8, 16, 29, .9)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--frame) 22%, transparent) inset, 0 0 18px color-mix(in srgb, var(--frame) 20%, transparent); }
+    .bf-frame-card[data-active="true"]::after { background: linear-gradient(90deg, transparent, var(--frame), transparent); }
+    .bf-frame-card[data-active="true"] .bf-emblem { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--frame) 60%, transparent)); }
+    .bf-setup-blurb { color: var(--bf-copy-dim); line-height: 1.45; }
     .bf-action:focus-visible, .bf-ghost:focus-visible, .bf-toggle:focus-visible, .bf-choice-card:focus-visible, .bf-field input:focus-visible, .bf-field select:focus-visible { outline: 2px solid #ffd46f; outline-offset: 3px; box-shadow: 0 0 0 1px rgba(255,212,111,.35), 0 0 22px rgba(255,212,111,.18); }
     .bf-head-row, .bf-footer-actions, .bf-inline-fields { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
     .bf-screen-title { font-size: clamp(26px, 4vw, 42px); font-weight: 740; letter-spacing: .1em; text-transform: uppercase; }
@@ -744,9 +762,16 @@ function ensureStyles(): void {
     }
     @media (max-width: 680px) {
       .bf-grid-2, .bf-grid-3, .bf-title-grid { grid-template-columns: 1fr; }
+      .bf-choice-card { min-height: 0; }
       .bf-screen-title { letter-spacing: .08em; }
       .bf-card { padding: 18px; }
       .bf-title-mark { font-size: clamp(28px, 10vw, 48px); letter-spacing: clamp(.03em, .6vw, .08em); }
+      .bf-frame-grid { gap: 8px; }
+      .bf-frame-card { flex-direction: column; justify-content: center; align-items: center; gap: 6px; min-height: 0; padding: 10px 6px; text-align: center; }
+      .bf-frame-card .bf-emblem { width: 34px; height: 34px; }
+      .bf-frame-text { align-items: center; gap: 3px; }
+      .bf-frame-name { font-size: 11px; letter-spacing: .04em; }
+      .bf-frame-tag { font-size: 9px; letter-spacing: .12em; }
     }
     @media (max-height: 420px) and (orientation: landscape) {
       .bf-menu-shell { place-items: start center; }
@@ -756,6 +781,14 @@ function ensureStyles(): void {
       .bf-title-grid { gap: 8px; margin-top: 14px; }
       .bf-title-card > .bf-toggle { margin-top: 8px; }
       .bf-screen-title { font-size: 24px; }
+      .bf-grid-2, .bf-grid-3 { margin-top: 12px; gap: 8px; }
+      .bf-choice-card { min-height: 0; padding: 12px 14px; gap: 6px; }
+      .bf-section-label { margin-top: 12px; }
+      .bf-frame-grid { gap: 6px; }
+      .bf-frame-card { min-height: 46px; padding: 6px 10px; gap: 10px; }
+      .bf-frame-card .bf-emblem { width: 30px; height: 30px; }
+      .bf-frame-text { gap: 3px; }
+      .bf-frame-name { font-size: 13px; }
     }
     @keyframes bf-screen-in { from { opacity: 0; transform: translate3d(24px, 0, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
     @keyframes bf-card-sweep { 0%, 42% { transform: translateX(-120%); opacity: 0; } 55% { opacity: .7; } 72%, 100% { transform: translateX(120%); opacity: 0; } }

@@ -1,14 +1,15 @@
 # BOSSFORM
 
 A **vector mech battle arena** in the spirit of *Senko no Ronde*: up to eight pilots (players and bots, in teams or
-free-for-all) fight in a large circular arena where **every bullet is slow and readable**. Move and aim separately, graze
-bullets for energy, and when the gauge is charged **become the boss**: a huge, heavy colossus with armour plates and
-cannon pods that everyone else has to take apart piece by piece. Its attacks are told before they land.
+free-for-all) pick one of **nine robots** and fight in a large circular arena where **every bullet is slow and readable**
+and every beam shows its laser before it fires. Move and aim separately, graze bullets for energy, and when the gauge is
+charged **become the boss**: a huge, heavy colossus with armour plates and cannon pods that everyone else has to take
+apart piece by piece. Its attacks are told before they land.
 
 It is built on **METRONOME**, a standalone deterministic lockstep engine, and the game is kept strictly separate from it.
 Stack: Vite + TypeScript + Three.js (full-resolution MSAA + bloom, sleek vector meshes, procedural audio, no assets).
 
-- Design: [`docs/game-design.md`](docs/game-design.md) (v0.2, the source of truth for rules and numbers)
+- Design: [`docs/game-design.md`](docs/game-design.md) (v0.3, the source of truth for rules and numbers)
 - Client architecture and contracts: [`docs/client-architecture.md`](docs/client-architecture.md)
 - Engine: [`engine/README.md`](engine/README.md)
 
@@ -39,7 +40,9 @@ npm run build        # typecheck everything, then game/dist (relative paths, ~22
 | Boss **Ultima** | `E` | `X` | hold both thumbs |
 | Pause / mute | `Esc` `P` / `M` | `Start` | tap both thumbs / pause menu |
 
-Phones and tablets use a thin top HUD and two floating, nearly invisible thumb traces. Landscape is the supported mobile
+Every robot uses the same controls: the primary is held (LONGBOW charges while you hold and fires when you let go),
+the alt is one press, a single tap on touch. Phones and tablets use a thin top HUD and two floating, nearly invisible
+thumb traces. Landscape is the supported mobile
 orientation; portrait remains playable enough to rotate without reloading the match.
 
 **Modes.** *Elimination*: one life per round, last team standing, best of three; after 75 s the safe zone shrinks and the
@@ -47,19 +50,36 @@ storm hurts everything outside it. *Deathmatch*: score kills, respawn after 3 s,
 4v4, free-for-all). Bots fill any seat and are ordinary input sources.
 
 **The rules that make it this game.** No projectile of any owner is ever faster than 3.2 units per tick: one cap,
-enforced where projectiles are made and moved. Only a tiny core is vulnerable. A robot can take **at most its cap of
+enforced where projectiles are made and moved. Beams and instant rail shots exist, but only behind a thin laser that shows
+exactly where they will fire, for long enough to step off the line; lobbed shells fly over everything and land inside a
+ring that is drawn from the moment they are launched. Only a tiny core is vulnerable. A robot can take **at most its cap of
 damage per window** (a per-robot balance value: lighter, faster robots take less). **A robot that is not firing has its
 shield up**, and the shield and the guns share **one energy pool** (about 7 s of continuous fire, refilled in under 1.5 s
 once the pilot lets go): attacking costs your guard. Grazing bullets, dealing and taking damage, and orbs fill the **boss
 gauge**, which transforms the robot.
 
-### The three robots and their boss forms
+### The nine robots and their boss forms
+
+The menu shows them 3 × 3: the originals, the ranged specialists, the close-range specialists.
 
 | Robot | Trope | Primary | Alt | Boss form |
 |---|---|---|---|---|
-| **VANGUARD** | versatile hero | 3-bullet fan rifle | two slow seeker orbs | **PALADIN**: plates, wing panels, shoulder cannons, prow lance |
-| **GALE** | fast striker | twin darts | phase dash (protected) leaving a delayed ring | **TEMPEST**: the lightest colossus, four orbiting bit cannons |
-| **JUGGERNAUT** | heavy bunker | slow mortar shell that bursts into shrapnel | bulwark wedge that swallows bullets into its boss gauge | **FORTRESS**: the heaviest, nine parts, a huge mortar |
+| **VANGUARD** | versatile hero | FAN RIFLE: a 3-bullet fan | SEEKERS: two slow seeker orbs | **PALADIN**: plates, wing panels, shoulder cannons, prow lance |
+| **GALE** | fast striker | TWIN DARTS | PHASE DASH (protected) leaving a delayed ring | **TEMPEST**: the lightest colossus, four orbiting bit cannons |
+| **JUGGERNAUT** | heavy bunker | MORTAR: a slow shell that bursts into shrapnel | BULWARK: a wedge that swallows bullets into its boss gauge | **FORTRESS**: the heaviest, nine parts, a huge mortar |
+| **LONGBOW** | sniper | RAIL RIFLE: hold to charge, SNAP / HALF / FULL shots | TRIPMINE: a proximity mine at its feet | **BALLISTA**: a siege bow; flechettes, a rail shot, a rain of arrows |
+| **PRISM** | beam specialist | PRISM BEAM: a held beam after a short laser tell | LANCE: a hitscan rail behind a 0.7 s locked laser | **HELIOS**: a sun disk with four orbiting prisms; beams and a halo wheel |
+| **HAILSTORM** | bomber, walking arsenal | ROTARY CANNON: spins up the longer it fires | CARPET BOMB: six bombs lobbed in a line | **ARMADA**: a flying warship; broadsides, a missile swarm, carpet bombing |
+| **RONIN** | samurai duelist | KATANA: a short, wide fan of slashes | PARRY: a guard arc that sends shots back | **SHOGUN**: a crested warlord; crescent slashes, a sword-beam flash |
+| **SHADE** | stealth ninja | SHURIKEN: two stars curving across the aim | SHADOW VEIL: 2.5 s unseen and off radar; only its shots are heard | **KITSUNE**: a nine-tailed fox; foxfire, a lobbed mine field |
+| **GAUNTLET** | super robot | KNUCKLE CANNON: shots that shove | ROCKET PUNCH: a fist that flies out and comes back | **ATLAS**: giant fists, a giga rocket punch that returns |
+
+**Reading the new weapons.** A thin line of light is a beam or a rail about to fire exactly there: step off it (PRISM's
+beam tells for 0.3 s, its lance for 0.7 s with the line pulsing faster at the end; a colossus's beam pods show theirs for
+the whole wind-up). A ring on the floor is where a lobbed shell will land. A hexagonal disc is a mine: it arms after a
+moment and bursts when anyone hostile comes close. A LONGBOW's aim line brightens as it charges and glints when full.
+RONIN's glowing guard arc sends shots back. A faint shimmer is a cloaked SHADE moving fast: it has no radar dot, tag or
+pointer until it strikes or is hit. GAUNTLET's rocket fist can hit on the way back.
 
 ### The boss form (the designer's brief: large, heavy, told)
 
@@ -70,9 +90,9 @@ The boss gauge is fuel: it burns steadily and every attack costs some; at zero t
 
 | Attack | Input | Wind-up (the tell) | Character |
 |---|---|---|---|
-| **Salvo** | left click | 12 to 18 ticks | a fan of large slow orbs from each live cannon |
-| **Siege shot** | right click | 36 to 48 ticks, rooted | one huge slow shell that bursts; aim lines and a burst marker show where |
-| **Ultima** | `E` | 90 to 110 ticks, rooted | spirals and rings; everyone's HUD and speakers announce it |
+| **Salvo** | left click | 12 to 18 ticks | a fan of large slow shots (or short beams) from each live cannon |
+| **Siege shot** | right click | 36 to 50 ticks, rooted | the heavy blow: a huge shell that bursts, a rail, a long beam, a returning fist or a lobbed snare; aim lines and markers show where |
+| **Ultima** | `E` | 90 to 110 ticks, rooted | spirals, a wheel of beams or a bombardment, and rings; everyone's HUD and speakers announce it |
 
 No boss projectile can exist before its wind-up ends, every shot leaves a live pod's muzzle, and heavier attacks wind up
 longer, recover longer and cost more: these are enforced in code and checked by the evals (see below).

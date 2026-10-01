@@ -1,5 +1,5 @@
 import { BOSS_MIN_GAUGE, ENERGY_MAX, Form, Phase, SPAWN_PROTECT_TICKS } from './constants.ts';
-import { clearBoss, startMorph, updateBoss, updateMorph } from './boss.ts';
+import { startMorph, updateBoss, updateMorph } from './boss.ts';
 import { canBoost, continueBoost, startBoost, stopBursts } from './boost.ts';
 import { dropShield, regenEnergy, updateShield } from './energy.ts';
 import { Ev } from './events.ts';
@@ -7,16 +7,19 @@ import { FRAME_STATS, JUGGERNAUT } from './frames.ts';
 import type { Vec } from './geometry.ts';
 import { Button } from './input.ts';
 import type { GameInput } from './input.ts';
+import { clearKit } from './kit.ts';
 import { W } from './layout.ts';
 import { coast, driveRobot, keepInside } from './movement.ts';
+import { clearBoss } from './parts.ts';
 import { respawnPoint } from './spawn.ts';
 import { fireNormal, shieldBlocked } from './weapons.ts';
 import type { World } from './world.ts';
 
-/** Puts a ship (back) into play at full health, in its normal form, at a spawn point. */
+/** Puts a ship (back) into play at full health, in its normal form, at a spawn point, its kit idle and uncloaked. */
 export function resetShip(w: World, seat: number, at: Vec, aim: number, protection: number): void {
   const { m } = w;
   clearBoss(w, seat);
+  clearKit(w, seat);
   m.plAlive[seat] = 1;
   m.plHp[seat] = FRAME_STATS[m.plFrame[seat]].hp;
   m.plGauge[seat] = 0;
@@ -44,6 +47,9 @@ export function resetShip(w: World, seat: number, at: Vec, aim: number, protecti
   m.plShieldBreak[seat] = 0;
   m.plBoost[seat] = 0;
   m.plBoostCd[seat] = 0;
+  m.plBeamAng[seat] = 0;
+  m.plLanceAng[seat] = 0;
+  m.plSide[seat] = 0;
   m.plLastHit[seat] = -1;
   m.plEpoch[seat]++;
 }
@@ -52,6 +58,7 @@ export function resetShip(w: World, seat: number, at: Vec, aim: number, protecti
 function retire(w: World, seat: number): void {
   const { m } = w;
   clearBoss(w, seat);
+  clearKit(w, seat);
   dropShield(w, seat);
   stopBursts(w, seat);
   m.plActive[seat] = 0;
@@ -71,6 +78,8 @@ function tickTimers(w: World, seat: number): void {
   if (m.plShieldBreak[seat] > 0) m.plShieldBreak[seat]--;
   if (m.plShieldWait[seat] > 0) m.plShieldWait[seat]--;
   if (m.plBoostCd[seat] > 0) m.plBoostCd[seat]--;
+  if (m.plParry[seat] > 0) m.plParry[seat]--;
+  if (m.plCloak[seat] > 0 && --m.plCloak[seat] === 0) w.emit(Ev.Reveal, m.plX[seat], m.plY[seat], seat);
 }
 
 function respawnCountdown(w: World, seat: number): void {
@@ -103,8 +112,9 @@ function updateNormal(w: World, seat: number, buttons: number, moveX: number, mo
     if (m.plBoost[seat] > 0) {
       continueBoost(w, seat);
     } else {
+      // JUGGERNAUT's raised bulwark slows it; PRISM braced in its lance tell stands still, so the locked line stays put.
       const bulwark = m.plBulwark[seat] > 0;
-      const top = bulwark ? Math.floor((stats.speed * JUGGERNAUT.bulwark.slowPct) / 100) : stats.speed;
+      const top = m.plLance[seat] > 0 ? 0 : bulwark ? Math.floor((stats.speed * JUGGERNAUT.bulwark.slowPct) / 100) : stats.speed;
       driveRobot(w, seat, moveX, moveY, top, stats.accel, stats.brake);
     }
   }

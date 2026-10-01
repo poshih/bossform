@@ -1,4 +1,5 @@
 import type { SimInit, Simulation, TickInput } from '@metronome/engine';
+import { expireProjectiles } from './blast.ts';
 import { collideProjectiles } from './combat.ts';
 import type { GameInput } from './input.ts';
 import { W } from './layout.ts';
@@ -30,6 +31,7 @@ export class GameSim implements Simulation<GameInput> {
     updateShips(w, frame.inputs, frame.present);
     updateNeutrals(w);
     updateProjectiles(w);
+    expireProjectiles(w);
     collideProjectiles(w);
     updateOrbs(w);
     resolveMatch(w);

@@ -25,8 +25,11 @@ const seatCount = clampInt(query.get('seats'), 6, 2, MAX_PLAYERS);
 const localSeat = clampInt(query.get('seat'), 0, 0, seatCount - 1);
 const mode = clampInt(query.get('mode'), Mode.Elimination, Mode.Elimination, Mode.Deathmatch);
 const fastForward = clampInt(query.get('ticks'), 0, 0, 12_000);
+/** `?frames=3,4,5` flies those frames in seat order (the rest keep counting on); `?touch=1` shows the phone strip. */
+const chosenFrames = (query.get('frames') ?? '').split(',').filter((value) => value !== '').map((value) => clampInt(value, 0, 0, FRAME_COUNT - 1));
+const touch = query.get('touch') === '1';
 const teams = mode === Mode.Deathmatch ? evenTeams(seatCount, Math.min(2, seatCount)) : freeForAllTeams(seatCount);
-const config = encodeConfig({ mode, seats: Array.from({ length: seatCount }, (_, seat) => ({ frame: seat % FRAME_COUNT, team: teams[seat] })) });
+const config = encodeConfig({ mode, seats: Array.from({ length: seatCount }, (_, seat) => ({ frame: chosenFrames[seat] ?? seat % FRAME_COUNT, team: teams[seat] })) });
 const sim = createGameSim({ seed: 424242, seats: seatCount, config });
 const hud = new Hud();
 const beatClock = new BeatClock();
@@ -44,7 +47,7 @@ let ready = false;
 for (let i = 0; i < fastForward; i++) stepSim();
 
 function clampInt(value: string | null, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
+  const parsed = value === null ? NaN : Number(value);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.floor(parsed))) : fallback;
 }
 
@@ -186,7 +189,7 @@ function frame(now: number): void {
     beat: beatClock.state,
     time: performance.now() / 1000,
     cursor,
-    touch: false,
+    touch,
   });
   if (!ready) {
     ready = true;

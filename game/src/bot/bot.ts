@@ -1,25 +1,33 @@
 import { fx } from '@metronome/engine';
 import {
-  Attack, Button, BOSS_MIN_GAUGE, Form, FORMS, FRAME_STATS, Frame, MOVE_MAX, NEUTRAL_DEFS, NEUTRAL_INPUT, PartKind, Phase, Role,
-  PRIMARY_WEAPONS, SHOT_DEFS, ShotFlag, VANGUARD, W, attackFuel, canBoost, canStartAttack, isFighting,
+  ARTILLERY_CONE, Attack, Button, BOSS_MIN_GAUGE, Form, FORMS, FRAME_STATS, Frame, MOVE_MAX, NEUTRAL_DEFS, NEUTRAL_INPUT, PartKind, Pattern, Phase, Role,
+  PRIMARY_WEAPONS, SHOT_DEFS, ShotFlag, W, attackFuel, canBoost, canStartAttack, isFighting, podReady,
 } from '../sim/index.ts';
-import type { GameInput, World } from '../sim/index.ts';
+import type { GameInput, SalvoDef, SiegeDef, UltimaDef, World } from '../sim/index.ts';
+import { createGaleTactics } from './gale.ts';
+import { createGauntletTactics } from './gauntlet.ts';
+import { createHailstormTactics } from './hailstorm.ts';
+import { avoidHazards } from './hazards.ts';
+import { createJuggernautTactics } from './juggernaut.ts';
+import { createLongbowTactics } from './longbow.ts';
+import { createPrismTactics } from './prism.ts';
+import { createRoninTactics } from './ronin.ts';
+import { createShadeTactics } from './shade.ts';
+import { FIRE_RANGE, to, type BotSense, type Point, type RobotTactics, type Target } from './tactics.ts';
+import { createVanguardTactics } from './vanguard.ts';
 
 /**
  * A computer pilot: an ordinary input source, exactly like a keyboard. It reads the simulation through its public
  * surface, decides in floating point (bots never run inside the simulation), and emits a GameInput. Because only
- * the machine that owns the seat runs it, lockstep needs no special case for AI.
+ * the machine that owns the seat runs it, lockstep needs no special case for AI. What differs per robot (its fighting
+ * distance and how it uses its weapons) lives in bot/<robot>.ts behind the RobotTactics contract (bot/tactics.ts).
  */
-const UNIT = 1 / fx.ONE;
 const SENSE_RANGE = 120;
 const SENSE_TICKS = 50;
 const DODGE_MARGIN = 9;
 const ORB_SEEK_RANGE = 170;
 const NEUTRAL_SEEK_RANGE = 380;
 const STORM_MARGIN = 40;
-const FIRE_RANGE = 430;
-/** A robot opens fire only where its primary's shots still reach (energy is not spent on shots that fade short). */
-const REACH_SHARE = 0.92;
 const STRAFE_MIN_TICKS = 40;
 const STRAFE_SPREAD_TICKS = 80;
 const AIM_TOLERANCE = fx.deg(14);
@@ -45,15 +53,15 @@ const SENSE_BASE_SHARE = 0.6;
 const RANGE_SLACK = 30;
 /** How strongly the bot circles its target while holding its range. */
 const STRAFE_WEIGHT = 0.8;
-const SEEKER_RANGE = 300;
-/** Chance per threatened tick that GALE dashes out. */
-const DASH_CHANCE = 0.15;
-/** JUGGERNAUT raises its bulwark when more hostile shots than this are within INCOMING_RADIUS. */
-const BULWARK_THREAT = 4;
-const INCOMING_RADIUS = 90;
-
-/** Preferred fighting distance per frame: the fast striker brawls, the heavy bunker keeps its distance. */
-const PREFERRED_RANGE: readonly number[] = [230, 170, 270];
+/**
+ * Fairness: a cloaked pilot is invisible to the other side except as a faint shimmer, so a bot notices one only this close
+ * (world units).
+ */
+const CLOAK_SIGHT = 90;
+/** Boss beam attacks and wheels are started on a target within this share of the beams' length. */
+const BEAM_RANGE_SHARE = 0.9;
+/** A carpet is laid on a target from this share of its first bomb's distance to half a gap past its last. */
+const CARPET_NEAR_SHARE = 0.8;
 /**
  * Energy discipline (energy powers both the guns and the shield): a bot stops firing when its pool runs low and starts again
  * once it has refilled this far, so it is not left without a shield for long. A target whose shield just shattered is fired
@@ -61,8 +69,6 @@ const PREFERRED_RANGE: readonly number[] = [230, 170, 270];
  */
 const FIRE_STOP_ENERGY = 60;
 const FIRE_RESUME_ENERGY = 260;
-/** VANGUARD launches seekers only with this much energy to spare on top of their cost. */
-const SEEKER_SPARE_ENERGY = 200;
 /** Chances per tick (scaled by skill for dodging) of boosting out of a shot about to land, at a far target, or away when nearly destroyed. */
 const BOOST_DODGE_CHANCE = 0.1;
 const BOOST_CLOSE_CHANCE = 0.03;
@@ -73,20 +79,31 @@ const BOOST_CLOSE_EXTRA = 160;
 const ESCAPE_RANGE = 170;
 const ESCAPE_HP_SHARE = 0.3;
 
-interface Point {
-  x: number;
-  y: number;
+/** The tactics of each robot, by frame. */
+function tacticsFor(frame: number): RobotTactics {
+  switch (frame) {
+    case Frame.Vanguard:
+      return createVanguardTactics();
+    case Frame.Gale:
+      return createGaleTactics();
+    case Frame.Juggernaut:
+      return createJuggernautTactics();
+    case Frame.Longbow:
+      return createLongbowTactics();
+    case Frame.Prism:
+      return createPrismTactics();
+    case Frame.Hailstorm:
+      return createHailstormTactics();
+    case Frame.Ronin:
+      return createRoninTactics();
+    case Frame.Shade:
+      return createShadeTactics();
+    case Frame.Gauntlet:
+      return createGauntletTactics();
+    default:
+      throw new RangeError(`no bot tactics for frame ${frame}`);
+  }
 }
-
-/** What a bot aims at: an opposing pilot (`seat`) or a neutral unit (`seat` -1). */
-interface Target extends Point {
-  vx: number;
-  vy: number;
-  ship: boolean;
-  seat: number;
-}
-
-const to = (a: number) => a * UNIT;
 
 export class Bot {
   private readonly seat: number;
@@ -97,6 +114,10 @@ export class Bot {
   private conserving = false;
   /** 0..1: how sharply the bot reacts to bullets and how well it leads its aim. */
   private readonly skill: number;
+  /** Its robot's tactics, made on the first tick it flies that robot (a bot is built before it knows its frame). */
+  private tactics: RobotTactics | null = null;
+  private tacticsFrame = -1;
+  private readonly randomStream = (): number => this.random();
 
   constructor(seat: number, seed: number, skill: number) {
     this.seat = seat;
@@ -116,6 +137,7 @@ export class Bot {
     const me: Point = { x: to(m.plX[seat]), y: to(m.plY[seat]) };
     const boss = m.plForm[seat] === Form.Boss;
     const frame = m.plFrame[seat];
+    const tactics = this.tacticsOf(frame);
 
     const target = this.pickTarget(w, me);
     let aim = m.plAim[seat];
@@ -130,16 +152,18 @@ export class Bot {
     let mx = 0;
     let my = 0;
     const urgent = Math.hypot(dodge.x, dodge.y) > DODGE_URGENT;
+    if (!boss) this.keepDiscipline(m.plEnergy[seat]);
+    const sense = !boss && target !== null ? this.senseOf(w, me, target, range, aim, urgent, dodge.soonest) : null;
     if (urgent) {
       mx = dodge.x;
       my = dodge.y;
     } else {
-      const chore = this.chore(w, me);
-      if (chore !== null) {
-        mx = chore.x;
-        my = chore.y;
+      const goal = this.goal(w, me, tactics, sense);
+      if (goal !== null) {
+        mx = goal.x;
+        my = goal.y;
       } else if (target !== null) {
-        const wanted = boss ? BOSS_APPROACH_RANGE : PREFERRED_RANGE[frame];
+        const wanted = boss ? BOSS_APPROACH_RANGE : tactics.range;
         const toward = Math.atan2(target.y - me.y, target.x - me.x);
         if (--this.strafeLeft <= 0) {
           this.strafe = this.random() < 0.5 ? -1 : 1;
@@ -155,7 +179,7 @@ export class Bot {
     }
     let buttons = 0;
     if (!boss) {
-      const burst = this.boostDirection(w, me, target, range, dodge, urgent);
+      const burst = this.boostDirection(w, me, target, range, dodge, urgent, tactics.range);
       if (burst !== null) {
         mx = burst.x;
         my = burst.y;
@@ -169,13 +193,56 @@ export class Bot {
     }
 
     if (boss) buttons |= this.bossButtons(w, target, range);
-    else buttons |= this.normalButtons(w, frame, target, range, urgent);
+    else if (sense !== null) {
+      buttons |= tactics.buttons(sense);
+      aim = tactics.aim(sense);
+    }
     // Transform to fight a pilot, never for chores against neutral units.
     if (!boss && target !== null && target.ship && m.plGauge[seat] >= BOSS_MIN_GAUGE + TRANSFORM_RESERVE && range < TRANSFORM_RANGE && m.plHp[seat] > TRANSFORM_MIN_HP) {
       buttons |= Button.Boss;
     }
 
     return { moveX: Math.round(mx * MOVE_MAX), moveY: Math.round(my * MOVE_MAX), aim, buttons };
+  }
+
+  /** Where to head instead of the shared approach-and-strafe: chores (storm, orbs) first, then the robot's own movement goal. */
+  private goal(w: World, me: Point, tactics: RobotTactics, sense: BotSense | null): Point | null {
+    const chore = this.chore(w, me);
+    if (chore !== null || sense === null) return chore;
+    return tactics.move(sense);
+  }
+
+  private tacticsOf(frame: number): RobotTactics {
+    if (this.tactics === null || this.tacticsFrame !== frame) {
+      this.tactics = tacticsFor(frame);
+      this.tacticsFrame = frame;
+    }
+    return this.tactics;
+  }
+
+  /** Energy discipline, the same for every robot: energy powers both the guns and the shield (see FIRE_STOP_ENERGY). */
+  private keepDiscipline(energy: number): void {
+    if (this.conserving && energy >= FIRE_RESUME_ENERGY) this.conserving = false;
+    else if (!this.conserving && energy < FIRE_STOP_ENERGY) this.conserving = true;
+  }
+
+  /** What a normal-form robot's tactics read this tick. */
+  private senseOf(w: World, me: Point, target: Target, range: number, aim: number, threatened: boolean, soonest: number): BotSense {
+    const { m } = w;
+    return {
+      w,
+      seat: this.seat,
+      me,
+      target,
+      range,
+      aim,
+      threatened,
+      soonest,
+      conserving: this.conserving,
+      exposed: target.ship && m.plShieldBreak[target.seat] > 0,
+      skill: this.skill,
+      random: this.randomStream,
+    };
   }
 
   /** Nearest opposing ship, or a neutral unit when no ship is close (they pay into the boss gauge). */
@@ -186,6 +253,7 @@ export class Bot {
     for (let s = 0; s < w.seats; s++) {
       if (s === this.seat || !isFighting(w, s) || m.plTeam[s] === m.plTeam[this.seat]) continue;
       const d = Math.hypot(to(m.plX[s]) - me.x, to(m.plY[s]) - me.y);
+      if (m.plCloak[s] > 0 && d > CLOAK_SIGHT) continue;
       if (d < bestD) {
         bestD = d;
         best = { x: to(m.plX[s]), y: to(m.plY[s]), vx: to(m.plVX[s]), vy: to(m.plVY[s]), ship: true, seat: s };
@@ -204,7 +272,7 @@ export class Bot {
   }
 
   /** A unit direction to boost in this tick, or null: out of an urgent dodge, at a far pilot, or away when nearly destroyed. */
-  private boostDirection(w: World, me: Point, target: Target | null, range: number, dodge: Point & { soonest: number }, urgent: boolean): Point | null {
+  private boostDirection(w: World, me: Point, target: Target | null, range: number, dodge: Point & { soonest: number }, urgent: boolean, preferred: number): Point | null {
     const { m } = w;
     const seat = this.seat;
     if (!canBoost(w, seat)) return null;
@@ -215,24 +283,29 @@ export class Bot {
     }
     if (target === null || !target.ship || range < 1) return null;
     const toward = { x: (target.x - me.x) / range, y: (target.y - me.y) / range };
-    if (range > PREFERRED_RANGE[m.plFrame[seat]] + BOOST_CLOSE_EXTRA && this.random() < BOOST_CLOSE_CHANCE) return toward;
+    if (range > preferred + BOOST_CLOSE_EXTRA && this.random() < BOOST_CLOSE_CHANCE) return toward;
     const low = m.plHp[seat] < FRAME_STATS[m.plFrame[seat]].hp * ESCAPE_HP_SHARE;
     if (low && range < ESCAPE_RANGE && this.random() < BOOST_ESCAPE_CHANCE) return { x: -toward.x, y: -toward.y };
     return null;
   }
 
+  /** Leads the target for the shot about to be fired; beams and lobbed shells (speed 0 here) are aimed straight at it. */
   private leadAim(w: World, me: Point, target: Point & { vx: number; vy: number }, range: number): number {
     const frame = w.m.plFrame[this.seat];
     const speed = to(this.projectileSpeed(w, frame));
-    const t = (range / speed) * this.skill;
+    const t = speed > 0 ? (range / speed) * this.skill : 0;
     const ax = target.x + target.vx * t - me.x;
     const ay = target.y + target.vy * t - me.y;
     return fx.fromRadians(Math.atan2(ay, ax));
   }
 
+  /** Fixed-point speed of the shot the bot leads for: its primary's, or its boss form's salvo volley (0: nothing to lead). */
   private projectileSpeed(w: World, frame: number): number {
-    if (w.m.plForm[this.seat] === Form.Boss) return FORMS[frame].salvo.shot.spd;
-    return PRIMARY_WEAPONS[frame].shot.spd;
+    if (w.m.plForm[this.seat] === Form.Boss) {
+      const salvo = FORMS[frame].salvo;
+      return salvo.pattern === Pattern.Volley ? salvo.shot.spd : 0;
+    }
+    return PRIMARY_WEAPONS[frame].speed;
   }
 
   /**
@@ -276,6 +349,7 @@ export class Bot {
         out.y += (-cy / d) * weight;
       }
     }
+    avoidHazards(w, seat, me, coreR, to(boss ? FORMS[frame].reach : FRAME_STATS[frame].bodyR), out);
     out.x *= DODGE_GAIN;
     out.y *= DODGE_GAIN;
     return out;
@@ -300,35 +374,11 @@ export class Bot {
     return best;
   }
 
-  private normalButtons(w: World, frame: number, target: Target | null, range: number, threatened: boolean): number {
-    const { m } = w;
-    const energy = m.plEnergy[this.seat];
-    if (this.conserving && energy >= FIRE_RESUME_ENERGY) this.conserving = false;
-    else if (!this.conserving && energy < FIRE_STOP_ENERGY) this.conserving = true;
-    let buttons = 0;
-    if (target === null) return buttons;
-    const exposed = target.ship && m.plShieldBreak[target.seat] > 0;
-    const primary = PRIMARY_WEAPONS[frame].shot;
-    const reach = Math.min(FIRE_RANGE, to(primary.spd) * primary.life * REACH_SHARE);
-    if (range < reach && (!this.conserving || exposed)) buttons |= Button.Fire;
-    if (frame === Frame.Vanguard && range < SEEKER_RANGE && energy >= VANGUARD.seekers.cost + SEEKER_SPARE_ENERGY) buttons |= Button.Alt;
-    if (frame === Frame.Gale && threatened && this.random() < DASH_CHANCE) buttons |= Button.Alt;
-    if (frame === Frame.Juggernaut && (threatened || this.incoming(w) > BULWARK_THREAT)) buttons |= Button.Alt;
-    return buttons;
-  }
-
-  private incoming(w: World): number {
-    const { m } = w;
-    const me: Point = { x: to(m.plX[this.seat]), y: to(m.plY[this.seat]) };
-    let count = 0;
-    for (let p = 0; p < w.cap.projectiles; p++) {
-      if (m.pAlive[p] !== 1 || m.pTeam[p] === m.plTeam[this.seat] || (SHOT_DEFS[m.pDef[p]].flags & ShotFlag.Inert) !== 0) continue;
-      if (Math.hypot(to(m.pX[p]) - me.x, to(m.pY[p]) - me.y) < INCOMING_RADIUS) count++;
-    }
-    return count;
-  }
-
-  /** Boss form: wait for the pods to swing onto the target (the tell works both ways), then use the attacks by priority. */
+  /**
+   * Boss form: wait for the pods to swing onto the target (the tell works both ways), then use the attacks by priority. Each
+   * attack is started only where its pattern reaches: a volley within its range, a beam within its length, artillery on a
+   * pilot inside a pod's cone, a carpet on one along its line.
+   */
   private bossButtons(w: World, target: Target | null, range: number): number {
     const { m } = w;
     if (target === null) return 0;
@@ -337,14 +387,55 @@ export class Bot {
     const base = w.partBase(seat);
     const toTarget = fx.fromRadians(Math.atan2(target.y - to(m.plY[seat]), target.x - to(m.plX[seat])));
     const podOnTarget = (role: number, tolerance: number): boolean =>
-      form.parts.some((part, k) => part.kind === PartKind.Pod && (part.roles & role) !== 0 && m.ptHp[base + k] > 0 &&
+      form.parts.some((part, k) => part.kind === PartKind.Pod && (part.roles & role) !== 0 && podReady(w, seat, k) &&
         Math.abs(fx.angleDiff(m.ptAng[base + k], toTarget)) <= tolerance);
-    // The same eligibility the simulation applies (live pods, cooldown, fuel), so a bot never waits on an attack it cannot make.
+    // The same eligibility the simulation applies (pods at hand, cooldown, fuel), so a bot never waits on an attack it cannot
+    // make; one whose pods' weapons are away (AttackBlock.Away) comes back into play when they are caught.
     let buttons = 0;
-    if (target.ship && range < ULTIMA_RANGE && canStartAttack(w, seat, Attack.Ultima)) buttons |= Button.Ultima;
-    else if (range < SIEGE_RANGE && podOnTarget(Role.Siege, SIEGE_TOLERANCE) && canStartAttack(w, seat, Attack.Siege) && m.plGauge[seat] >= attackFuel(form, Attack.Siege) + SIEGE_RESERVE) {
+    if (target.ship && ultimaReaches(form.ultima, range) && canStartAttack(w, seat, Attack.Ultima)) buttons |= Button.Ultima;
+    else if (reaches(form.siege, SIEGE_RANGE, range) && podOnTarget(Role.Siege, tolerance(form.siege, SIEGE_TOLERANCE)) && canStartAttack(w, seat, Attack.Siege) && m.plGauge[seat] >= attackFuel(form, Attack.Siege) + SIEGE_RESERVE) {
       buttons |= Button.Alt;
-    } else if (range < FIRE_RANGE && podOnTarget(Role.Salvo, AIM_TOLERANCE) && canStartAttack(w, seat, Attack.Salvo)) buttons |= Button.Fire;
+    } else if (reaches(form.salvo, FIRE_RANGE, range) && podOnTarget(Role.Salvo, tolerance(form.salvo, AIM_TOLERANCE)) && canStartAttack(w, seat, Attack.Salvo)) buttons |= Button.Fire;
     return buttons;
   }
+}
+
+/** A salvo or siege attack reaches a target this far away (`volleyRange` for volleys, which fly until they fade). */
+function reaches(attack: SalvoDef | SiegeDef, volleyRange: number, range: number): boolean {
+  switch (attack.pattern) {
+    case Pattern.Volley:
+      return range < volleyRange;
+    case Pattern.Beam:
+      return range < to(attack.length) * BEAM_RANGE_SHARE;
+    case Pattern.Artillery:
+      return range < to(attack.range);
+    case Pattern.Carpet:
+      return carpetReaches(attack.first, attack.gap, attack.count, range);
+    default:
+      throw new RangeError(`no bot rule for attack pattern ${(attack as { pattern: number }).pattern}`);
+  }
+}
+
+/** How far off a pod may point and still start the attack: artillery aims itself at the nearest pilot within its cone. */
+function tolerance(attack: SalvoDef | SiegeDef, aimed: number): number {
+  return attack.pattern === Pattern.Artillery ? ARTILLERY_CONE : aimed;
+}
+
+function ultimaReaches(ultima: UltimaDef, range: number): boolean {
+  switch (ultima.pattern) {
+    case Pattern.Spiral:
+      return range < ULTIMA_RANGE;
+    case Pattern.Wheel:
+      return range < to(ultima.length) * BEAM_RANGE_SHARE;
+    case Pattern.Bombard:
+      return range < to(ultima.range);
+    case Pattern.Carpet:
+      return carpetReaches(ultima.first, ultima.gap, ultima.count, range);
+    default:
+      throw new RangeError(`no bot rule for ultima pattern ${(ultima as { pattern: number }).pattern}`);
+  }
+}
+
+function carpetReaches(first: number, gap: number, count: number, range: number): boolean {
+  return range >= to(first) * CARPET_NEAR_SHARE && range <= to(first + gap * (count - 1) + (gap >> 1));
 }

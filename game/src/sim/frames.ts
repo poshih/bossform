@@ -1,9 +1,18 @@
 import { fx } from '@metronome/engine';
-import { Proj, shot, ShotFlag } from './shots.ts';
+import { FRAME_COUNT } from './frame-ids.ts';
+import { GAUNTLET, GAUNTLET_STATS } from './gauntlet.ts';
+import { HAILSTORM, HAILSTORM_STATS } from './hailstorm.ts';
+import { LONGBOW, LONGBOW_STATS } from './longbow.ts';
+import { PRISM, PRISM_STATS } from './prism.ts';
+import { RONIN, RONIN_STATS } from './ronin.ts';
+import { SHADE, SHADE_STATS } from './shade.ts';
+import { Proj, shot, shotReach, ShotFlag } from './shots.ts';
 
-/** The three robot designs: a versatile hero, a fast striker and a heavy bunker. */
-export const Frame = { Vanguard: 0, Gale: 1, Juggernaut: 2 } as const;
-export const FRAME_COUNT = 3;
+/**
+ * The robots in normal form: the original three (a versatile hero, a fast striker and a heavy bunker) are defined here; every
+ * other robot's numbers live in its own module (<robot>.ts), and the tables below list them all by frame.
+ */
+export { Frame, FRAME_COUNT } from './frame-ids.ts';
 
 export interface BoostStats {
   /** Units per tick while boosting (the robot's top speed is 2 to 3.5 times slower). */
@@ -47,6 +56,12 @@ export const FRAME_STATS: readonly FrameStats[] = [
     hp: 220, windowCap: 55, windowTicks: 60, speed: fx.lit(1.5), accel: fx.lit(0.12), brake: fx.lit(0.24), hurtR: fx.lit(4.4), bodyR: fx.fromInt(14), grazeR: fx.fromInt(22),
     boost: { speed: fx.lit(5.5), ticks: 12, dodge: 6, cooldown: 54 },
   },
+  LONGBOW_STATS,
+  PRISM_STATS,
+  HAILSTORM_STATS,
+  RONIN_STATS,
+  SHADE_STATS,
+  GAUNTLET_STATS,
 ];
 
 /** Shots leave the hull this far along the aim direction. */
@@ -117,16 +132,58 @@ export const JUGGERNAUT = {
   },
 } as const;
 
-/** Each robot's primary weapon, by frame: its refire interval, its energy cost per shot and its projectile. */
-export const PRIMARY_WEAPONS = [VANGUARD.rifle, GALE.darts, JUGGERNAUT.mortar] as const;
+/** What the HUD and the bots need to know about a robot's primary weapon. */
+export interface PrimaryWeapon {
+  /** Ticks between shots in sustained fire (HAILSTORM: at full spin; LONGBOW and PRISM: the cool-down after letting go). */
+  readonly interval: number;
+  /** Energy per shot; LONGBOW's per charging tick and PRISM's per tick of beam. */
+  readonly cost: number;
+  /** Launch speed of its shot, for leading a moving target; 0 for a beam. */
+  readonly speed: number;
+  /** How far ahead of the muzzle it threatens: its shot's flight, the beam's length, where SHADE's stars cross. */
+  readonly reach: number;
+}
+
+const FULL_RAIL = LONGBOW.rail.tiers[LONGBOW.rail.tiers.length - 1].shot;
+
+/** Each robot's primary weapon, by frame. */
+export const PRIMARY_WEAPONS: readonly PrimaryWeapon[] = [
+  { interval: VANGUARD.rifle.interval, cost: VANGUARD.rifle.cost, speed: VANGUARD.rifle.shot.spd, reach: shotReach(VANGUARD.rifle.shot) },
+  { interval: GALE.darts.interval, cost: GALE.darts.cost, speed: GALE.darts.shot.spd, reach: shotReach(GALE.darts.shot) },
+  { interval: JUGGERNAUT.mortar.interval, cost: JUGGERNAUT.mortar.cost, speed: JUGGERNAUT.mortar.shot.spd, reach: shotReach(JUGGERNAUT.mortar.shot) },
+  { interval: LONGBOW.rail.cooldown, cost: LONGBOW.rail.cost, speed: FULL_RAIL.spd, reach: shotReach(FULL_RAIL) },
+  { interval: PRISM.beam.cooldown, cost: PRISM.beam.cost, speed: 0, reach: PRISM.beam.length },
+  {
+    interval: HAILSTORM.cannon.slowest - HAILSTORM.cannon.spinUp, cost: HAILSTORM.cannon.cost, speed: HAILSTORM.cannon.shot.spd,
+    reach: shotReach(HAILSTORM.cannon.shot),
+  },
+  { interval: RONIN.katana.interval, cost: RONIN.katana.cost, speed: RONIN.katana.shot.spd, reach: shotReach(RONIN.katana.shot) },
+  { interval: SHADE.shuriken.interval, cost: SHADE.shuriken.cost, speed: SHADE.shuriken.left.spd, reach: SHADE.shuriken.reach },
+  { interval: GAUNTLET.knuckle.interval, cost: GAUNTLET.knuckle.cost, speed: GAUNTLET.knuckle.shot.spd, reach: shotReach(GAUNTLET.knuckle.shot) },
+];
+
+/** A robot's alt: whether it is an attack (holding it drops the shield, like firing) and the energy it costs to use. */
+export interface AltAbility {
+  readonly attack: boolean;
+  readonly cost: number;
+}
 
 /**
- * Each robot's alt, by frame: whether it is an attack (holding it drops the shield, like firing) and the energy it costs to
- * use. VANGUARD's seekers are a weapon; GALE's phase dash moves the robot; JUGGERNAUT's bulwark takes the shield's place and
- * pays per bullet it swallows (combat.ts), not to be raised.
+ * Each robot's alt, by frame. VANGUARD's seekers, PRISM's lance, HAILSTORM's carpet bomb and GAUNTLET's rocket punch are
+ * weapons; GALE's phase dash moves the robot; JUGGERNAUT's bulwark takes the shield's place and pays per bullet it swallows
+ * (combat.ts), not to be raised; LONGBOW's tripmine, RONIN's parry and SHADE's veil are not attacks (the parry still lowers the
+ * shield while it lasts: weapons.ts shieldBlocked).
  */
-export const ALT_ABILITIES = [
+export const ALT_ABILITIES: readonly AltAbility[] = [
   { attack: true, cost: VANGUARD.seekers.cost },
   { attack: false, cost: 0 },
   { attack: false, cost: 0 },
-] as const;
+  { attack: false, cost: LONGBOW.tripmine.cost },
+  { attack: true, cost: PRISM.lance.cost },
+  { attack: true, cost: HAILSTORM.carpet.cost },
+  { attack: false, cost: 0 },
+  { attack: false, cost: SHADE.veil.cost },
+  { attack: true, cost: GAUNTLET.rocket.cost },
+];
+
+if ([FRAME_STATS, PRIMARY_WEAPONS, ALT_ABILITIES].some((table) => table.length !== FRAME_COUNT)) throw new RangeError('every robot table must list one row per frame, in frame order');

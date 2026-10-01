@@ -1,147 +1,24 @@
 import { fx } from '@metronome/engine';
-import { Attack, MAX_PARTS, MIN_WINDUP_TICKS } from './constants.ts';
-import { Frame, FRAME_COUNT } from './frames.ts';
+import { Frame, FRAME_COUNT } from './frame-ids.ts';
+import { armor, big, core, defineForm, Pattern, pod, Role } from './formkit.ts';
+import type { FormDef, PartDef } from './formkit.ts';
+import { ATLAS } from './gauntlet.ts';
+import { ARMADA } from './hailstorm.ts';
+import { BALLISTA } from './longbow.ts';
+import { HELIOS } from './prism.ts';
+import { SHOGUN } from './ronin.ts';
+import { KITSUNE } from './shade.ts';
 import { Proj, shot, ShotFlag } from './shots.ts';
-import type { ShotDef } from './shots.ts';
 
 /**
- * Boss forms: the large, heavy machine a robot becomes. Each form is an armoured body around a small core.
- * Parts are circles in body space (+x is the direction the body faces); only pods shoot and only the core hurts
- * the pilot. This table is the single source for the hitboxes, the attack origins AND the models: a model draws
- * a part exactly where, and as big as, its definition says.
+ * Boss forms: the colossus each robot becomes (the kit they are written in is formkit.ts). The original three robots' forms
+ * are defined here; every other form lives next to its robot, and FORMS lists them all by frame.
  */
-export const PartKind = { Armor: 0, Pod: 1 } as const;
-/** Which attacks a pod takes part in. */
-export const Role = { Salvo: 1, Siege: 2, Ultima: 4 } as const;
-
-export interface PartDef {
-  readonly name: string;
-  readonly kind: number;
-  /** Offset from the core in body space; for orbiting parts, in orbit space. */
-  readonly x: number;
-  readonly y: number;
-  readonly rad: number;
-  readonly hp: number;
-  /** Pods only. */
-  readonly roles: number;
-  /** Pods only: distance from the pod's centre to where its shots appear. */
-  readonly muzzle: number;
-  /** Pods only: how fast this pod swings toward the aim direction (angle per tick). Heavier mounts turn slower. */
-  readonly turn: number;
-  /** Position rotates with the orbit angle instead of the body angle. */
-  readonly orbit: boolean;
-}
-
-export interface VolleyDef {
-  /** Shots per firing pod, fanned evenly across `spread`. */
-  readonly count: number;
-  readonly spread: number;
-  readonly shot: ShotDef;
-}
-
-/** Every attack: a wind-up (the tell), the release, and a recovery, paid for in energy up front. */
-export interface AttackTiming {
-  readonly windup: number;
-  readonly recovery: number;
-  readonly cost: number;
-}
-
-export interface SalvoDef extends AttackTiming, VolleyDef {}
-
-export interface SiegeDef extends AttackTiming, VolleyDef {
-  /** Velocity kick opposite to the firing pod on release (units/tick). */
-  readonly recoil: number;
-}
-
-export interface UltimaDef extends AttackTiming {
-  /** Ticks of barrage after the wind-up. */
-  readonly duration: number;
-  /** Ticks after the barrage ends before another ultima can start. */
-  readonly cooldown: number;
-  /** Ticks between spiral emissions; each live ultima pod fires `arms` shots per emission. */
-  readonly interval: number;
-  readonly arms: number;
-  /** Spiral rotation per emission. */
-  readonly step: number;
-  readonly shot: ShotDef;
-  /** Every `ringEvery` ticks each live ultima pod fires a ring of `ringPerPod` shots from its own muzzle. */
-  readonly ringEvery: number;
-  readonly ringPerPod: number;
-  readonly ringShot: ShotDef;
-}
-
-export interface FormDef {
-  readonly name: string;
-  readonly frame: number;
-  readonly speed: number;
-  readonly accel: number;
-  readonly bodyTurn: number;
-  /** Orbit angle change per tick for orbiting parts. */
-  readonly orbitTurn: number;
-  /** Radius of the core hurtbox: the only thing that hurts the pilot. */
-  readonly coreR: number;
-  readonly pickupR: number;
-  readonly parts: readonly PartDef[];
-  /** Farthest any part's edge reaches from the core (broad phase for collisions). */
-  readonly reach: number;
-  /** Indices of the pods that take part in the ultima, in part order (each owns a fixed share of the ultima's rings). */
-  readonly ultimaPods: readonly number[];
-  readonly salvo: SalvoDef;
-  readonly siege: SiegeDef;
-  readonly ultima: UltimaDef;
-}
-
-type PartSpec = Omit<PartDef, 'roles' | 'muzzle' | 'turn' | 'orbit'> & Partial<Pick<PartDef, 'roles' | 'muzzle' | 'turn' | 'orbit'>>;
-
-/**
- * Colossi are drawn to a design scale and built here at COLOSSUS_SCALE_PCT of it: a boss form must dwarf the robot it
- * comes from (a big, heavy machine), and its armour must take a beating to match its bigger target. Lengths scale
- * exactly (integer percent); the core, the pilot's hurtbox, scales less so the machine is large without being easy
- * to finish.
- */
-const COLOSSUS_SCALE_PCT = 150;
-const CORE_SCALE_PCT = 125;
-const PART_HP_SCALE_PCT = 140;
-const big = (length: number): number => fx.mulDiv(length, COLOSSUS_SCALE_PCT, 100);
-const tough = (hp: number): number => fx.mulDiv(hp, PART_HP_SCALE_PCT, 100);
-
-const armor = (name: string, x: number, y: number, rad: number, hp: number): PartDef =>
-  ({ name, kind: PartKind.Armor, x: big(x), y: big(y), rad: big(rad), hp: tough(hp), roles: 0, muzzle: 0, turn: 0, orbit: false });
-
-interface PodSpec { name: string; x: number; y: number; rad: number; hp: number; roles: number; muzzle: number; turn: number; orbit?: boolean }
-const pod = (s: PodSpec): PartDef => ({ ...s, x: big(s.x), y: big(s.y), rad: big(s.rad), hp: tough(s.hp), muzzle: big(s.muzzle), kind: PartKind.Pod, orbit: s.orbit ?? false });
-
-export type { PartSpec };
-
-function defineForm(def: Omit<FormDef, 'reach' | 'ultimaPods'>): FormDef {
-  const fail = (why: string): never => {
-    throw new RangeError(`boss form ${def.name}: ${why}`);
-  };
-  if (def.parts.length > MAX_PARTS) fail(`at most ${MAX_PARTS} parts`);
-  let reach = def.coreR;
-  const roleCount = { [Role.Salvo]: 0, [Role.Siege]: 0, [Role.Ultima]: 0 };
-  for (const part of def.parts) {
-    reach = Math.max(reach, fx.hypot(part.x, part.y) + part.rad);
-    if (part.kind === PartKind.Pod) {
-      if (part.turn <= 0 || part.muzzle <= 0 || part.roles === 0) fail(`pod ${part.name} needs turn, muzzle and roles`);
-      for (const role of [Role.Salvo, Role.Siege, Role.Ultima]) if ((part.roles & role) !== 0) roleCount[role]++;
-    }
-  }
-  for (const role of [Role.Salvo, Role.Siege, Role.Ultima]) if (roleCount[role] === 0) fail(`no pod has role ${role}`);
-  const attacks = [null, def.salvo, def.siege, def.ultima] as const;
-  for (const id of [Attack.Salvo, Attack.Siege, Attack.Ultima]) {
-    const a = attacks[id]!;
-    if (a.windup < MIN_WINDUP_TICKS[id]) fail(`attack ${id} winds up for ${a.windup} ticks, below the tell minimum ${MIN_WINDUP_TICKS[id]}`);
-    const heavier = id === Attack.Salvo ? null : attacks[id - 1]!;
-    if (heavier !== null && !(a.windup > heavier.windup && a.recovery > heavier.recovery && a.cost > heavier.cost)) {
-      fail(`attack ${id} must be heavier than attack ${id - 1}: longer wind-up, longer recovery, higher cost`);
-    }
-  }
-  const ultimaPods = def.parts.flatMap((part, k) => (part.kind === PartKind.Pod && (part.roles & Role.Ultima) !== 0 ? [k] : []));
-  return Object.freeze({ ...def, reach, ultimaPods: Object.freeze(ultimaPods) });
-}
-
-const core = (radius: number): number => fx.mulDiv(radius, CORE_SCALE_PCT, 100);
+export { armor, big, core, defineForm, PartKind, Pattern, pod, Role } from './formkit.ts';
+export type {
+  ArtilleryAttack, AttackTiming, BeamAttack, BombardUltima, CarpetAttack, CarpetUltima, FormDef, PartDef, PartSpec, PodSpec, SalvoDef,
+  SiegeDef, SpiralUltima, UltimaBarrage, UltimaDef, VolleyAttack, VolleyDef, WheelUltima,
+} from './formkit.ts';
 
 // ---- PALADIN: the versatile hero's colossus ---------------------------------------------------------
 const PALADIN_SEEKER = shot({
@@ -168,15 +45,15 @@ const PALADIN = defineForm({
     pod({ name: 'prow', x: fx.fromInt(36), y: 0, rad: fx.fromInt(10), hp: 80, roles: Role.Siege, muzzle: fx.fromInt(16), turn: fx.deg(2) }),
   ],
   salvo: {
-    windup: 14, recovery: 22, cost: 500, count: 5, spread: fx.deg(40),
+    windup: 14, recovery: 22, cost: 500, pattern: Pattern.Volley, count: 5, spread: fx.deg(40),
     shot: shot({ kind: Proj.Heavy, spd: fx.lit(2.2), rad: fx.fromInt(6), dmg: 12, life: 220 }),
   },
   siege: {
-    windup: 40, recovery: 45, cost: 4500, count: 1, spread: 0, recoil: fx.lit(1.2),
+    windup: 40, recovery: 45, cost: 4500, pattern: Pattern.Volley, count: 1, spread: 0, recoil: fx.lit(1.2),
     shot: shot({ kind: Proj.Heavy, spd: fx.lit(1.4), rad: fx.fromInt(12), dmg: 26, life: 210, burst: { count: 8, shot: PALADIN_SEEKER } }),
   },
   ultima: {
-    windup: 96, recovery: 130, cost: 30000, duration: 240, cooldown: 600, interval: 6, arms: 4, step: fx.deg(9),
+    windup: 96, recovery: 130, cost: 30000, duration: 240, cooldown: 600, pattern: Pattern.Spiral, interval: 6, arms: 4, step: fx.deg(9),
     shot: shot({ kind: Proj.Orb, spd: fx.lit(1.9), rad: fx.fromInt(4), dmg: 9, life: 300 }),
     ringEvery: 60, ringPerPod: 12,
     ringShot: shot({ kind: Proj.Orb, spd: fx.lit(1.5), rad: fx.fromInt(5), dmg: 10, life: 380 }),
@@ -206,18 +83,18 @@ const TEMPEST = defineForm({
     bit('bit4', 1, -1),
   ],
   salvo: {
-    windup: 12, recovery: 18, cost: 500, count: 3, spread: fx.deg(14),
+    windup: 12, recovery: 18, cost: 500, pattern: Pattern.Volley, count: 3, spread: fx.deg(14),
     shot: shot({ kind: Proj.Orb, spd: fx.lit(3), rad: fx.lit(4.2), dmg: 8, life: 160 }),
   },
   siege: {
-    windup: 36, recovery: 40, cost: 4500, count: 2, spread: fx.deg(30), recoil: fx.lit(0.6),
+    windup: 36, recovery: 40, cost: 4500, pattern: Pattern.Volley, count: 2, spread: fx.deg(30), recoil: fx.lit(0.6),
     shot: shot({
       kind: Proj.Seeker, spd: fx.lit(1.8), acc: fx.lit(0.04), maxSpd: fx.lit(3), turn: fx.deg(3), rad: fx.lit(3.6), dmg: 11, life: 260,
       flags: ShotFlag.Seek,
     }),
   },
   ultima: {
-    windup: 90, recovery: 120, cost: 30000, duration: 240, cooldown: 600, interval: 5, arms: 3, step: fx.deg(13),
+    windup: 90, recovery: 120, cost: 30000, duration: 240, cooldown: 600, pattern: Pattern.Spiral, interval: 5, arms: 3, step: fx.deg(13),
     shot: shot({ kind: Proj.Blade, spd: fx.lit(2.6), rad: fx.lit(3.6), dmg: 8, life: 200 }),
     ringEvery: 45, ringPerPod: 8,
     ringShot: shot({ kind: Proj.Blade, spd: fx.lit(2), rad: fx.lit(3.2), dmg: 8, life: 260 }),
@@ -246,18 +123,18 @@ const FORTRESS = defineForm({
     pod({ name: 'turretR', x: fx.fromInt(-2), y: fx.fromInt(-52), rad: fx.fromInt(12), hp: 90, roles: Role.Salvo | Role.Ultima, muzzle: fx.fromInt(18), turn: fx.deg(2) }),
   ],
   salvo: {
-    windup: 18, recovery: 30, cost: 800, count: 7, spread: fx.deg(84),
+    windup: 18, recovery: 30, cost: 800, pattern: Pattern.Volley, count: 7, spread: fx.deg(84),
     shot: shot({ kind: Proj.Heavy, spd: fx.lit(1.6), rad: fx.fromInt(8), dmg: 16, life: 300 }),
   },
   siege: {
-    windup: 48, recovery: 60, cost: 5500, count: 1, spread: 0, recoil: fx.lit(1.5),
+    windup: 48, recovery: 60, cost: 5500, pattern: Pattern.Volley, count: 1, spread: 0, recoil: fx.lit(1.5),
     shot: shot({
       kind: Proj.Heavy, spd: fx.lit(1.2), rad: fx.fromInt(14), dmg: 40, life: 320,
       burst: { count: 24, shot: shot({ kind: Proj.Shard, spd: fx.lit(2), rad: fx.fromInt(3), dmg: 10, life: 120 }) },
     }),
   },
   ultima: {
-    windup: 110, recovery: 150, cost: 33000, duration: 240, cooldown: 720, interval: 6, arms: 5, step: fx.deg(7),
+    windup: 110, recovery: 150, cost: 33000, duration: 240, cooldown: 720, pattern: Pattern.Spiral, interval: 6, arms: 5, step: fx.deg(7),
     shot: shot({ kind: Proj.Orb, spd: fx.lit(1.7), rad: fx.fromInt(5), dmg: 11, life: 320 }),
     ringEvery: 75, ringPerPod: 18,
     ringShot: shot({ kind: Proj.Heavy, spd: fx.lit(1.3), rad: fx.fromInt(7), dmg: 12, life: 420 }),
@@ -265,6 +142,6 @@ const FORTRESS = defineForm({
 });
 
 /** Indexed by frame: the boss form each robot becomes. */
-export const FORMS: readonly FormDef[] = [PALADIN, TEMPEST, FORTRESS];
+export const FORMS: readonly FormDef[] = [PALADIN, TEMPEST, FORTRESS, BALLISTA, HELIOS, ARMADA, SHOGUN, KITSUNE, ATLAS];
 
 if (FORMS.length !== FRAME_COUNT || FORMS.some((form, frame) => form.frame !== frame)) throw new RangeError('FORMS must list one boss form per frame, in frame order');

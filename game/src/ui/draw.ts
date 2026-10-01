@@ -31,6 +31,11 @@ export function formatCompactSeconds(totalSeconds: number): string {
   return `${Math.max(0, Math.ceil(totalSeconds))}S`;
 }
 
+/** Seconds to one decimal, for short timers the player acts on (a cloak running out, a lance about to fire). */
+export function formatTenthsSeconds(totalSeconds: number): string {
+  return `${(Math.max(0, Math.ceil(totalSeconds * 10)) / 10).toFixed(1)}S`;
+}
+
 export function drawChamferRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, cut: number): void {
   const c = Math.min(cut, width * 0.5, height * 0.5);
   ctx.beginPath();

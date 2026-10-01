@@ -3,16 +3,20 @@ import {
   Attack,
   AttackPhase,
   Banner,
+  BeamKind,
   COUNTDOWN_TICKS,
   Ev,
   FireSlot,
   Form,
-  Frame,
+  FORMS,
+  FRAME_COUNT,
   Phase,
+  PRISM,
+  ReflectKind,
   TICK_RATE,
   W,
 } from '../sim/index.ts';
-import { AudioEngine } from './audio.ts';
+import { AudioEngine, LAYER_NAMES } from './audio.ts';
 import { getTrackDuration } from './music.ts';
 import { bossReleaseSfx, bossWindupSfx, clamp } from './synth.ts';
 import type { LayerState, Sfx, Track } from './audio.ts';
@@ -35,7 +39,30 @@ const ULTIMA_LAYER_MIN_GAIN = 0.1;
 const ULTIMA_LAYER_MAX_GAIN = 0.28;
 const ULTIMA_LAYER_MIN_PITCH = 0.84;
 const ULTIMA_LAYER_MAX_PITCH = 1.18;
+/** Live beams hum within this distance of the listener; a robot's thin beam sings higher than a colossus's. */
+const BEAM_LAYER_DISTANCE = 560;
+const BEAM_LAYER_MIN_GAIN = 0.07;
+const BEAM_LAYER_MAX_GAIN = 0.2;
+const ROBOT_BEAM_PITCH = 1.35;
+const BOSS_BEAM_PITCH = 0.72;
 const STINGER_FADE_SECONDS = 0.12;
+
+/**
+ * The sound of each robot's Ev.Fire, by frame: its primary, and its alt when the alt fires something. An alt with an event of
+ * its own (phase dash, bulwark, parry, shadow veil) never sends Ev.Fire, so it has no entry.
+ */
+const FIRE_SFX: readonly { readonly primary: Sfx; readonly alt: Sfx | null }[] = [
+  { primary: 'shotVanguard', alt: 'seekerLaunch' },
+  { primary: 'shotGale', alt: null },
+  { primary: 'shotJuggernaut', alt: null },
+  { primary: 'shotLongbow', alt: 'mineDrop' },
+  { primary: 'beamTell', alt: 'lanceTell' },
+  { primary: 'shotHailstorm', alt: 'carpetLaunch' },
+  { primary: 'shotRonin', alt: null },
+  { primary: 'shotShade', alt: null },
+  { primary: 'shotGauntlet', alt: 'rocketPunch' },
+];
+if (FIRE_SFX.length !== FRAME_COUNT) throw new RangeError(`FIRE_SFX lists ${FIRE_SFX.length} frames, the simulation has ${FRAME_COUNT}`);
 
 interface SpatialStyle {
   readonly baseVolume: number;
@@ -94,12 +121,27 @@ export class AudioDirector {
   private stingerRemaining = 0;
   private bossEndedSeats: number[] = [];
   private ultimaLayerActive = false;
+  private viewerTeam = 0;
 
   constructor(engine: AudioEngine) {
     this.engine = engine;
   }
 
-  handleEvents(world: World, localSeat: number): void {
+  /**
+   * Every loop layer off at once, with no closing sound: the match they described is over (App.leaveRun). Only update() turns
+   * layers on or off, and it does not run on the title screen, so a layer left on would play there until the next match.
+   */
+  silence(): void {
+    for (const name of LAYER_NAMES) this.engine.setLayer(name, { active: false });
+    this.ultimaLayerActive = false;
+  }
+
+  /**
+   * `localSeat` is the listener (the pilot the camera follows); `viewerTeam` the team a cloaked pilot's sounds are kept from:
+   * the local pilot's, even while it spectates someone else after dying (App), else the listener's.
+   */
+  handleEvents(world: World, localSeat: number, viewerTeam = world.m.plTeam[localSeat]): void {
+    this.viewerTeam = viewerTeam;
     this.bossEndedSeats = [];
     for (let i = 0; i < world.events.count; i++) {
       const type = world.events.type[i];
@@ -110,6 +152,7 @@ export class AudioDirector {
       const c = world.events.c[i];
       switch (type) {
         case Ev.Fire:
+          // A shot gives a cloaked pilot away anyway (it breaks the veil): shots are always heard.
           this.playSpatial(world, {
             sfx: this.fireSfx(b, c),
             x,
@@ -121,10 +164,10 @@ export class AudioDirector {
           break;
         case Ev.Hit:
         case Ev.StormHit:
-          this.playSpatial(world, { sfx: 'hit', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'hit', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.Blocked:
-          this.playSpatial(world, { sfx: 'blocked', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'blocked', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.PartHit:
           this.playSpatial(world, { sfx: 'partHit', x, y, seat: a, localSeat, style: BIG_LOWER_STYLE });
@@ -133,13 +176,13 @@ export class AudioDirector {
           this.playSpatial(world, { sfx: 'partDown', x, y, seat: a, localSeat, style: BIG_STYLE });
           break;
         case Ev.Graze:
-          this.playSpatial(world, { sfx: 'graze', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'graze', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.Absorb:
-          this.playSpatial(world, { sfx: 'absorb', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'absorb', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.Death:
-          this.playSpatial(world, {
+          this.shipSound(world, {
             sfx: 'death',
             x,
             y,
@@ -149,13 +192,13 @@ export class AudioDirector {
           });
           break;
         case Ev.Respawn:
-          this.playSpatial(world, { sfx: 'respawn', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'respawn', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.Left:
           this.engine.play('uiClick', { volume: 0.25 });
           break;
         case Ev.MorphStart:
-          this.playSpatial(world, { sfx: 'morphStart', x, y, seat: a, localSeat, style: BIG_LOWER_STYLE });
+          this.shipSound(world, { sfx: 'morphStart', x, y, seat: a, localSeat, style: BIG_LOWER_STYLE });
           break;
         case Ev.MorphDone:
           this.playSpatial(world, { sfx: 'morphDone', x, y, seat: a, localSeat, style: BIG_STYLE });
@@ -195,29 +238,59 @@ export class AudioDirector {
           this.playSpatial(world, { sfx: 'neutralFire', x, y, seat: -1, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.OrbPickup:
-          this.playSpatial(world, { sfx: 'orbPickup', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'orbPickup', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.Dash:
-          this.playSpatial(world, { sfx: 'dash', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'dash', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.Boost:
-          this.playSpatial(world, { sfx: 'boost', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'boost', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.ShieldHit:
-          this.playSpatial(world, { sfx: 'shieldHit', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'shieldHit', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.ShieldBreak:
-          this.playSpatial(world, { sfx: 'shieldBreak', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'shieldBreak', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.ShieldUp:
           // Your own shield coming back is feedback for you; everyone else's would be noise.
           if (a === localSeat) this.engine.play('shieldUp');
           break;
         case Ev.BulwarkUp:
-          this.playSpatial(world, { sfx: 'bulwarkRaise', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          this.shipSound(world, { sfx: 'bulwarkRaise', x, y, seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.Burst:
           this.playSpatial(world, { sfx: 'burst', x, y, seat: -1, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.ChargeFull:
+          this.shipSound(world, { sfx: 'chargeFull', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.ParryUp:
+          this.shipSound(world, { sfx: 'parry', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.Reflect:
+          this.playSpatial(world, { sfx: c === ReflectKind.Beam ? 'beamCut' : 'reflect', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.Cloak:
+          // The veil drops over the pilot as it is made: only its own team hears it go.
+          this.shipSound(world, { sfx: 'cloak', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.Reveal:
+          this.playSpatial(world, { sfx: 'reveal', x, y, seat: a, localSeat, style: NORMAL_STYLE });
+          break;
+        case Ev.Catch:
+          this.shipSound(world, { sfx: 'fistCatch', x, y, seat: a, localSeat, style: b > 0 ? BIG_LOWER_STYLE : NORMAL_STYLE });
+          break;
+        case Ev.Blast:
+          // Heard where it lands, like a burst: a pilot's own shells blast far from it, so never as its own close sound.
+          this.playSpatial(world, { sfx: 'blast', x, y, seat: -1, localSeat, style: a >= 0 && world.m.plForm[a] === Form.Boss ? BIG_LOWER_STYLE : NORMAL_STYLE });
+          break;
+        case Ev.BeamOn:
+          this.playBeamOn(world, { x, y, seat: a, localSeat }, c);
+          break;
+        case Ev.LanceFire:
+          // x, y is the rail's far end; the crack comes from the gun.
+          this.playSpatial(world, { sfx: 'lanceCrack', x: world.m.plX[a], y: world.m.plY[a], seat: a, localSeat, style: NORMAL_STYLE });
           break;
         case Ev.StormStart:
           this.engine.play('stormAlarm');
@@ -242,13 +315,41 @@ export class AudioDirector {
     this.updateMusic(world, localSeat, phase);
     this.updateBossDrone(world, localSeat);
     this.updateUltimaLayer(world, localSeat);
+    this.updateBeamLayer(world, localSeat);
   }
 
   private fireSfx(frame: number, slot: number): Sfx {
-    if (slot === FireSlot.Alt) return 'seekerLaunch';
-    if (frame === Frame.Vanguard) return 'shotVanguard';
-    if (frame === Frame.Gale) return 'shotGale';
-    return 'shotJuggernaut';
+    const sounds = FIRE_SFX[frame];
+    const sfx = slot === FireSlot.Alt ? sounds.alt : sounds.primary;
+    if (sfx === null) throw new RangeError(`frame ${frame} has no sound for fire slot ${slot}`);
+    return sfx;
+  }
+
+  /** A beam lit (Ev.BeamOn): PRISM's beam and a colossus's have their own ignition; the lance is heard by its crack (Ev.LanceFire). */
+  private playBeamOn(world: World, at: Omit<SpatialSound, 'sfx' | 'style'>, source: number): void {
+    switch (source) {
+      case BeamKind.Primary:
+        this.playSpatial(world, { ...at, sfx: 'beamOn', style: NORMAL_STYLE });
+        return;
+      case BeamKind.Lance:
+        return;
+      case BeamKind.Boss:
+        this.playSpatial(world, { ...at, sfx: 'bossBeam', style: BIG_STYLE });
+        return;
+      default:
+        throw new RangeError(`unknown beam source ${source}`);
+    }
+  }
+
+  /**
+   * A sound a ship makes by being there (moving, grazing, taking a hit, picking up an orb...). A cloaked pilot makes none that
+   * its opponents (other teams than the viewer's) can hear: only its shots and its reveal reach them (see Ev.Fire and Ev.Reveal).
+   */
+  private shipSound(world: World, sound: SpatialSound): void {
+    const { m } = world;
+    const seat = sound.seat;
+    if (seat >= 0 && m.plCloak[seat] > 0 && m.plTeam[seat] !== this.viewerTeam) return;
+    this.playSpatial(world, sound);
   }
 
   private playSpatial(world: World, sound: SpatialSound): void {
@@ -418,5 +519,38 @@ export class AudioDirector {
     if (this.ultimaLayerActive && !state.active) this.engine.play('ultimaClose', { volume: 0.5 });
     this.ultimaLayerActive = state.active;
     this.engine.setLayer('ultimaBarrage', state);
+  }
+
+  /** The hum of the loudest live beam near the listener: PRISM's firing beam, or a colossus pod's beam (salvo, siege, wheel). */
+  private updateBeamLayer(world: World, localSeat: number): void {
+    const { m } = world;
+    const localX = float(m.plX[localSeat]);
+    const localY = float(m.plY[localSeat]);
+    let bestWeight = 0;
+    let bestPan = 0;
+    let bestPitch = ROBOT_BEAM_PITCH;
+    for (let seat = 0; seat < world.seats; seat++) {
+      if (m.plAlive[seat] !== 1) continue;
+      const robotBeam = m.plForm[seat] === Form.Normal && m.plBeam[seat] > PRISM.beam.tell;
+      if (!robotBeam && !(m.plForm[seat] === Form.Boss && this.bossBeaming(world, seat))) continue;
+      const dx = float(m.plX[seat]) - localX;
+      const dy = float(m.plY[seat]) - localY;
+      const weight = seat === localSeat ? 1 : Math.max(0, 1 - Math.hypot(dx, dy) / BEAM_LAYER_DISTANCE);
+      if (weight <= bestWeight) continue;
+      bestWeight = weight;
+      bestPan = seat === localSeat ? 0 : clamp(dx / PAN_DISTANCE, -1, 1);
+      bestPitch = robotBeam ? ROBOT_BEAM_PITCH : BOSS_BEAM_PITCH;
+    }
+    const state: LayerState = bestWeight > 0
+      ? { active: true, gain: BEAM_LAYER_MIN_GAIN + (BEAM_LAYER_MAX_GAIN - BEAM_LAYER_MIN_GAIN) * bestWeight, pitch: bestPitch, pan: bestPan }
+      : { active: false };
+    this.engine.setLayer('beamHum', state);
+  }
+
+  private bossBeaming(world: World, seat: number): boolean {
+    const base = world.partBase(seat);
+    const parts = FORMS[world.m.plFrame[seat]].parts.length;
+    for (let part = 0; part < parts; part++) if (world.m.ptBeamLen[base + part] > 0) return true;
+    return false;
   }
 }

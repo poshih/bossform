@@ -1,14 +1,15 @@
 import {
   BOSS_KILL_SCORE, GAUGE_PER_DAMAGE_DEALT, GAUGE_PER_DAMAGE_TAKEN, FLASH_TICKS, Form, KILL_CREDIT_TICKS, KILL_SCORE, NO_SEAT, RESPAWN_TICKS,
 } from './constants.ts';
-import { clearBoss } from './boss.ts';
 import { stopBursts } from './boost.ts';
 import { dropShield } from './energy.ts';
 import { earn } from './gauge.ts';
 import { Ev } from './events.ts';
 import { FRAME_STATS } from './frames.ts';
+import { clearKit, reveal } from './kit.ts';
 import { W } from './layout.ts';
 import { dropKillOrbs } from './orbs.ts';
+import { clearBoss } from './parts.ts';
 import type { World } from './world.ts';
 
 /** Bullet damage passes through the damage window; the storm ignores it. */
@@ -16,12 +17,13 @@ export const DamageKind = { Bullet: 0, Storm: 1 } as const;
 
 /**
  * Hurts a ship's core. A robot can only take `windowCap` damage per `windowTicks`: the window opens on the first hit
- * and anything beyond the cap inside it is ignored. `attacker` is a seat or NO_SEAT.
+ * and anything beyond the cap inside it is ignored. `attacker` is a seat or NO_SEAT. Being hit ends a cloak.
  */
 export function damageShip(w: World, seat: number, amount: number, attacker: number, kind: number): void {
   const { m } = w;
   const stats = FRAME_STATS[m.plFrame[seat]];
   const tick = m.world[W.Tick];
+  reveal(w, seat);
   let applied = amount;
   if (kind === DamageKind.Bullet) {
     if (tick >= m.plWinEnd[seat]) {
@@ -67,6 +69,7 @@ export function killShip(w: World, seat: number, killer: number): void {
   dropKillOrbs(w, seat, wasBoss);
   if (wasBoss) w.emit(Ev.BossEnd, m.plX[seat], m.plY[seat], seat);
   clearBoss(w, seat);
+  clearKit(w, seat);
   dropShield(w, seat);
   stopBursts(w, seat);
   m.plGauge[seat] = 0;

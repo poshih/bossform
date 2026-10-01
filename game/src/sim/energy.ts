@@ -4,6 +4,7 @@ import {
 } from './constants.ts';
 import { Ev } from './events.ts';
 import { earn } from './gauge.ts';
+import { reveal } from './kit.ts';
 import type { World } from './world.ts';
 
 /**
@@ -50,14 +51,16 @@ export function updateShield(w: World, seat: number, blocked: boolean): void {
 }
 
 /**
- * A hostile projectile reached a raised shield (at the graze radius): the shield stops it and the pool pays
- * SHIELD_COST_PER_DAMAGE per point of its damage. If paying would leave the pool empty, the shield still stops this one,
- * then shatters: the pool is empty and the shield stays down for SHIELD_BREAK_TICKS. The shooter's boss gauge earns as for a
- * hit; the shielded pilot's does not (it earns from damage taken, a comeback, and a shield means none was taken).
+ * A hostile projectile (or a beam's pulse, or a blast) reached a raised shield (at the graze radius): the shield stops it and
+ * the pool pays SHIELD_COST_PER_DAMAGE per point of its damage. If paying would leave the pool empty, the shield still stops
+ * this one, then shatters: the pool is empty and the shield stays down for SHIELD_BREAK_TICKS. The shooter's boss gauge earns
+ * as for a hit; the shielded pilot's does not (it earns from damage taken, a comeback, and a shield means none was taken).
+ * Stopping a hit gives a cloaked pilot away.
  */
 export function absorbShot(w: World, seat: number, damage: number, attacker: number, x: number, y: number): void {
   const { m } = w;
   const cost = damage * SHIELD_COST_PER_DAMAGE;
+  reveal(w, seat);
   m.plRegenWait[seat] = ENERGY_REGEN_DELAY;
   if (attacker >= 0) earn(w, attacker, damage * GAUGE_PER_DAMAGE_DEALT);
   if (m.plEnergy[seat] > cost) {

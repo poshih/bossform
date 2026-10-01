@@ -17,3 +17,6 @@ export const TEAM_COLORS: readonly number[] = [0x35d0ff, 0xff4fa3, 0xffd23f, 0x7
 
 /** Neutral units and their projectiles: steel edges with hostile red accents, never a team hue. */
 export const NEUTRAL_COLORS = { edge: 0xcfd8e8, accent: 0xff2a2a } as const;
+
+/** Robots are drawn this much larger than their collision bodies so they read as machines; the hurtbox is the core dot. */
+export const ROBOT_VISUAL_SCALE = 1.78;

@@ -2,10 +2,10 @@ import { fx } from '@metronome/engine';
 
 /**
  * Match rules, arena, energy and pool sizing. Frames, boss forms and neutral units keep their own tuning next
- * to their definitions (frames.ts, forms.ts, neutrals.ts). All values are fixed-point (fx.lit / fx.fromInt) or
+ * to their definitions (frames.ts, forms.ts, <robot>.ts, neutrals.ts). All values are fixed-point (fx.lit / fx.fromInt) or
  * plain integers (ticks, hit points, counts). Presentation constants live in ../config.ts, never here.
  */
-export const SIM_VERSION = 4;
+export const SIM_VERSION = 5;
 export const TICK_RATE = 60;
 
 // ---- Match rules -----------------------------------------------------------------------------------
@@ -86,8 +86,14 @@ export const PROJECTILE_SPEED_CAP = fx.lit(3.2);
 export const PROJECTILE_RIM_MARGIN = fx.fromInt(4);
 /** Seeking shots only steer toward ships this close. */
 export const SEEK_RANGE = fx.fromInt(360);
+/** Artillery (lobbed shells aimed at a point) picks the nearest target within this angle either side of the launcher's facing. */
+export const ARTILLERY_CONE = fx.deg(30);
 /** Ticks a hit flash lasts (ships, boss parts, neutral units). */
 export const FLASH_TICKS = 8;
+/** A robot's beam shows its thin laser tell, exactly where it will fire, for at least this long before it fires. */
+export const MIN_BEAM_TELL_TICKS = 18;
+/** A robot's instant (hitscan) shot tells along its locked direction for at least this long before it fires. */
+export const MIN_HITSCAN_TELL_TICKS = 36;
 
 // ---- Boss gauge: transforms the robot, then burns as the colossus's fuel (fixed point of 1/100 point) -----
 export const GAUGE_SCALE = 100;

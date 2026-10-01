@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   Attack,
   AttackPhase,
+  BeamKind,
   BOSS_MIN_GAUGE,
   ENERGY_MAX,
   Ev,
@@ -12,22 +13,29 @@ import {
   Form,
   Frame,
   GAUGE_MAX,
+  HAILSTORM,
   JUGGERNAUT,
+  LONGBOW,
   MAX_PARTS,
   MORPH_TICKS,
-  PRIMARY_WEAPONS,
+  Pattern,
+  primaryCost,
+  PRISM,
+  RONIN,
   Role,
+  SHOT_DEFS,
+  ShotFlag,
 } from '../sim/index.ts';
 import type { World } from '../sim/index.ts';
-import { TEAM_COLORS } from '../config.ts';
+import { ROBOT_VISUAL_SCALE, TEAM_COLORS } from '../config.ts';
 import { DrawLayer, setDrawLayer } from '../render/layers.ts';
 import { createVectorMaterial, vectorMesh } from '../render/vector.ts';
 import type { VectorMaterial } from '../render/vector.ts';
 import { createColossus, createRobot } from './models/index.ts';
 import type { ColossusPose, PartPose, RobotPose } from './models/index.ts';
 import type { FrameContext, StageView } from './frame.ts';
-import { seatBlend, seatJumped, type WorldSnapshot } from './snapshot.ts';
-import { binaryAngleToRadians, clamp01, colorIntoLinear, easeOutCubic, expStep, lerp, lerpRadiansBinary, smoothstep, toWorld } from './shared.ts';
+import { hiddenFrom, seatBlend, seatJumped, type WorldSnapshot } from './snapshot.ts';
+import { binaryAngleToRadians, clamp01, colorIntoLinear, easeOutCubic, expStep, lerp, lerpRadiansBinary, smoothstep, toWorld, wrapAngleRadians } from './shared.ts';
 
 interface ShipRenderSample {
   x: number;
@@ -42,8 +50,6 @@ interface ShipRenderSample {
   epochChanged: boolean;
 }
 
-/** Robots are drawn this much larger than their collision bodies so they read as machines; the hurtbox is the core dot. */
-const ROBOT_VISUAL_SCALE = 1.78;
 /** The bulwark wedge is gameplay, not decoration: it is drawn from the simulation's radius and arc, never scaled. */
 const BULWARK_RADIUS = toWorld(JUGGERNAUT.bulwark.radius);
 const BULWARK_HALF_ARC = binaryAngleToRadians(JUGGERNAUT.bulwark.halfArc);
@@ -54,10 +60,63 @@ const BULWARK_FILL_ALPHA = 0.16;
 const BULWARK_FILL_TINT = 0.1;
 const BULWARK_EDGE_WIDTH = 1.7;
 const BULWARK_GLOW = 1.5;
+/** RONIN's parry arc is gameplay too: drawn at the simulation's radius and arc, a band inside its rim. */
+const GUARD_RADIUS = toWorld(RONIN.parry.radius);
+const GUARD_HALF_ARC = binaryAngleToRadians(RONIN.parry.halfArc);
+const GUARD_BAND = 0.3;
+const GUARD_SEGMENTS = 32;
+const GUARD_FILL_ALPHA = 0.1;
+const GUARD_EDGE_WIDTH = 1.9;
+const GUARD_GLOW = 1.9;
+/** The arc fades over the parry's last ticks. */
+const GUARD_FADE_TICKS = 4;
+/** Eased stances (per second): RONIN snaps into its parry and eases out; SHADE fades in and out of its cloak. */
+const PARRY_STANCE_IN = 40;
+const PARRY_STANCE_OUT = 12;
+const CLOAK_FADE_RATE = 8;
+/**
+ * A cloaked SHADE is invisible to its opponents but for a faint shimmer that appears once it moves fast: from this share of
+ * its top speed, full at the second (a boost).
+ */
+const SHIMMER_SPEED_START = 0.55;
+const SHIMMER_SPEED_FULL = 1.6;
+const SHIMMER_OPACITY = 0.24;
+const SHIMMER_RADIUS = 1.25;
+const SHIMMER_Z = 2.4;
+const SHIMMER_COLOR = new THREE.Color(0.75, 0.8, 0.95);
+const SHIMMER_VERTEX = /* glsl */ `
+varying vec2 vLocal;
+void main() {
+  vLocal = position.xy;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+// A thin wobbling ring broken into flickering arcs: bent light, not a ship. atan is taken only away from the centre.
+const SHIMMER_FRAGMENT = /* glsl */ `
+uniform float uTime;
+uniform float uOpacity;
+uniform vec3 uColor;
+varying vec2 vLocal;
+void main() {
+  float r = length(vLocal);
+  float wobble = 0.0;
+  float arcs = 1.0;
+  if (r > 0.3) {
+    float a = atan(vLocal.y, vLocal.x);
+    wobble = 0.035 * sin(a * 7.0 + uTime * 9.0) + 0.025 * sin(a * 13.0 - uTime * 14.0);
+    arcs = 0.5 + 0.5 * sin(a * 5.0 - uTime * 6.0);
+  }
+  float aa = fwidth(r) * 1.5 + 0.001;
+  float ring = 1.0 - smoothstep(0.03, 0.03 + aa + 0.05, abs(r - (0.72 + wobble)));
+  float alpha = ring * (0.3 + 0.7 * arcs) * uOpacity;
+  if (alpha <= 0.001) discard;
+  gl_FragColor = vec4(uColor, alpha);
+}`;
 const INVULN_FADE_TICKS = 20;
 /** How fast the fire and alt pulses (muzzle flash, recoil) fade after a shot, per second. */
 const FIRE_DECAY = 8;
 const ALT_DECAY = 5;
+/** PRISM faces its beam or locked lance while one runs; after, it turns back to the aim at this rate (per second). */
+const BEAM_FACING_RETURN = 14;
 const NORMAL_MARKER_SCALE = 1.14;
 const BOSS_MARKER_SCALE = 1.02;
 const MIN_CORE_VISUAL_RADIUS = 2.2;
@@ -167,17 +226,32 @@ export class ShipsView implements StageView {
   private readonly readyAuraMaterials: VectorMaterial[] = [];
   private readonly modelFrames: number[] = [];
   private readonly partPoses: PartPose[][];
+  private readonly guards: THREE.Mesh[] = [];
+  private readonly guardMaterials: VectorMaterial[] = [];
+  private readonly shimmers: THREE.Mesh[] = [];
+  private readonly shimmerMaterials: THREE.ShaderMaterial[] = [];
+  /** Eased RONIN parry stance or SHADE cloak (RobotPose.special), per seat. */
+  private readonly stance: Float32Array;
+  /** Whose rocket fist is in flight, per seat (GAUNTLET's RobotPose.special; a colossus's pods keep theirs in ptAway). */
+  private readonly robotAway: Uint8Array;
+  /** How far PRISM's drawn facing is turned off its aim, radians, per seat (onto its beam or lance, then easing back). */
+  private readonly beamFacing: Float32Array;
 
   constructor(seats: number) {
     this.firePulse = new Float32Array(seats);
     this.altPulse = new Float32Array(seats);
-    this.partPoses = Array.from({ length: seats }, () => Array.from({ length: MAX_PARTS }, () => ({ hp: 0, facing: 0, flash: 0, heat: 0, charge: 0 })));
+    this.stance = new Float32Array(seats);
+    this.robotAway = new Uint8Array(seats);
+    this.beamFacing = new Float32Array(seats);
+    this.partPoses = Array.from({ length: seats }, () => Array.from({ length: MAX_PARTS }, () => ({ hp: 0, facing: 0, flash: 0, heat: 0, charge: 0, away: false })));
     const markerGeometry = new THREE.RingGeometry(13, 14.2, 48);
     const energyArcBackGeometry = new THREE.RingGeometry(ENERGY_ARC_INNER_RADIUS, ENERGY_ARC_OUTER_RADIUS, ENERGY_ARC_SEGMENTS);
     const glowGeometry = new THREE.CircleGeometry(1, 48);
     const coreDotGeometry = new THREE.CircleGeometry(1, 28);
     const coreRingGeometry = new THREE.RingGeometry(1.1, 1.55, 28);
     const bulwarkGeometry = new THREE.RingGeometry(BULWARK_INNER_RADIUS, BULWARK_RADIUS, BULWARK_SEGMENTS, 1, -BULWARK_HALF_ARC, BULWARK_HALF_ARC * 2);
+    const guardGeometry = new THREE.RingGeometry(GUARD_RADIUS * (1 - GUARD_BAND), GUARD_RADIUS, GUARD_SEGMENTS, 1, -GUARD_HALF_ARC, GUARD_HALF_ARC * 2);
+    const shimmerGeometry = new THREE.PlaneGeometry(2, 2);
     for (let seat = 0; seat < seats; seat++) {
       const robot = createRobot(Frame.Vanguard);
       const mount = new THREE.Group();
@@ -196,6 +270,30 @@ export class ShipsView implements StageView {
       this.root.add(bulwark);
       this.bulwarks.push(bulwark);
       this.bulwarkMaterials.push(bulwarkMaterial);
+
+      const guardMaterial = createVectorMaterial({ fillAlpha: GUARD_FILL_ALPHA, edgeWidth: GUARD_EDGE_WIDTH, glow: GUARD_GLOW });
+      const guard = vectorMesh(guardGeometry.clone(), guardMaterial, BULWARK_CREASE_DEGREES);
+      guard.position.z = 2.5;
+      guard.renderOrder = DrawLayer.ShipOverlay;
+      guard.visible = false;
+      this.root.add(guard);
+      this.guards.push(guard);
+      this.guardMaterials.push(guardMaterial);
+
+      const shimmerMaterial = new THREE.ShaderMaterial({
+        vertexShader: SHIMMER_VERTEX,
+        fragmentShader: SHIMMER_FRAGMENT,
+        uniforms: { uTime: { value: 0 }, uOpacity: { value: 0 }, uColor: { value: SHIMMER_COLOR } },
+        transparent: true,
+        depthWrite: false,
+      });
+      const shimmer = new THREE.Mesh(shimmerGeometry.clone(), shimmerMaterial);
+      shimmer.position.z = SHIMMER_Z;
+      shimmer.renderOrder = DrawLayer.ShipEffects;
+      shimmer.visible = false;
+      this.root.add(shimmer);
+      this.shimmers.push(shimmer);
+      this.shimmerMaterials.push(shimmerMaterial);
 
       const colossus = createColossus(Frame.Vanguard);
       colossus.root.visible = false;
@@ -289,15 +387,23 @@ export class ShipsView implements StageView {
     coreDotGeometry.dispose();
     coreRingGeometry.dispose();
     bulwarkGeometry.dispose();
+    guardGeometry.dispose();
+    shimmerGeometry.dispose();
   }
 
   handleEvents(world: World): void {
     const events = world.events;
     for (let i = 0; i < events.count; i++) {
-      if (events.type[i] !== Ev.Fire) continue;
+      const type = events.type[i];
       const seat = events.a[i];
-      this.firePulse[seat] = 1;
-      if (events.c[i] === FireSlot.Alt) this.altPulse[seat] = 1;
+      if (type === Ev.Fire) {
+        this.firePulse[seat] = 1;
+        if (events.c[i] === FireSlot.Alt) this.altPulse[seat] = 1;
+      } else if (type === Ev.LanceFire || (type === Ev.BeamOn && events.c[i] === BeamKind.Primary)) {
+        this.firePulse[seat] = 1;
+      } else if (type === Ev.ParryUp || type === Ev.Cloak) {
+        this.altPulse[seat] = 1;
+      }
     }
   }
 
@@ -326,15 +432,19 @@ export class ShipsView implements StageView {
       this.coreRingMaterials[seat].color.copy(color);
       this.energyArcBackMaterials[seat].color.copy(color);
       this.readyAuraMaterials[seat].uniforms.uEdge.value.copy(color);
+      this.guardMaterials[seat].uniforms.uEdge.value.copy(color);
+      this.guardMaterials[seat].uniforms.uFill.value.copy(color).multiplyScalar(BULWARK_FILL_TINT);
     }
   }
 
   update(previous: WorldSnapshot, current: WorldSnapshot, frame: FrameContext): void {
-    const { alpha, focusSeat, time: timeSeconds, beat } = frame;
+    const { alpha, dt, focusSeat, viewerTeam, time: timeSeconds, beat } = frame;
     this.setTeams(current);
+    this.findRocketFists(current);
     for (let seat = 0; seat < current.seats; seat++) {
-      this.firePulse[seat] = expStep(this.firePulse[seat], 0, FIRE_DECAY, frame.dt);
-      this.altPulse[seat] = expStep(this.altPulse[seat], 0, ALT_DECAY, frame.dt);
+      this.firePulse[seat] = expStep(this.firePulse[seat], 0, FIRE_DECAY, dt);
+      this.altPulse[seat] = expStep(this.altPulse[seat], 0, ALT_DECAY, dt);
+      this.stance[seat] = this.easeStance(current, seat, dt);
     }
     for (let seat = 0; seat < current.seats; seat++) {
       const sample = this.sample(previous, current, seat, alpha);
@@ -357,25 +467,32 @@ export class ShipsView implements StageView {
       const flash = clamp01(current.plFlash[seat] / FLASH_TICKS);
       const shield = clamp01(current.plInvuln[seat] / INVULN_FADE_TICKS);
       const gauge = clamp01(current.plGauge[seat] / BOSS_MIN_GAUGE);
-      const speed = clamp01(sample.speed / toWorld(FRAME_STATS[frame].speed));
+      const speedShare = sample.speed / toWorld(FRAME_STATS[frame].speed);
+      const speed = clamp01(speedShare);
       const move = Math.abs(sample.vx) + Math.abs(sample.vy) > 0.0001 ? Math.atan2(sample.vy, sample.vx) : sample.aim;
       const morph = form === Form.Morph ? 1 - current.plTimer[seat] / MORPH_TICKS : 0;
       const robotPose: RobotPose = {
         time: timeSeconds,
-        aim: sample.aim,
+        aim: this.facing(previous, current, seat, alpha, dt, sample),
         move,
         speed,
         fire: this.firePulse[seat],
         alt: this.altAmount(current, seat, timeSeconds, this.altPulse[seat]),
+        special: this.specialAmount(previous, current, seat, alpha),
+        side: this.sideOf(current, seat),
         hit: flash,
         charge: gauge,
         shield: smoothstep(0, 1, shield),
         morph,
       };
-      const showRobot = sample.alive && (form === Form.Normal || form === Form.Morph);
+      const robotForm = sample.alive && (form === Form.Normal || form === Form.Morph);
+      const hidden = hiddenFrom(current, seat, viewerTeam);
+      const showRobot = robotForm && !hidden;
       mount.visible = showRobot;
       mount.position.set(sample.x, sample.y, 0);
       if (showRobot) robot.update(robotPose);
+      this.updateShimmer(seat, robotForm && hidden ? smoothstep(SHIMMER_SPEED_START, SHIMMER_SPEED_FULL, speedShare) : 0, sample, timeSeconds);
+      this.updateGuard(current, seat, showRobot && frame === Frame.Ronin && current.plParry[seat] > 0, sample, timeSeconds);
 
       const readyAura = this.readyAuras[seat];
       const readyAuraMaterial = this.readyAuraMaterials[seat];
@@ -431,7 +548,7 @@ export class ShipsView implements StageView {
       if (showEnergyArc) {
         const energy = clamp01(current.plEnergy[seat] / ENERGY_MAX);
         const shieldDown = current.plShield[seat] !== 1 || current.plShieldBreak[seat] > 0;
-        const cannotPay = current.plEnergy[seat] < PRIMARY_WEAPONS[frame].cost;
+        const cannotPay = current.plEnergy[seat] < primaryCost(frame, current.plBeam[seat]);
         const pulse = cannotPay ? 0.68 + 0.32 * Math.sin(timeSeconds * ENERGY_ARC_PULSE_HZ) : 1;
         setEnergyArcGeometry(energyArc.geometry, energy, shieldDown);
         energyArc.position.set(sample.x, sample.y, ENERGY_ARC_Z);
@@ -482,6 +599,113 @@ export class ShipsView implements StageView {
     for (const material of this.coreRingMaterials) material.dispose();
     for (const aura of this.readyAuras) for (const child of aura.children) (child as THREE.Mesh).geometry.dispose();
     for (const material of this.readyAuraMaterials) material.dispose();
+    for (const guard of this.guards) guard.geometry.dispose();
+    for (const material of this.guardMaterials) material.dispose();
+    for (const shimmer of this.shimmers) shimmer.geometry.dispose();
+    for (const material of this.shimmerMaterials) material.dispose();
+  }
+
+  /** Which robots' rocket fists are in flight this frame: returning shots a robot threw itself (pPart 0, no pod). */
+  private findRocketFists(current: WorldSnapshot): void {
+    this.robotAway.fill(0);
+    for (let p = 0; p < current.projectiles; p++) {
+      if (current.pAlive[p] !== 1 || current.pOwner[p] < 0 || current.pPart[p] !== 0 || (SHOT_DEFS[current.pDef[p]].flags & ShotFlag.Return) === 0) continue;
+      this.robotAway[current.pOwner[p]] = 1;
+    }
+  }
+
+  private easeStance(current: WorldSnapshot, seat: number, dt: number): number {
+    const value = this.stance[seat];
+    switch (current.plFrame[seat]) {
+      case Frame.Ronin: {
+        const up = current.plParry[seat] > 0;
+        return expStep(value, up ? 1 : 0, up ? PARRY_STANCE_IN : PARRY_STANCE_OUT, dt);
+      }
+      case Frame.Shade:
+        return expStep(value, current.plCloak[seat] > 0 ? 1 : 0, CLOAK_FADE_RATE, dt);
+      default:
+        return 0;
+    }
+  }
+
+  /** RobotPose.special, per robot (see its definition in view/models/types.ts). */
+  private specialAmount(previous: WorldSnapshot, current: WorldSnapshot, seat: number, alpha: number): number {
+    const t = seatBlend(previous, current, seat, alpha);
+    switch (current.plFrame[seat]) {
+      case Frame.Longbow:
+        return clamp01(lerp(previous.plCharge[seat], current.plCharge[seat], t) / LONGBOW.rail.full);
+      case Frame.Prism: {
+        const beam = current.plBeam[seat];
+        if (beam === 0) return 0;
+        return beam > PRISM.beam.tell ? 1 : 0.5 * beam / PRISM.beam.tell;
+      }
+      case Frame.Hailstorm:
+        return clamp01(lerp(previous.plSpin[seat], current.plSpin[seat], t) / HAILSTORM.cannon.spinMax);
+      case Frame.Ronin:
+      case Frame.Shade:
+        return this.stance[seat];
+      case Frame.Gauntlet:
+        return this.robotAway[seat];
+      default:
+        return 0;
+    }
+  }
+
+  /** RobotPose.side: plSide is the side the NEXT alternating shot leaves from (0 left), so the latest left from the other. */
+  private sideOf(current: WorldSnapshot, seat: number): number {
+    switch (current.plFrame[seat]) {
+      case Frame.Hailstorm:
+      case Frame.Ronin:
+      case Frame.Gauntlet:
+        return current.plSide[seat] === 1 ? 1 : -1;
+      default:
+        return 0;
+    }
+  }
+
+  /** What opponents see of a cloaked robot: nothing, but a faint shimmer when it moves fast. */
+  private updateShimmer(seat: number, amount: number, sample: ShipRenderSample, timeSeconds: number): void {
+    const shimmer = this.shimmers[seat];
+    shimmer.visible = amount > 0.01;
+    if (!shimmer.visible) return;
+    const material = this.shimmerMaterials[seat];
+    shimmer.position.set(sample.x, sample.y, SHIMMER_Z);
+    shimmer.scale.setScalar(toWorld(FRAME_STATS[Frame.Shade].bodyR) * ROBOT_VISUAL_SCALE * SHIMMER_RADIUS);
+    material.uniforms.uTime.value = timeSeconds + seat * 1.7;
+    material.uniforms.uOpacity.value = amount * SHIMMER_OPACITY * (0.8 + 0.2 * Math.sin(timeSeconds * 23 + seat));
+  }
+
+  private updateGuard(current: WorldSnapshot, seat: number, visible: boolean, sample: ShipRenderSample, timeSeconds: number): void {
+    const guard = this.guards[seat];
+    guard.visible = visible;
+    if (!visible) return;
+    const material = this.guardMaterials[seat];
+    const fade = smoothstep(0, GUARD_FADE_TICKS, current.plParry[seat]);
+    guard.position.set(sample.x, sample.y, guard.position.z);
+    guard.rotation.z = sample.aim;
+    material.uniforms.uOpacity.value = fade;
+    material.uniforms.uPulse.value = 0.3 + 0.2 * Math.sin(timeSeconds * 30);
+    material.uniforms.uTime.value = timeSeconds;
+    material.uniforms.uFlow.value = 0.25;
+  }
+
+  /**
+   * Where a robot model faces: its aim, but PRISM turns onto its beam (which lags the aim) or its locked lance while one runs,
+   * so the lens stays where the beam starts, and turns back to the aim after.
+   */
+  private facing(previous: WorldSnapshot, current: WorldSnapshot, seat: number, alpha: number, dt: number, sample: ShipRenderSample): number {
+    const prism = current.plFrame[seat] === Frame.Prism && current.plForm[seat] === Form.Normal && !sample.epochChanged;
+    if (prism && current.plLance[seat] > 0) {
+      this.beamFacing[seat] = wrapAngleRadians(binaryAngleToRadians(current.plLanceAng[seat]) - sample.aim);
+    } else if (prism && current.plBeam[seat] > 0) {
+      const beam = previous.plBeam[seat] > 0
+        ? lerpRadiansBinary(previous.plBeamAng[seat], current.plBeamAng[seat], seatBlend(previous, current, seat, alpha))
+        : binaryAngleToRadians(current.plBeamAng[seat]);
+      this.beamFacing[seat] = wrapAngleRadians(beam - sample.aim);
+    } else {
+      this.beamFacing[seat] = sample.epochChanged ? 0 : expStep(this.beamFacing[seat], 0, BEAM_FACING_RETURN, dt);
+    }
+    return sample.aim + this.beamFacing[seat];
   }
 
   private sample(previous: WorldSnapshot, current: WorldSnapshot, seat: number, alpha: number): ShipRenderSample {
@@ -516,12 +740,15 @@ export class ShipsView implements StageView {
     for (let k = 0; k < form.parts.length; k++) {
       const part = form.parts[k];
       const hp = clamp01(current.ptHp[base + k] / part.hp);
-      const charge = phase === AttackPhase.Windup && this.partCharges(attack, part.roles) && hp > 0 ? progress : 0;
+      const away = current.ptAway[base + k] === 1;
+      // An away pod takes no part in the attack: it shows no tell.
+      const charge = phase === AttackPhase.Windup && this.partCharges(attack, part.roles) && hp > 0 && !away ? progress : 0;
       partPose[k].hp = hp;
       partPose[k].facing = lerpRadiansBinary(previous.ptAng[base + k], current.ptAng[base + k], sample.epochChanged ? 1 : alpha);
       partPose[k].flash = clamp01(current.ptFlash[base + k] / FLASH_TICKS);
       partPose[k].heat = clamp01(current.ptHeat[base + k] / this.heatWindow(form, attack));
       partPose[k].charge = charge;
+      partPose[k].away = away;
     }
     return {
       time: timeSeconds,
@@ -548,7 +775,9 @@ export class ShipsView implements StageView {
     const timing = attack === Attack.Salvo ? form.salvo : attack === Attack.Siege ? form.siege : form.ultima;
     if (phase === AttackPhase.Windup) return clamp01(1 - timer / timing.windup);
     if (phase === AttackPhase.Recovery) return clamp01(1 - timer / timing.recovery);
+    // Only an ultima's barrage and a beam attack last through a release phase.
     if (phase === AttackPhase.Release && attack === Attack.Ultima) return clamp01(1 - timer / form.ultima.duration);
+    if (phase === AttackPhase.Release && timing.pattern === Pattern.Beam) return clamp01(1 - timer / timing.duration);
     return 1;
   }
 
@@ -558,6 +787,8 @@ export class ShipsView implements StageView {
         return current.plDash[seat] > 0 ? 0.45 + 0.55 * Math.sin(timeSeconds * 22) * 0.5 + 0.55 : 0;
       case Frame.Juggernaut:
         return smoothstep(0, 1, clamp01(current.plBulwark[seat] / 18));
+      case Frame.Prism:
+        return current.plLance[seat] > 0 ? 1 - current.plLance[seat] / PRISM.lance.tell : 0;
       default:
         return pulse;
     }

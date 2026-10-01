@@ -34,6 +34,10 @@ export function pulse(time: number, speed: number, amount: number): number {
   return 1 + Math.sin(time * speed) * amount;
 }
 
+/**
+ * An extruded outline. The bevel (thickness = size) meets the faces at exactly 45°, so a mesh drawn with a crease angle of 45
+ * or more hides every outline of the bevel; pass 44 or lower to keep them.
+ */
 export function shapeExtrude(points: ReadonlyArray<readonly [number, number]>, depth: number, bevel = 0.45): THREE.BufferGeometry {
   const shape = new THREE.Shape();
   points.forEach(([x, y], index) => {
@@ -52,6 +56,7 @@ export function shapeExtrude(points: ReadonlyArray<readonly [number, number]>, d
   return geometry;
 }
 
+/** A chamfered plate: a bevelled shapeExtrude (draw it with a crease angle under 45 to keep the bevel's outlines). */
 export function plateGeometry(length: number, width: number, depth: number, cut = 0.2): THREE.BufferGeometry {
   const cutX = length * cut;
   const cutY = width * cut;

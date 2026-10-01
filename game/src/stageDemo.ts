@@ -1,7 +1,7 @@
 import { createGameSim } from './sim/index.ts';
 import { BeatClock } from './beat.ts';
 import { Bot } from './bot/bot.ts';
-import { encodeConfig, Frame, Mode, TICK_RATE, type MatchConfig, type SeatConfig } from './sim/index.ts';
+import { encodeConfig, FRAME_COUNT, Mode, TICK_RATE, type MatchConfig, type SeatConfig } from './sim/index.ts';
 import type { GameInput } from './sim/index.ts';
 import { Stage } from './view/stage.ts';
 
@@ -22,6 +22,8 @@ const seat = clampInt(query.get('seat'), 0, 0, seats - 1);
 const mode = clampInt(query.get('mode'), Mode.Deathmatch, Mode.Elimination, Mode.Deathmatch);
 const preTicks = clampInt(query.get('ticks'), 0, 0, 20000);
 const frameOverride = query.get('frame');
+/** Frames by seat, cycled (`frames=3,4,5`); by default every frame in turn. */
+const frameCycle = parseFrames();
 const followBoss = query.get('followBoss') === '1';
 const statsEnabled = query.get('stats') === '1';
 const seed = clampInt(query.get('seed'), 1337, 0, 0xffffffff);
@@ -56,9 +58,17 @@ function inferSeats(): number {
   return groups.reduce((sum, group) => sum + group, 0);
 }
 
+function parseFrames(): number[] {
+  const spec = query.get('frames');
+  if (spec === null) return Array.from({ length: FRAME_COUNT }, (_, frame) => frame);
+  const frames = spec.split(',').map(Number);
+  if (frames.some((frame) => !Number.isInteger(frame) || frame < 0 || frame >= FRAME_COUNT)) throw new RangeError(`invalid frames spec "${spec}"`);
+  return frames;
+}
+
 function frameFor(index: number): number {
-  if (index === seat && frameOverride !== null) return clampInt(frameOverride, Frame.Vanguard, Frame.Vanguard, Frame.Juggernaut);
-  return index % 3;
+  if (index === seat && frameOverride !== null) return clampInt(frameOverride, 0, 0, FRAME_COUNT - 1);
+  return frameCycle[index % frameCycle.length];
 }
 
 function createConfig(count: number): MatchConfig {

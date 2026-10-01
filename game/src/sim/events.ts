@@ -6,7 +6,10 @@
  * Payload: x, y are fixed-point world positions; a, b and c are integers whose meaning is listed per event.
  */
 export const Ev = {
-  /** A ship fired one of its two weapons: a = seat, b = frame, c = FireSlot. */
+  /**
+   * A ship used one of its two weapons (a shot or volley, a mine laid, carpet bombs thrown, a PRISM beam or lance beginning its
+   * tell): a = seat, b = frame, c = FireSlot. Alts that are not weapons have events of their own (Dash, BulwarkUp, ParryUp, Cloak).
+   */
   Fire: 1,
   /** A ship's core took bullet damage: a = seat, b = damage applied, c = the shooter's seat or NO_SEAT. */
   Hit: 2,
@@ -59,10 +62,34 @@ export const Ev = {
   ShieldBreak: 30,
   /** A shield came up (the pilot stopped attacking, or it recovered from a break): a = seat. */
   ShieldUp: 31,
+  /** A RONIN raised its parry: a = seat. */
+  ParryUp: 32,
+  /** A parry sent a shot back or cut a beam: a = the parrying seat, b = the shot's blueprint id or -1, c = ReflectKind; x, y = where. */
+  Reflect: 33,
+  /** A SHADE cloaked: a = seat. */
+  Cloak: 34,
+  /** A cloak ended (it ran out, or the SHADE threw, was hurt, stopped a shot with its shield, transformed, died or left): a = seat. */
+  Reveal: 35,
+  /** A returning shot came home: a = its owner, b = the pod it left + 1 (0: the robot itself); x, y = where it was caught. */
+  Catch: 36,
+  /** A LONGBOW's rail rifle reached a full charge: a = seat. */
+  ChargeFull: 37,
+  /** A shot blasted an area as it detonated: a = its owner or NO_SEAT, b = its blueprint id; x, y = the centre. */
+  Blast: 38,
+  /** A beam started firing: a = seat, b = the pod + 1 (0: the robot itself), c = BeamKind; x, y = where it starts. */
+  BeamOn: 39,
+  /** A PRISM's lance fired: a = seat; x, y = the far end of the rail (where it was stopped). */
+  LanceFire: 40,
 } as const;
 
 /** Which of a robot's two weapons an Ev.Fire event is about. */
 export const FireSlot = { Primary: 0, Alt: 1 } as const;
+
+/** What an Ev.Reflect event is about: a shot sent back, or a beam cut short. */
+export const ReflectKind = { Shot: 0, Beam: 1 } as const;
+
+/** Which beam an Ev.BeamOn event is about: a PRISM's beam, its lance's rail, or a boss pod's beam (a sweep or a wheel spoke). */
+export const BeamKind = { Primary: 0, Lance: 1, Boss: 2 } as const;
 
 export const Banner = { Round: 1, Fight: 2, RoundWon: 3, Draw: 4, MatchWon: 5, TimeUp: 6 } as const;
 

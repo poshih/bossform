@@ -1,6 +1,7 @@
 # BOSSFORM — Game Design Document
 
-**Version 0.2 · living document.** Owner: designer (poshih) with engineering.
+**Version 0.3 · living document.** Owner: designer (poshih) with engineering. v0.3 adds six robots (§5.6) and the rules
+they needed (§1 decisions 8 to 11, §5.8).
 
 Legend: **[SET]** decided by the designer · **[PROPOSED]** engineering proposal awaiting sign-off · **[OPEN]** undecided (§12).
 All numbers are tuning starting points, not commitments. Units: 1 unit = 1 simulation unit; 60 ticks per second.
@@ -15,10 +16,12 @@ scheduled for removal (§13).
 
 **Direction [SET]**
 - Like **Senko no Ronde**: a mech **battle arena**, **mostly PvP**. **Enemy units** are an extra damage source.
-- **Player bullets are normal speed, like enemy bullets. No instant or very fast shots.**
+- **Player bullets are normal speed, like enemy bullets. No instant or very fast shots.** *(v0.3: beams and hitscan are
+  allowed behind a laser tell, decision 9; every projectile still obeys the speed cap.)*
 - **Not 16-bit.** Sleek **vector mesh** visuals and fluid **motion**.
 - **Up to 8 players for now, never limited by technology.** Same lockstep engine.
-- Move and aim separately (twin-stick). Three tropey robot designs to start: **versatile / fast / heavy**.
+- Move and aim separately (twin-stick). Three tropey robot designs to start: **versatile / fast / heavy**. *(v0.3: nine,
+  decision 8.)*
 
 **Answers to the design questions [SET]**
 1. **Match format:** generic teams (free-for-all = every player their own team).
@@ -31,13 +34,30 @@ scheduled for removal (§13).
 7. **Shield and energy [SET]:** a robot that is not firing has its **energy shield** up; attacks and the shield share
    **one energy pool**, sized and refilled to keep the game fast (§5.4).
 
+**Roster expansion, v0.3 [SET]**
+8. **Nine robots.** The first three plus **LONGBOW** (sniper), **PRISM** (beam specialist), **HAILSTORM** (bomber, a walking
+   arsenal), **RONIN** (samurai duelist), **SHADE** (stealth ninja) and **GAUNTLET** (super robot), each with its own boss
+   form (§5.6, §5.5.4). Menus show them 3 × 3 in id order: the originals, the ranged specialists, the close-range specialists.
+9. **Beams and hitscan are allowed, only after a thin laser tell that shows exactly where they will fire.** A robot's beam
+   tells for at least 18 ticks; a robot's hitscan shot tells for at least 36 ticks along a locked direction; a boss beam's
+   tell is its attack's wind-up (never shorter than the attack's minimum), drawn as thin lasers along each firing pod's line.
+   A beam stops at the first hostile thing it meets: a shield bubble, a core, a boss part, a bulwark wedge, a parry arc, a
+   neutral unit. Ordinary projectiles keep the speed cap.
+10. **Indirect fire.** Lobbed shells (carpet bombs, artillery, bombardments) fly over everything and explode at a point on
+    the floor; their landing marker and blast radius are visible from launch.
+11. **Everything else stands:** damage windows; one energy pool for the shield and the weapons (a primary costs about 135
+    energy a second and refires faster than the pool's refill delay); the shield is up while the pilot is not attacking;
+    the shared boost; the boss tell rules (§5.5.2) and at most 12 boss parts. On touch the primary is held and the alt is a
+    tap: every alt works as a tap.
+
 ## 2. Vision and pillars
 
 *You are a mech in a huge arena full of slow, beautiful, lethal bullets. Read the patterns, thread the gaps, fire or
 shield, boost through the gap, graze to fill your gauge, and when you are charged, become the boss: a colossus that the
 others must take apart piece by piece.*
 
-1. **Dodging is the game.** Every projectile is slow, visible and readable. Skill is positioning and pattern reading.
+1. **Dodging is the game.** Every projectile is slow, visible and readable; every beam and rail shows its laser before it
+   fires. Skill is positioning and pattern reading.
 2. **Duel-dance PvP.** Independent move and aim, graze for reward, transform. The environment only adds pressure.
 3. **Sleek vector language.** Glowing edges over translucent faces, smooth motion, trails and easing.
 4. **Weight.** The boss form is large and heavy, and everything about it must say so (§5.5).
@@ -79,7 +99,7 @@ Twin-stick: analog movement, independent 360 degree aim. In normal form aim is i
 movement). In boss form aim and body turning are slew-limited (§5.5).
 
 Robots are responsive but not weightless: they brake twice as hard as they accelerate (`brake` and `accel` in
-`FRAME_STATS`), so letting go stops a robot in 5 to 7 ticks with 4 or 5 units of slide, reversing at full speed takes 13 to
+`FRAME_STATS`), so letting go stops a robot in 5 to 7 ticks with 4 to 6 units of slide, reversing at full speed takes 12 to
 19 ticks, and a turn never adds speed. Boss forms keep one slow limit for every change of velocity: that is their weight.
 
 **Boost [SET]** (`Shift`, pad `LB`; `FRAME_STATS[frame].boost`). A robot bursts toward the direction its pilot presses
@@ -90,23 +110,33 @@ never boost. A GALE phase dash cancels a running boost. Movement and aim stay in
 
 | Robot | Boost speed | Reach (12 ticks) | Cooldown |
 |---|---|---|---|
+| RONIN | 7.8 | 94 units | 40 ticks (0.67 s) |
 | GALE | 7.5 | 90 units | 36 ticks (0.6 s) |
+| SHADE | 7.2 | 86 units | 38 ticks (0.63 s) |
 | VANGUARD | 6.5 | 78 units | 45 ticks (0.75 s) |
+| PRISM | 6.4 | 77 units | 46 ticks (0.77 s) |
+| GAUNTLET | 6.4 | 77 units | 48 ticks (0.8 s) |
+| LONGBOW | 6.0 | 72 units | 52 ticks (0.87 s) |
+| HAILSTORM | 6.0 | 72 units | 50 ticks (0.83 s) |
 | JUGGERNAUT | 5.5 | 66 units | 54 ticks (0.9 s) |
 
 ### 5.2 Projectiles: the normal-speed rule [SET]
 - **Every projectile, whoever fires it, travels at 1.2 to 3.2 units/tick** (72 to 192 units/s), enforced by one cap in
-  the code that spawns projectiles. The one exception is a harmless inert fuse, which may stand still (the GALE dash leaves
-  one where it began; it bursts into moving shrapnel).
-- No hitscan, no beams, no instant effects. Area effects are slow rings, delayed detonations, or shrapnel.
+  the code that spawns projectiles. The one exception is a harmless inert fuse, which may stand still: the GALE dash leaves
+  one where it began (it bursts into moving shrapnel), and mines wait in place until something comes close (§5.8).
+- **Beams and hitscan only behind a laser tell [SET, v0.3]** (§1 decision 9, §5.8); nothing else is instant. Area effects
+  are slow rings, delayed detonations, shrapnel, and blasts where lobbed shells land (their ring is shown from launch).
+- Shots may also curve (SHADE's shuriken), come back to their owner (GAUNTLET's rocket fist), fly over everything to a
+  point on the floor (lobbed shells), wait as mines, or shove the robot they strike (knockback); see §5.8.
 - One kind of object for all: owner (a seat or "neutral"), team, radius, damage, heading, speed, optional slow
   acceleration or curvature. Player and neutral bullets follow identical rules.
 - **Readability [PROPOSED]:** hostile bullets are bright with a hard core; allied bullets are ghosted.
 - **Weight through size, not speed:** heavy weapons fire larger, slower, harder-hitting projectiles.
 
 ### 5.3 Being hit: the damage window [SET]
-- In order, a hostile bullet meets: JUGGERNAUT's bulwark wedge; protection (spawn, phase dash, a boost's dodge ticks),
-  which lets it pass; the **shield** at the graze radius, if raised (§5.4), which stops it; then the core.
+- In order, a hostile bullet meets: RONIN's parry arc, which sends it back (§5.8); JUGGERNAUT's bulwark wedge;
+  protection (spawn, phase dash, a boost's dodge ticks), which lets it pass; the **shield** at the graze radius, if raised
+  (§5.4), which stops it; then the core. A beam meets the same things in the same order along its line.
 - Tiny **core hurtbox** inside a larger body; bullets hurt only on touching the core.
 - **A robot can only take X damage per window.** Damage is applied normally until the running total inside the current
   window reaches the robot's cap; further hits in that window do nothing (the bullet is still consumed and flashes).
@@ -119,6 +149,12 @@ never boost. A GALE phase dash cancels a running boost. Movement and aim stay in
   | VANGUARD | 120 | 30 | 4 | 3.0 s |
   | GALE | 88 | 20 | 5 | 4.0 s |
   | JUGGERNAUT | 220 | 55 | 4 | 3.0 s |
+  | LONGBOW | 96 | 24 | 4 | 3.0 s |
+  | PRISM | 104 | 26 | 4 | 3.0 s |
+  | HAILSTORM | 160 | 40 | 4 | 3.0 s |
+  | RONIN | 110 | 26 | 5 | 4.0 s |
+  | SHADE | 84 | 20 | 5 | 4.0 s |
+  | GAUNTLET | 190 | 46 | 5 | 4.0 s |
   The window is anchored: it opens on the first hit and closes `windowTicks` later, so relentless fire kills in exactly
   `(windows - 1) x windowTicks` ticks.
 - In boss form the same rule applies to the **core**, which carries the robot's own hp and cap; armour and cannon parts
@@ -129,14 +165,20 @@ Two resources, never to be confused:
 
 **Energy (the pool) [SET]** — 1000 per robot, one pool that powers **both the shield and every weapon** (`energy.ts`).
 - **Weapons pay per shot** (`cost` in `frames.ts`): each primary weapon drains a full pool in about **7 s of continuous
-  fire** (VANGUARD rifle 20 per volley, GALE darts 11, JUGGERNAUT mortar 80; VANGUARD's seekers 100). A weapon whose
-  cost the pool cannot pay stays silent.
+  fire** (VANGUARD rifle 20 per volley, GALE darts 11, JUGGERNAUT mortar 80, HAILSTORM 7 per round, RONIN 32 per slash,
+  SHADE 22 per throw, GAUNTLET 27 per shot; LONGBOW pays 2 per tick while it charges, PRISM 2 per tick of beam tell and 3
+  per tick of beam). Alts: VANGUARD's seekers 100, LONGBOW's tripmine 100, PRISM's lance 160, HAILSTORM's carpet bomb 200,
+  SHADE's veil 150, GAUNTLET's rocket punch 120; the phase dash, the bulwark and the parry are free. A weapon whose cost
+  the pool cannot pay stays silent (a charge holds, a beam ends).
 - **It refills fast**: 20 per tick (empty to full in 0.8 s), starting 0.6 s after the last spend (a shot or a stopped
   bullet). That delay is longer than any weapon's refire, so a pilot who keeps firing never refills: bursts, then breathe.
-- **The shield is up whenever the pilot is not attacking.** Holding a weapon's button (fire; VANGUARD's seekers) drops it
-  on that very tick; it returns 12 ticks (0.2 s) after the button is released, if the pool holds at least 100. GALE's phase
-  dash is not an attack; JUGGERNAUT's bulwark takes the shield's place while raised (it covers the front only).
-- **The shield is a bubble at the graze radius** (18 / 16 / 22 units): whatever hostile reaches it is stopped and
+- **The shield is up whenever the pilot is not attacking.** Holding a weapon's button (fire; the alts that are attacks:
+  VANGUARD's seekers, PRISM's lance, HAILSTORM's carpet bomb, GAUNTLET's rocket punch) drops it on that very tick; it
+  returns 12 ticks (0.2 s) after the button is released, if the pool holds at least 100. GALE's phase dash, LONGBOW's
+  tripmine, RONIN's parry and SHADE's veil are not attacks, but the shield stays down while a parry or a lance tell runs;
+  JUGGERNAUT's bulwark takes the shield's place while raised (it covers the front only).
+- **The shield is a bubble at the graze radius** (15 to 22 units: SHADE 15, GALE 16, LONGBOW and RONIN 17, VANGUARD and
+  PRISM 18, HAILSTORM 20, GAUNTLET 21, JUGGERNAUT 22): whatever hostile reaches it is stopped and
   smothered (a shell does not burst), and the pool pays **20 per point of damage**, so a full pool stops 50 damage. A pool
   that cannot pay still stops that bullet, then the shield **shatters**: the pool is empty and the shield stays down for
   2 s. Stopped bullets pay the shooter's boss gauge as a hit would; the shielded pilot earns nothing (no damage taken).
@@ -171,13 +213,18 @@ from that weight and must *tell* the arena what is coming before it lands:
   cursor,** so where a gun points is where it will fire: the tell is always truthful, and a quick opponent can exploit
   the turn lag.
 - **Every attack has a wind-up (the tell), a release and a recovery.** Nothing is machine-gunned.
-- **Big means large and slow:** projectile radius 5 to 14 units, speed 1.2 to 2.4 units/tick, high damage. The danger
-  area is wide, but it can be dodged because it moves slowly.
+- **Big means large and slow:** projectile radius mostly 5 to 14 units, speed mostly 1.2 to 2.4 units/tick, high damage.
+  The danger area is wide, but it can be dodged because it moves slowly. (BALLISTA's needles are the exception: thin and
+  as fast as the cap allows, told by the longest wind-ups of their class.)
 - **Recoil and root:** heavy attacks root the body while they charge and kick it backwards on release.
 - **Fires from where the guns are:** every projectile spawns at a live pod's muzzle. A destroyed pod cannot fire, and
   destroying a pod during its wind-up cancels its shot (the energy is still spent); if every pod an attack needs is gone,
   nothing is released and the machine goes straight into its recovery. Salvo and siege fire along the pod's facing; the
-  ultima's pods are radial emitters: each fires its spiral and its ring all around its own muzzle.
+  ultima's pods are radial emitters: each fires its spiral and its ring all around its own muzzle. A beam attack fires from
+  each firing pod along its facing during the release and sweeps only as fast as the pod turns; artillery lobs shells from
+  the pods to points on the floor around a target; a carpet lays a line of bombs along the pod's facing; a wheel ultima
+  turns a beam outward from every live ultima pod; a bombardment rains shells around the target from every live ultima pod.
+  Every ultima also keeps its rings.
 - **Feedback:** a deep zoom-out and low-frequency sound, parts that visibly shift and recoil. The camera itself only shakes
   when a colossus is destroyed (the rare big explosion); every other impact is shown by effects and a brief colour punch.
 
@@ -186,7 +233,7 @@ from that weight and must *tell* the arena what is coming before it lands:
 | Input | Attack | Wind-up (tell) | Recovery | Energy cost |
 |---|---|---|---|---|
 | **Left click** (hold) | **Salvo**: basic boss spread, differs per robot | 12 to 18 ticks | 18 to 30 ticks | 5 to 8 |
-| **Right click** | **Siege shot**: slower and heavier | 36 to 48 ticks, rooted | 40 to 60 ticks | 45 to 55 |
+| **Right click** | **Siege shot**: slower and heavier | 36 to 50 ticks, rooted | 40 to 60 ticks | 45 to 55 |
 | **`E` / gamepad `X`** | **Ultima**: the final boss attack | 90 to 110 ticks, rooted, then a 4 s barrage | 120 to 150 ticks; 10 to 12 s cooldown | 300 to 330 |
 
 The exact numbers per boss form are in §5.5.4.
@@ -217,6 +264,9 @@ it can never be triggered by mistake while tapping to transform.
 4. **Recovery is the punish window [PROPOSED]:** pods that just fired are hot for the recovery time (take +50%
    damage), shown as glowing vents.
 5. **Same speed cap:** every boss projectile still respects the 3.2 units/tick limit (§5.2).
+6. **Beams and lobs are told too [SET, v0.3]:** a beam attack's wind-up draws a thin laser along each firing pod's line (the
+   pod keeps turning, so the laser always shows where it points now); a lobbed shell shows its landing marker and blast
+   radius from the moment it is launched.
 
 #### 5.5.3 Energy is fuel [SET]
 The gauge is 1000 points. Transformation needs 500. Boss form drains energy passively (about 17 per second) and **every
@@ -231,6 +281,12 @@ they deal to a boss form and a bounty for killing one **[PROPOSED]**, so a boss 
 | VANGUARD | **PALADIN** | 1.2 | 1.5°/tick | cannons 3.0, prow 2.0 | 69 units | 7 (854) | balanced: wing plates and shoulder cannons; salvo = 5-fan; siege = seeker-bursting shell; ultima = rotating spiral |
 | GALE | **TEMPEST** | 1.7 | 2.2°/tick | bits 4.5 | 57 units | 6 (504) | the lightest colossus: four orbiting bit cannons; salvo = aimed streams; siege = bit swarm of seekers; ultima = blade rings |
 | JUGGERNAUT | **FORTRESS** | 0.8 | 0.9°/tick | turrets 2.0, mortar 1.0 | 96 units | 9 (1736) | the heaviest: thickest armour, biggest shells; salvo = wide slow volley; siege = huge mortar; ultima = siege barrage |
+| LONGBOW | **BALLISTA** | 1.0 | 1.1°/tick | flechette guns 3.0, lenses 2.4, rail 1.2 | 78 units | 9 (938) | a siege bow: rail spine, swept bow limbs; salvo = FLECHETTE needles; siege = RAIL SHOT, one huge fast needle; ultima = ARROW RAIN, a bombardment around the target |
+| PRISM | **HELIOS** | 1.1 | 1.4°/tick | prisms 3.0, focus 0.6 | 68 units | 9 (896) | a floating sun disk with four orbiting prisms; salvo = PRISM LANCES, short beams; siege = SOLAR CANNON, a long wide beam; ultima = HALO WHEEL, turning spokes of light |
+| HAILSTORM | **ARMADA** | 0.9 | 1.0°/tick | gatlings 2.8, missile silos 2.0 | 78 units | 9 (1274) | a flying warship; salvo = BROADSIDE; siege = MISSILE CARNIVAL, a swarm of seekers; ultima = CARPET BOMBARDMENT |
+| RONIN | **SHOGUN** | 1.3 | 1.8°/tick | arm blades 3.2, banners 2.6, great sword 2.0 | 72 units | 11 (1092) | a crested warlord; salvo = CRESCENT slashes; siege = ISSEN, a sword-beam flash from the great sword; ultima = THOUSAND CUTS, slashing spirals |
+| SHADE | **KITSUNE** | 1.6 | 2.0°/tick | tails 3.0 | 64 units | 11 (728) | a nine-tailed fox, the most pods and the thinnest armour; salvo = FOXFIRE; siege = FOXFIRE SNARE, lobbed foxfire that becomes a mine field; ultima = NIGHT PARADE |
+| GAUNTLET | **ATLAS** | 1.0 | 1.2°/tick | fists 2.2, boosters 2.0 | 95 units | 9 (1204) | a super robot colossus; salvo = KNUCKLE BARRAGE; siege = GIGA ROCKET PUNCH, a giant fist that comes back; ultima = FINAL BREAKER |
 
 Colossi are drawn and built at 150% of their design size (core 125%, part hit points 140%) so they dwarf the robot they
 come from. A part is a circle in body space; the model draws each part where and as large as the table says.
@@ -242,21 +298,83 @@ Attack numbers per form, as wind-up / recovery ticks / energy cost (the ordering
 | PALADIN | 14 / 22 / 5 | 40 / 45 / 45 | 96 / 130 / 300 (10 s) |
 | TEMPEST | 12 / 18 / 5 | 36 / 40 / 45 | 90 / 120 / 300 (10 s) |
 | FORTRESS | 18 / 30 / 8 | 48 / 60 / 55 | 110 / 150 / 330 (12 s) |
+| BALLISTA | 16 / 24 / 6 | 46 / 52 / 50 | 100 / 136 / 310 (11 s) |
+| HELIOS | 18 / 26 / 6.5 | 50 / 60 / 52 | 104 / 140 / 320 (11.7 s) |
+| ARMADA | 16 / 26 / 6.5 | 42 / 52 / 50 | 104 / 140 / 320 (11.3 s) |
+| SHOGUN | 14 / 22 / 5.5 | 40 / 48 / 48 | 98 / 135 / 310 (10.7 s) |
+| KITSUNE | 12 / 18 / 5 | 38 / 44 / 46 | 94 / 128 / 305 (10.3 s) |
+| ATLAS | 15 / 24 / 6 | 42 / 56 / 52 | 106 / 146 / 325 (11.7 s) |
 
-### 5.6 The three robots in normal form [SET: archetypes; PROPOSED: kits]
-Every weapon obeys the normal-speed rule.
+### 5.6 The nine robots in normal form [SET: archetypes and kits (v0.3); PROPOSED: numbers]
+Every projectile obeys the normal-speed rule; beams and the lance obey the laser-tell rule (§5.8).
 
-| Robot | Trope | Primary | Alt (right click) | Speed |
+| Robot | Trope | Primary | Alt (right click / tap) | Speed |
 |---|---|---|---|---|
-| **VANGUARD** | versatile hero | 3-bullet fan rifle | two slow seeker orbs | 2.1 |
-| **GALE** | fast striker | twin darts, high rate | phase dash with brief protection, leaves a delayed ring | 3.0 |
-| **JUGGERNAUT** | heavy bunker | big slow mortar shell that bursts into shrapnel | bulwark arc: swallows bullets into its boss gauge (paid from energy) | 1.5 |
+| **VANGUARD** | versatile hero | FAN RIFLE: 3-bullet fan | SEEKERS: two slow seeker orbs | 2.1 |
+| **GALE** | fast striker | TWIN DARTS, high rate | PHASE DASH with brief protection, leaves a delayed ring | 3.0 |
+| **JUGGERNAUT** | heavy bunker | MORTAR: big slow shell that bursts into shrapnel | BULWARK arc: swallows bullets into its boss gauge (paid from energy) | 1.5 |
+| **LONGBOW** | sniper | RAIL RIFLE: hold to charge, release fires a needle by charge tier | TRIPMINE: a mine at its feet | 1.9 |
+| **PRISM** | beam specialist | PRISM BEAM: held beam after a short laser tell | LANCE: a told hitscan rail along a locked line | 2.0 |
+| **HAILSTORM** | bomber, walking arsenal | ROTARY CANNON: spins up the longer it fires | CARPET BOMB: six bombs lobbed in a line | 1.8 |
+| **RONIN** | samurai duelist | KATANA: a short, wide fan of slashes | PARRY: a guard arc that sends shots back | 2.6 |
+| **SHADE** | stealth ninja | SHURIKEN: two stars that curve across the aim line | SHADOW VEIL: 2.5 s of cloak | 2.8 |
+| **GAUNTLET** | super robot | KNUCKLE CANNON: alternating shots that shove | ROCKET PUNCH: a fist that flies out and comes back | 1.9 |
+
+The six specialists, as they are meant to play:
+- **LONGBOW** wins from far away and loses up close. A FULL charge (1 s) hits hard and fast; a SNAP shot is a quick poke.
+  Its mines guard the flanks it cannot watch. The charge line tells everyone where it aims, and brightens as it fills.
+- **PRISM** trades damage for honesty: every beam is announced by its laser, then sweeps slowly toward the aim. The LANCE is
+  the hardest single hit in normal form and the most visible: 0.7 s of a locked, pulsing line.
+- **HAILSTORM** is big, slow and relentless: its cannon is weak at first and a hose once spun up, and its carpet bombs
+  deny a strip of ground (the landing rings show where, and the nearest bombs land first).
+- **RONIN** must get close: its katana reaches about 75 units. The PARRY is its way in: timed well, it sends a volley back
+  and shortens its own cooldown.
+- **SHADE** is fragile and elusive: the veil hides it from eyes, radar and ears; the first throw out of it is an ambush.
+  Damage or a shield stop breaks the veil.
+- **GAUNTLET** is the heaviest brawler: knuckle shots shove what they strike, and the rocket fist can hit on the way out
+  and on the way back.
 
 ### 5.7 Neutral units [SET: exist; PROPOSED: behaviour]
 Hostile to everyone: pressure and an energy source, never a substitute for PvP.
 - Waves from the rim (about every 25 s, `2 + n/2` units), growing over the match.
 - **Drone** (aimed bursts), **Sentinel** (slow rotating spiral), **Warden** (rare boss-pattern unit that drops a big
   energy payout: an objective players contest).
+
+### 5.8 New mechanics (v0.3) [SET: rules; PROPOSED: numbers]
+- **Charge (LONGBOW).** Holding fire charges up to 60 ticks at 2 energy a tick (a tick the pool cannot pay holds the
+  charge). Release fires by tier: SNAP from 12 ticks (10 damage), HALF from 36 (18), FULL at 60 (30, at the speed cap);
+  below 12 nothing fires, and a charge still held when the round ends is dropped, not fired. Every pilot sees the
+  charging robot's aim line brighten; a glint marks FULL.
+- **Mines (LONGBOW's tripmine, KITSUNE's snare).** Inert discs that arm after a short delay (36 ticks; 20 for the snare)
+  and burst into shrapnel when a hostile fighting body or a neutral unit comes within their trigger radius (40 units; 34),
+  cloaked pilots included. Visible to all, with a faint trigger ring once armed.
+- **Beams (PRISM, HELIOS, SHOGUN's ISSEN).** PRISM's beam tells for 18 ticks, then fires while fire is held: 360 units
+  long, 3 damage every 6 ticks to the first hostile thing on its line, turning toward the aim at 1.2° a tick; 2 energy a
+  tick in the tell, 3 while firing. It starts only with 39 energy in the pool (the whole tell and the first firing tick),
+  so a tell always ends in a beam. A colossus's beam fires from each firing pod along its facing during the release.
+- **Lance (PRISM).** A hitscan rail behind a 42-tick tell: the direction locks at the tap, a bright laser shows the exact
+  line and pulses faster near the end; PRISM braces (a running boost ends, it stops where it stands and cannot boost, so
+  the line stays put), the shield stays down and the beam cannot fire meanwhile. Then one instant rail, 900 units long,
+  26 damage to the first thing it meets.
+- **Spin-up (HAILSTORM).** The rotary cannon starts at 6 rounds a second and gains speed with every round, up to 20 a
+  second; the spin runs down while the trigger is released.
+- **Carpet bombing (HAILSTORM, ARMADA).** Bombs lobbed in a line along the aim or a pod's facing; the nearest land first.
+  Each blast hurts every hostile robot core and boss part inside its radius (a raised shield absorbs it; protection and a
+  boost's dodge keep a robot safe from it, as from every other hit).
+- **Artillery and bombardment (BALLISTA, KITSUNE).** Shells lobbed to points around a target: the nearest targetable
+  hostile within 30° of the pod's facing and within range, else the point at range along the facing.
+- **Parry (RONIN).** 14 ticks of a front guard arc (36 units, ±80°): hostile shots entering it fly back along RONIN's aim as
+  RONIN's own, at the same speed and damage; beams entering it are cut. The first reflection shortens the cooldown to 50
+  ticks (the riposte). Free, and not an attack, but the shield is down and the katana cannot cut while it is up.
+- **Cloak (SHADE).** For 150 ticks opponents see at most a faint shimmer when it moves fast: no radar dot, name tag,
+  pointer, boost trail, graze spark or sound except its shots; its own team sees it translucent. Seekers and neutral units
+  ignore it (mines do not), orbs are not pulled toward it, and a beam's tell (or a beam between its damage pulses) passes
+  through it: only a pulse finds it. Damage, a shield stop, firing, transforming, dying or leaving reveal it.
+- **Boomerang (GAUNTLET's rocket fist, ATLAS's giga punch).** Flies out until its turn point or its first strike (which
+  turns it at once), then homes back to its owner and may strike again (never the same target twice in a row); caught
+  within the owner's pickup radius. Its owner cannot launch another while one is out.
+- **Knockback.** Knuckle shots and fists shove a robot they strike on the core or the shield, along their heading (never
+  through a bulwark, never a protected or dodging robot, never a colossus).
 
 ## 6. Controls
 
@@ -274,6 +392,8 @@ Hostile to everyone: pressure and an energy source, never a substitute for PvP.
 
 Mobile play uses floating twin-stick gestures with only a faint trace under each active thumb. Essential status moves to a
 thin safe-area-aware strip at the top. Landscape is the supported orientation; rotating does not restart or alter the match.
+The controls are the same for all nine robots: the primary is held (LONGBOW charges while it is held and fires on release;
+PRISM's beam fires while it is held) and every alt works as a single tap.
 
 ## 7. Presentation
 
@@ -293,11 +413,16 @@ simulation ticks so high-refresh displays are smooth.
 
 ### 7.3 Interface
 Clean sans type with wide tracking and thin vector frames. The local player's panel (health, damage-window meter,
-energy, cooldowns) sits at the bottom; radar in a corner; opponents get compact tags; kill feed and timer on top.
+energy, cooldowns) sits at the bottom; radar in a corner; opponents get compact tags; kill feed and timer on top. The
+panel names the robot's own primary and alt and reads their state: LONGBOW's charge tier, PRISM's beam, HAILSTORM's spin,
+SHADE's ambush; the alt as READY, cooling down, or running (LANCE 0.4S, GUARD, CLOAKED 1.8S, IN FLIGHT). A cloaked
+opponent has no radar dot, name tag or edge pointer.
 
 ### 7.4 Audio [SET]
 Procedural, no assets. Small robots: light, crisp shots. Boss form: deep, slow, low-frequency weight on every wind-up,
-salvo and impact.
+salvo and impact. Each colossus winds up in its own voice (BALLISTA a rail whine, HELIOS a chord of light, ARMADA a klaxon,
+SHOGUN drawn steel and war drums, KITSUNE shrine bells, ATLAS an engine spooling up); live beams hum while they burn; a
+cloaked pilot makes no sound its opponents can hear except its shots and its reveal.
 
 Music is arcade trance, synthesized in the browser (a worker renders 8-bar sections while the previous ones play):
 - **Title** 136 BPM, 16 bars, E minor.
@@ -359,6 +484,9 @@ partly done (audio and E2E and the cross-engine proof exist; balance still needs
 4. Vector renderer, camera, radar, robots and boss forms, neutral units, effects.
 5. Interface, lobby and relay for up to 8 players and bots.
 6. Audio retune, balance passes, browser E2E, cross-engine proof.
+7. Roster expansion (v0.3, simulation v5): six robots and their colossi, beams and the lance, lobbed shells, mines, the
+   parry, the cloak, boomerang fists and knockback, each with a bespoke model and bot tactics. Next: tuning from human
+   play.
 
 ## 11. Risks
 
@@ -379,6 +507,6 @@ partly done (audio and E2E and the cross-engine proof exist; balance still needs
 
 **Removed:** PvE stage scripts and scripted bosses (a boss-pattern unit survives as the neutral Warden), the hitscan
 beam, every shot faster than 3.2 units/tick, the low-res dithered/CRT pipeline and bitmap font, the fixed 2-seat and
-single-screen assumptions.
+single-screen assumptions. (v0.3 brings beams and a hitscan lance back, only behind a laser tell: §1 decision 9.)
 **Kept and evolved:** engine core, determinism tooling, the three-robot concept and boss-form idea, twin-stick input,
 procedural audio, relay, the verification approach.

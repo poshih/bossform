@@ -27,8 +27,24 @@ export interface RobotPose {
   speed: number;
   /** 1 on the tick a weapon fires, decaying to 0 (muzzle flash, recoil). */
   fire: number;
-  /** 0..1 alt ability active (VANGUARD: seekers launching, GALE: dash streak, JUGGERNAUT: bulwark raised). */
+  /**
+   * 0..1 alt ability active (VANGUARD: seekers launching, GALE: dash streak, JUGGERNAUT: bulwark raised, PRISM: lance tell
+   * progress 0 -> 1 until the rail fires; every other robot: a pulse on the tick its alt is used, decaying to 0).
+   */
   alt: number;
+  /**
+   * 0..1 the robot's own weapon state, 0 for VANGUARD, GALE and JUGGERNAUT. LONGBOW: rail charge (1 = FULL). PRISM: 0 idle,
+   * 0 -> 0.5 through the beam's tell, 1 while the beam fires. HAILSTORM: rotary spin. RONIN: parry stance. SHADE: cloak (the
+   * model fades to a thin shimmering outline; only its own team ever sees it cloaked). GAUNTLET: 1 while its rocket fist is in
+   * flight (the left fist is gone).
+   */
+  special: number;
+  /**
+   * Where the latest of the robot's alternating shots left from: 1 its left (+y in its own frame, aiming along +x), -1 its
+   * right; 0 for robots whose shots do not alternate. RONIN's katana swings from this side, GAUNTLET's knuckle leaves from
+   * this arm, HAILSTORM's shot left from this barrel pair (paired with `fire`).
+   */
+  side: number;
   /** 0..1 damage flash. */
   hit: number;
   /** 0..1 energy gauge fullness (a "ready" glow as it nears the transform threshold and beyond). */
@@ -58,6 +74,8 @@ export interface PartPose {
   heat: number;
   /** 0..1 this pod's wind-up progress: the tell (barrel extends and brightens, energy gathers). 0 when idle. */
   charge: number;
+  /** The pod's own returning shot (a rocket fist) is in flight: hide what it launched until it is caught. */
+  away: boolean;
 }
 
 /** A boss form: a large armoured machine around a small core. */

@@ -11,7 +11,7 @@ import {
 import { TEAM_COLORS } from '../config.ts';
 import { DrawLayer, setDrawLayer } from '../render/layers.ts';
 import type { FrameContext, StageView } from './frame.ts';
-import { drawnSeatPoint, seatBlend, type WorldSnapshot } from './snapshot.ts';
+import { drawnSeatPoint, hiddenFrom, seatBlend, type WorldSnapshot } from './snapshot.ts';
 import { binaryAngleToRadians, clamp01, colorIntoLinear, easeOutCubic, expStep, lerp, smoothstep, toWorld } from './shared.ts';
 
 const BUBBLE_SEGMENTS = 72;
@@ -266,12 +266,12 @@ export class ShieldsBoostView implements StageView {
     this.root.add(mesh);
   }
 
-  handleEvents(world: World): void {
+  handleEvents(world: World, _focusSeat: number, viewerTeam: number): void {
     const events = world.events;
     for (let i = 0; i < events.count; i++) {
       const type = events.type[i];
       const seat = events.a[i];
-      if (seat < 0 || seat >= world.seats) continue;
+      if (seat < 0 || seat >= world.seats || hiddenFrom(world.m, seat, viewerTeam)) continue;
       const color = this.teamColor(world.m.plTeam[seat]);
       const x = toWorld(events.x[i]);
       const y = toWorld(events.y[i]);
@@ -348,9 +348,11 @@ export class ShieldsBoostView implements StageView {
     const bubble = this.bubbles[seat];
     const alive = current.plActive[seat] === 1 && current.plAlive[seat] === 1;
     const normal = current.plForm[seat] === Form.Normal;
-    const shieldUp = alive && normal && current.plShield[seat] === 1;
-    const broken = alive && normal && current.plShieldBreak[seat] > 0;
-    this.shieldAmount[seat] = expStep(this.shieldAmount[seat], shieldUp ? 1 : 0, shieldUp ? BUBBLE_RAISE_RATE : BUBBLE_DROP_RATE, frame.dt);
+    // A cloaked pilot's bubble vanishes with it at once for its opponents, instead of fading out and giving it away.
+    const hidden = hiddenFrom(current, seat, frame.viewerTeam);
+    const shieldUp = alive && normal && !hidden && current.plShield[seat] === 1;
+    const broken = alive && normal && !hidden && current.plShieldBreak[seat] > 0;
+    this.shieldAmount[seat] = hidden ? 0 : expStep(this.shieldAmount[seat], shieldUp ? 1 : 0, shieldUp ? BUBBLE_RAISE_RATE : BUBBLE_DROP_RATE, frame.dt);
     const amount = this.shieldAmount[seat];
     const visible = amount > 0.015 || broken;
     bubble.group.visible = visible;
@@ -389,9 +391,10 @@ export class ShieldsBoostView implements StageView {
       const frameId = current.plFrame[seat];
       const stats = FRAME_STATS[frameId].boost;
       const active = current.plActive[seat] === 1 && current.plAlive[seat] === 1 && current.plForm[seat] === Form.Normal;
+      const seen = !hiddenFrom(current, seat, frame.viewerTeam);
       drawnSeatPoint(previous, current, seat, frame.alpha, this.point);
       const { x, y } = this.point;
-      if (active && boost > 0) {
+      if (active && seen && boost > 0) {
         const blend = seatBlend(previous, current, seat, frame.alpha);
         const vx = lerp(toWorld(previous.plVX[seat]), toWorld(current.plVX[seat]), blend);
         const vy = lerp(toWorld(previous.plVY[seat]), toWorld(current.plVY[seat]), blend);
@@ -411,7 +414,7 @@ export class ShieldsBoostView implements StageView {
           const offset = side * 5.2;
           count = this.appendInstance(count, KIND_STREAK, x - Math.sin(angle) * offset - Math.cos(angle) * 11, y + Math.cos(angle) * offset - Math.sin(angle) * 11, BOOST_WAKE_Z - 0.15, angle, BOOST_STREAK_LENGTH, BOOST_STREAK_WIDTH, team.r * gain, team.g * gain, team.b * gain, dodge ? 0.42 : 0.28);
         }
-      } else if (this.previousBoost[seat] > 0) {
+      } else if (seen && this.previousBoost[seat] > 0) {
         this.spawn(KIND_RING, x, y, BOOST_WAKE_Z, 0, 0, 0, 0, BOOST_BRAKE_RADIUS, BOOST_BRAKE_RADIUS, BOOST_BRAKE_LIFE, this.teamColor(current.plTeam[seat]), BOOST_LOW_ALPHA);
       }
       this.previousBoost[seat] = boost;

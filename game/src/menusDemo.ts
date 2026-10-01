@@ -1,6 +1,6 @@
 import { Bot } from './bot/bot.ts';
 import { Menus, MenuScreen } from './ui/menus.ts';
-import { createGameSim, encodeConfig, Frame, MAX_PLAYERS, Mode } from './sim/index.ts';
+import { createGameSim, encodeConfig, Frame, FRAME_COUNT, MAX_PLAYERS, Mode } from './sim/index.ts';
 import { evenTeams } from './setup.ts';
 
 declare global {
@@ -11,6 +11,8 @@ const root = document.getElementById('app')!;
 const status = document.getElementById('status')!;
 const query = new URLSearchParams(location.search);
 const screen = (query.get('screen') ?? 'title').toLowerCase();
+/** `?frame=N` preselects a frame on the setup screen (its card and summary). */
+const frame = query.get('frame');
 const menus = new Menus(root, {
   requestSeed: () => 777001,
   onStartMatch: (setup) => { status.textContent = `Start: ${setup.pilots.length} pilots · seed ${setup.seed}`; },
@@ -32,10 +34,10 @@ menus.update({
   status: 'waiting',
   message: 'Waiting for pilots. Host may adjust mode, teams, and bots.',
   players: [
-    { name: 'YOU', frame: Frame.Vanguard, team: 0, bot: false, self: true, host: true },
-    { name: 'BRAVO', frame: Frame.Gale, team: 1, bot: false, self: false, host: false },
-    { name: 'CHARLIE', frame: Frame.Juggernaut, team: 0, bot: true, self: false, host: false },
-    { name: 'DELTA', frame: Frame.Gale, team: 1, bot: true, self: false, host: false },
+    { name: 'YOU', frame: Frame.Longbow, team: 0, bot: false, self: true, host: true },
+    { name: 'BRAVO', frame: Frame.Ronin, team: 1, bot: false, self: false, host: false },
+    { name: 'CHARLIE', frame: Frame.Hailstorm, team: 0, bot: true, self: false, host: false },
+    { name: 'DELTA', frame: Frame.Shade, team: 1, bot: true, self: false, host: false },
   ],
 });
 
@@ -43,7 +45,7 @@ const seats = 4;
 const sim = createGameSim({
   seed: 7878,
   seats,
-  config: encodeConfig({ mode: Mode.Deathmatch, seats: Array.from({ length: seats }, (_, seat) => ({ frame: seat % 3, team: evenTeams(seats, 2)[seat] })) }),
+  config: encodeConfig({ mode: Mode.Deathmatch, seats: Array.from({ length: seats }, (_, seat) => ({ frame: seat % FRAME_COUNT, team: evenTeams(seats, 2)[seat] })) }),
 });
 const bots = Array.from({ length: seats }, (_, seat) => new Bot(seat, 500 + seat, 0.85));
 for (let tick = 0; tick < 900; tick++) {
@@ -58,6 +60,7 @@ switch (screen) {
     break;
   case 'setup':
     menus.show(MenuScreen.Setup);
+    if (frame !== null) root.querySelector<HTMLElement>(`[data-setup-frame="${Number(frame)}"]`)!.click();
     break;
   case 'lobby':
     menus.show(MenuScreen.Lobby);

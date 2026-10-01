@@ -7,6 +7,7 @@ import type { Capacity } from './constants.ts';
 import { EventQueue } from './events.ts';
 import { FRAME_COUNT, FRAME_STATS } from './frames.ts';
 import { layoutFor, W } from './layout.ts';
+import { SHOT_DEFS, ShotFlag } from './shots.ts';
 
 export type Layout = ReturnType<typeof layoutFor>;
 export type Mem = MemoryViews<Layout>;
@@ -128,6 +129,8 @@ export class World {
 
   freeProjectile(i: number): void {
     const { m } = this;
+    // A returning shot a pod threw is that pod's weapon, away (projectiles.ts launch): however the shot ends, it is back.
+    if (m.pPart[i] > 0 && (SHOT_DEFS[m.pDef[i]].flags & ShotFlag.Return) !== 0) m.ptAway[this.partBase(m.pOwner[i]) + m.pPart[i] - 1] = 0;
     m.pAlive[i] = 0;
     m.pFree[m.world[W.ProjFree]++] = i;
   }

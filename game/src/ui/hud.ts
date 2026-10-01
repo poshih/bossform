@@ -1,5 +1,5 @@
 import { fx } from '@metronome/engine';
-import { FORM_NAMES } from '../setup.ts';
+import { ALT_LABELS, FORM_NAMES, PRIMARY_LABELS } from '../setup.ts';
 import {
   Attack,
   AttackBlock,
@@ -16,21 +16,33 @@ import {
   ENERGY_MAX,
   Ev,
   FORMS,
+  Frame,
+  FRAME_COUNT,
   FRAME_STATS,
   Form,
   GALE,
   GAUGE_MAX,
   GAUGE_SCALE,
+  GAUNTLET,
+  HAILSTORM,
+  hasReturning,
   JUGGERNAUT,
+  LONGBOW,
   NO_SEAT,
   NO_WINNER,
   NeutralType,
   Phase,
-  PRIMARY_WEAPONS,
+  primaryCost,
+  PRISM,
+  Proj,
   radial,
   Role,
+  RONIN,
   ROUNDS_TO_WIN,
+  SHADE,
   SHIELD_BREAK_TICKS,
+  SHOT_DEFS,
+  ShotFlag,
   SHRINK_TICKS,
   SUDDEN_DEATH_TICKS,
   TICK_RATE,
@@ -39,7 +51,7 @@ import {
 } from '../sim/index.ts';
 import type { World } from '../sim/index.ts';
 import type { Beat } from '../beat.ts';
-import { clamp, drawChamferRect, easeOutCubic, fillCenteredText, formatClock, formatCompactSeconds, invLerp, lerp, pointOnScreen, pulse, strokeGlow } from './draw.ts';
+import { clamp, drawChamferRect, easeOutCubic, fillCenteredText, formatClock, formatCompactSeconds, formatTenthsSeconds, invLerp, lerp, pointOnScreen, pulse, strokeGlow } from './draw.ts';
 import {
   UI_ACCENT,
   UI_CAPS_SPACING,
@@ -101,6 +113,9 @@ const FEED_ROW_HEIGHT = 26;
 const BOSS_ICON_SIZE = 11;
 const INDICATOR_CHEVRON = 12;
 const PART_MIN_ALPHA = 0.22;
+/** A pod whose weapon is away (its returning shot is still out) is outlined dashed in the armour diagram: there, but unarmed. */
+const PART_AWAY_DASH = 3;
+const PART_AWAY_GAP = 2.5;
 const PART_SCHEMATIC_PAD = 12;
 const SCOREBOARD_WIDTH = 250;
 const FEED_WIDTH = 270;
@@ -193,8 +208,32 @@ const TITLE_FONT_WEIGHT = 700;
 
 const ATTACK_LABELS = ['—', 'SALVO', 'SIEGE', 'ULTIMA'] as const;
 const PHASE_LABELS = ['READY', 'WIND-UP', 'RELEASING', 'RECOVERY'] as const;
-const NORMAL_ALT_LABELS = ['SEEKERS', 'PHASE DASH', 'BULWARK'] as const;
-const NORMAL_ALT_COOLDOWNS = [VANGUARD.seekers.cooldown, GALE.dash.cooldown, JUGGERNAUT.bulwark.cooldown] as const;
+/** Each robot's alt cooldown (ticks), by frame: the alt chip's progress bar fills over it. */
+const ALT_COOLDOWNS: readonly number[] = [
+  VANGUARD.seekers.cooldown, GALE.dash.cooldown, JUGGERNAUT.bulwark.cooldown,
+  LONGBOW.tripmine.cooldown, PRISM.lance.cooldown, HAILSTORM.carpet.cooldown,
+  RONIN.parry.cooldown, SHADE.veil.cooldown, GAUNTLET.rocket.cooldown,
+];
+if (ALT_COOLDOWNS.length !== FRAME_COUNT) throw new RangeError(`ALT_COOLDOWNS lists ${ALT_COOLDOWNS.length} frames, the simulation has ${FRAME_COUNT}`);
+/**
+ * The attack chip's words for AttackBlock.Away: every pod the attack needs has thrown its returning shot and waits for it to
+ * come home. Returning shots are fists (ATLAS's giant fists are the only ones a pod throws), which is what the words say.
+ */
+const AWAY_STATUS = 'FISTS OUT';
+if (SHOT_DEFS.some((def) => (def.flags & ShotFlag.Return) !== 0 && def.kind !== Proj.Fist)) throw new RangeError(`a returning shot that is not a fist: the HUD's '${AWAY_STATUS}' needs other words`);
+/** LONGBOW's charge tiers by name, in the order of LONGBOW.rail.tiers. */
+const RAIL_TIER_NAMES = ['SNAP', 'HALF', 'FULL'] as const;
+if (RAIL_TIER_NAMES.length !== LONGBOW.rail.tiers.length) throw new RangeError(`RAIL_TIER_NAMES names ${RAIL_TIER_NAMES.length} tiers, LONGBOW's rail has ${LONGBOW.rail.tiers.length}`);
+/** An alt that is running right now (a lance tell, a guard, a cloak, a fist in flight, a raised bulwark). */
+const ALT_ENGAGED_COLOR = '#ffc76f';
+/** The primary weapon chip (LMB): a one-row chip with a thin meter along its foot for a weapon with a state. */
+const LOCAL_WEAPON_CHIP_HEIGHT = 22;
+const WEAPON_METER_HEIGHT = 2.5;
+const WEAPON_METER_FOOT = 5;
+const WEAPON_MARK_COLOR = 'rgba(255,255,255,0.55)';
+const WEAPON_CHARGING_COLOR = '#8ff3ff';
+/** A LONGBOW charged to FULL (and PRISM's firing beam) pulses at this rate (per second). */
+const WEAPON_HOT_PULSE = 9;
 /** The energy meter turns amber below this share of a full pool. */
 const ENERGY_LOW_SHARE = 0.3;
 const ENERGY_SHIELD_COLOR = '#8ff3ff';
@@ -295,6 +334,23 @@ interface ChipProgress {
   readonly color: string;
 }
 
+/** The primary weapon chip's reading: its status, and for a weapon with a state (charge, beam, spin) a 0-1 meter with marks. */
+interface WeaponState {
+  readonly status: string;
+  /** What the chip shows when the weapon's name leaves no room for the whole status. */
+  readonly shortStatus: string;
+  readonly color: string;
+  readonly fill: number | null;
+  readonly marks: readonly number[];
+}
+
+interface AltState {
+  readonly status: string;
+  readonly color: string;
+  /** The alt is running right now (see altEngaged), as opposed to ready or cooling down. */
+  readonly engaged: boolean;
+}
+
 interface MeterMotion {
   readonly ghost?: number;
   readonly shimmer?: number;
@@ -332,6 +388,7 @@ interface LocalPanelLayout {
   readonly diagram: number;
   readonly diagramHeight: number;
   readonly attackChips: number;
+  readonly weaponChip: number;
   readonly cooldownChip: number;
   readonly boostChip: number;
   readonly transformChip: number;
@@ -340,6 +397,11 @@ interface LocalPanelLayout {
 export interface HudView {
   readonly world: World;
   readonly seat: number;
+  /**
+   * The team a cloaked pilot is hidden from (radar, name tags, pointers): the local pilot's even while `seat` is someone it
+   * spectates. Defaults to `seat`'s team.
+   */
+  readonly viewerTeam?: number;
   readonly names: readonly string[];
   readonly width: number;
   readonly height: number;
@@ -503,10 +565,16 @@ export class Hud {
     } else {
       this.drawMetricRow(ctx, 'BOSS GAUGE', `${Math.floor(m.plGauge[seat] / GAUGE_SCALE)}`, rightX, labelY, sideWidth, UI_TEXT_DIM, UI_TEXT);
       this.drawMeter(ctx, rightX, barY, sideWidth, barHeight, motion.energyFill, UI_ACCENT);
-      const boost = canBoost(world, seat) ? 'BOOST READY' : 'BOOST WAIT';
-      const alt = canUseAlt(world, seat) ? 'ALT READY' : 'ALT WAIT';
-      const form = m.plGauge[seat] >= BOSS_MIN_GAUGE ? 'FORM READY' : `FORM ${Math.floor((m.plGauge[seat] * 100) / BOSS_MIN_GAUGE)}%`;
-      this.drawTouchStatus(ctx, `${boost} · ${alt} · ${form}`, rightX, secondLabelY + this.s(7), sideWidth, m.plGauge[seat] >= BOSS_MIN_GAUGE ? UI_SUCCESS : UI_TEXT_DIM);
+      // The same words as the desktop chips: the weapon's state while it has one, then boost, the alt by name, the transform.
+      const weapon = this.weaponState(world, seat, view.time);
+      const altState = this.altState(world, seat);
+      const tokens = [
+        ...(weapon.status === 'READY' ? [] : [`${PRIMARY_LABELS[frame]} ${weapon.status}`]),
+        canBoost(world, seat) ? 'BOOST READY' : 'BOOST WAIT',
+        altState.engaged ? altState.status : `${ALT_LABELS[frame]} ${altState.status}`,
+        m.plGauge[seat] >= BOSS_MIN_GAUGE ? 'FORM READY' : `FORM ${Math.floor((m.plGauge[seat] * 100) / BOSS_MIN_GAUGE)}%`,
+      ];
+      this.drawTouchStatus(ctx, tokens.join(' · '), rightX, secondLabelY + this.s(7), sideWidth, m.plGauge[seat] >= BOSS_MIN_GAUGE ? UI_SUCCESS : UI_TEXT_DIM);
     }
     return this.rect(x, y, width, TOUCH_HUD_HEIGHT);
   }
@@ -1013,7 +1081,8 @@ export class Hud {
     const diagram = diagramLabel + this.s(LOCAL_LABEL_TO_BAR) + this.s(2);
     const attackChips = diagram + diagramHeight + sectionGap;
     const attackChipsBottom = attackChips + this.s(LOCAL_COMPACT_CHIP_PITCH) * (ATTACK_CHIP_COUNT - 1) + this.s(LOCAL_COMPACT_CHIP_HEIGHT);
-    const cooldownChip = titleBaseline + sectionGap;
+    const weaponChip = titleBaseline + sectionGap;
+    const cooldownChip = weaponChip + this.s(LOCAL_WEAPON_CHIP_HEIGHT) + sectionGap;
     const boostChip = cooldownChip + this.s(LOCAL_CHIP_HEIGHT) + sectionGap;
     const transformChip = boostChip + this.s(LOCAL_CHIP_HEIGHT) + sectionGap;
     const normalChipsBottom = transformChip + this.s(LOCAL_CHIP_HEIGHT);
@@ -1024,7 +1093,7 @@ export class Hud {
       boss, height: Math.max(leftBottom, rightBottom) + pad,
       leftX: pad, leftWidth, rightX: pad + leftWidth + gap, rightWidth,
       titleBaseline, hpLabel, hpBar, windowLabel, windowBar, poolLabel, poolBar, gaugeLabel, gaugeBar,
-      formLine, tellLine, diagram, diagramHeight, attackChips, cooldownChip, boostChip, transformChip,
+      formLine, tellLine, diagram, diagramHeight, attackChips, weaponChip, cooldownChip, boostChip, transformChip,
     };
   }
 
@@ -1092,7 +1161,8 @@ export class Hud {
       this.drawAttackReadiness(ctx, rightX, y + layout.attackChips, layout.rightWidth, frame, world, seat, time, view.beat.pulse);
     } else {
       const ready = m.plGauge[seat] >= BOSS_MIN_GAUGE;
-      this.drawNormalCooldown(ctx, rightX, y + layout.cooldownChip, layout.rightWidth, world, seat, time);
+      this.drawWeaponChip(ctx, rightX, y + layout.weaponChip, layout.rightWidth, world, seat, time);
+      this.drawAltChip(ctx, rightX, y + layout.cooldownChip, layout.rightWidth, world, seat, time);
       this.drawBoostChip(ctx, rightX, y + layout.boostChip, layout.rightWidth, world, seat, time);
       const missing = Math.ceil((BOSS_MIN_GAUGE - m.plGauge[seat]) / GAUGE_SCALE);
       const pop = this.readyPop(time, motion.transformReadyAt);
@@ -1292,6 +1362,8 @@ export class Hud {
         return formatCompactSeconds(ultimaCooldown / TICK_RATE);
       case AttackBlock.NoPod:
         return 'NO GUNS';
+      case AttackBlock.Away:
+        return AWAY_STATUS;
       case AttackBlock.Busy:
         return 'FIRING';
       default:
@@ -1330,6 +1402,7 @@ export class Hud {
     ctx.save();
     form.parts.forEach((part, index) => {
       const hp = world.m.ptHp[base + index];
+      const away = hp > 0 && world.m.ptAway[base + index] === 1;
       const fraction = clamp(hp / part.hp, 0, 1);
       const px = cx + (fx.toFloat(part.x) - fx.toFloat((minX + maxX) * 0.5)) * scale;
       const py = cy + (fx.toFloat(part.y) - fx.toFloat((minY + maxY) * 0.5)) * scale;
@@ -1337,14 +1410,16 @@ export class Hud {
       ctx.globalAlpha = lerp(PART_MIN_ALPHA, 1, fraction);
       ctx.strokeStyle = hp <= 0 ? UI_MUTED : fraction > 0.66 ? UI_SUCCESS : fraction > 0.33 ? '#ffc76f' : UI_WARNING;
       ctx.lineWidth = part.roles & Role.Siege ? this.s(2) : this.s(1.2);
+      ctx.setLineDash(away ? [this.s(PART_AWAY_DASH), this.s(PART_AWAY_GAP)] : []);
       ctx.beginPath();
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.stroke();
-      if (hp > 0) {
+      if (hp > 0 && !away) {
         ctx.fillStyle = rgba(0xffffff, 0.02 + fraction * 0.08);
         ctx.fill();
       }
     });
+    ctx.setLineDash([]);
     ctx.strokeStyle = UI_EDGE_SOFT;
     ctx.beginPath();
     ctx.arc(cx, cy, Math.max(this.s(4), fx.toFloat(form.coreR) * scale), 0, Math.PI * 2);
@@ -1361,7 +1436,7 @@ export class Hud {
     const energy = m.plEnergy[seat];
     const broken = m.plShieldBreak[seat] > 0;
     const up = m.plShield[seat] === 1;
-    const dry = energy < PRIMARY_WEAPONS[m.plFrame[seat]].cost;
+    const dry = energy < primaryCost(m.plFrame[seat], m.plBeam[seat]);
     const low = energy < ENERGY_MAX * ENERGY_LOW_SHARE;
     const state = broken ? `SHIELD BROKEN ${formatCompactSeconds(m.plShieldBreak[seat] / TICK_RATE)}` : up ? 'SHIELD UP' : 'SHIELD DOWN';
     const stateColor = broken ? UI_WARNING : up ? ENERGY_SHIELD_COLOR : UI_TEXT_DIM;
@@ -1393,21 +1468,120 @@ export class Hud {
     }, this.readyPop(time, this.seatMotion[seat].boostReadyAt));
   }
 
-  /** RMB: the alt's cooldown; READY only when the sim would let it go off now (canUseAlt: cooled down and paid for). */
-  private drawNormalCooldown(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, world: World, seat: number, time: number): void {
+  /**
+   * LMB: the primary weapon and its state, with a thin meter for a weapon that has one (LONGBOW's charge with its SNAP and
+   * HALF marks, PRISM's beam tell, HAILSTORM's spin). DRY when the pool cannot pay what the primary needs now (primaryCost:
+   * the next shot, or PRISM's whole beam tell to start one).
+   */
+  private drawWeaponChip(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, world: World, seat: number, time: number): void {
     const frame = world.m.plFrame[seat];
-    const remaining = world.m.plAltCd[seat];
-    const total = NORMAL_ALT_COOLDOWNS[frame];
-    const ready = canUseAlt(world, seat);
-    const color = ready ? UI_SUCCESS : UI_ACCENT;
+    const weapon = this.weaponState(world, seat, time);
+    const height = this.s(LOCAL_WEAPON_CHIP_HEIGHT);
+    this.drawAbilityChip(ctx, x, y, width, height, { title: PRIMARY_LABELS[frame], hint: 'LMB', status: weapon.status, shortStatus: weapon.shortStatus, color: weapon.color, alpha: 1 });
+    if (weapon.fill === null) return;
+    const inset = this.s(COMPACT_CHIP_INSET);
+    const meterX = x + inset;
+    const meterY = y + height - this.s(WEAPON_METER_FOOT);
+    const meterWidth = width - inset * 2;
+    const meterHeight = this.s(WEAPON_METER_HEIGHT);
+    this.drawMeter(ctx, meterX, meterY, meterWidth, meterHeight, weapon.fill, weapon.color, 'rgba(255,255,255,0.07)');
+    ctx.save();
+    ctx.strokeStyle = WEAPON_MARK_COLOR;
+    ctx.lineWidth = this.s(1);
+    for (const mark of weapon.marks) {
+      const markX = meterX + meterWidth * mark;
+      ctx.beginPath();
+      ctx.moveTo(markX, meterY - this.s(1.5));
+      ctx.lineTo(markX, meterY + meterHeight + this.s(1.5));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private weaponState(world: World, seat: number, time: number): WeaponState {
+    const { m } = world;
+    const frame = m.plFrame[seat];
+    const hot = pulse(time, WEAPON_HOT_PULSE, 0.55, 1);
+    const dry = m.plEnergy[seat] < primaryCost(frame, m.plBeam[seat]);
+    const idle = (fill: number | null, marks: readonly number[] = []): WeaponState =>
+      ({ status: dry ? 'DRY' : 'READY', shortStatus: dry ? 'DRY' : '', color: dry ? UI_WARNING : UI_SUCCESS, fill, marks });
+    switch (frame) {
+      case Frame.Longbow: {
+        // The meter marks where each tier below FULL begins; the status names the tier the charge has reached.
+        const rail = LONGBOW.rail;
+        const charge = m.plCharge[seat];
+        const marks = rail.tiers.slice(0, -1).map((tier) => tier.charge / rail.full);
+        if (charge === 0) return idle(0, marks);
+        const tier = rail.tiers.findLastIndex((entry) => charge >= entry.charge);
+        const status = tier < 0 ? 'CHARGING' : RAIL_TIER_NAMES[tier];
+        const color = charge >= rail.full ? rgba(0x7cffb4, hot) : WEAPON_CHARGING_COLOR;
+        return { status, shortStatus: tier < 0 ? '···' : status, color, fill: charge / rail.full, marks };
+      }
+      case Frame.Prism: {
+        const beam = m.plBeam[seat];
+        const tell = PRISM.beam.tell;
+        if (beam === 0) return idle(0);
+        return beam <= tell
+          ? { status: 'TELL', shortStatus: 'TELL', color: ALT_ENGAGED_COLOR, fill: beam / tell, marks: [] }
+          : { status: 'FIRING', shortStatus: 'ON', color: rgba(0xff6a80, hot), fill: 1, marks: [] };
+      }
+      case Frame.Hailstorm: {
+        const spin = m.plSpin[seat];
+        const most = HAILSTORM.cannon.spinMax;
+        const percent = `${Math.round((spin * 100) / most)}%`;
+        return spin === 0 ? idle(0) : { status: `SPIN ${percent}`, shortStatus: percent, color: WEAPON_CHARGING_COLOR, fill: spin / most, marks: [] };
+      }
+      case Frame.Shade:
+        // Out of the veil, the next throw is an ambush: heavier stars on the same paths.
+        return m.plCloak[seat] > 0 ? { status: 'AMBUSH', shortStatus: 'AMBUSH', color: ALT_ENGAGED_COLOR, fill: null, marks: [] } : idle(null);
+      default:
+        return idle(null);
+    }
+  }
+
+  /**
+   * RMB: the alt's name and what it is doing: engaged (IN FLIGHT, GUARD, CLOAKED 1.8S, LANCE 0.4S, RAISED 1.2S), READY when the
+   * sim would let it go off now (canUseAlt), else its cooldown or NO ENERGY.
+   */
+  private drawAltChip(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, world: World, seat: number, time: number): void {
+    const frame = world.m.plFrame[seat];
+    const alt = this.altState(world, seat);
     this.drawAbilityChip(ctx, x, y, width, this.s(LOCAL_CHIP_HEIGHT), {
-      title: NORMAL_ALT_LABELS[frame],
+      title: ALT_LABELS[frame],
       hint: 'RMB',
-      status: ready ? 'READY' : remaining > 0 ? formatCompactSeconds(remaining / TICK_RATE) : 'NO ENERGY',
-      color,
+      status: alt.status,
+      color: alt.color,
       alpha: 1,
-      progress: { fill: 1 - remaining / total, color },
+      progress: { fill: 1 - world.m.plAltCd[seat] / ALT_COOLDOWNS[frame], color: alt.color },
     }, this.readyPop(time, this.seatMotion[seat].altReadyAt));
+  }
+
+  private altState(world: World, seat: number): AltState {
+    const { m } = world;
+    const engaged = this.altEngaged(world, seat);
+    if (engaged !== null) return { status: engaged, color: ALT_ENGAGED_COLOR, engaged: true };
+    if (canUseAlt(world, seat)) return { status: 'READY', color: UI_SUCCESS, engaged: false };
+    const remaining = m.plAltCd[seat];
+    return { status: remaining > 0 ? formatCompactSeconds(remaining / TICK_RATE) : 'NO ENERGY', color: UI_ACCENT, engaged: false };
+  }
+
+  /** The running state of an alt that lasts (null when it is not running, or the alt is instant). */
+  private altEngaged(world: World, seat: number): string | null {
+    const { m } = world;
+    switch (m.plFrame[seat]) {
+      case Frame.Juggernaut:
+        return m.plBulwark[seat] > 0 ? `RAISED ${formatTenthsSeconds(m.plBulwark[seat] / TICK_RATE)}` : null;
+      case Frame.Prism:
+        return m.plLance[seat] > 0 ? `LANCE ${formatTenthsSeconds(m.plLance[seat] / TICK_RATE)}` : null;
+      case Frame.Ronin:
+        return m.plParry[seat] > 0 ? 'GUARD' : null;
+      case Frame.Shade:
+        return m.plCloak[seat] > 0 ? `CLOAKED ${formatTenthsSeconds(m.plCloak[seat] / TICK_RATE)}` : null;
+      case Frame.Gauntlet:
+        return hasReturning(world, seat) ? 'IN FLIGHT' : null;
+      default:
+        return null;
+    }
   }
 
   /** Draws the radar; returns the area it covers, its title above it included. */
@@ -1455,7 +1629,7 @@ export class Hud {
     ctx.restore();
 
     for (let pilot = 0; pilot < world.seats; pilot++) {
-      if (world.m.plAlive[pilot] !== 1) continue;
+      if (world.m.plAlive[pilot] !== 1 || this.cloakedFrom(view, pilot)) continue;
       const p = mapPoint(world.m.plX[pilot], world.m.plY[pilot]);
       const boss = world.m.plForm[pilot] === Form.Boss;
       const dot = boss ? this.s(pulse(view.time + pilot, 8, 3.8, 5.8)) : this.s(2.5);
@@ -1515,7 +1689,7 @@ export class Hud {
       marks.push({ ...this.edgeSpot(angle, width, height, this.s(OFFSCREEN_PAD)), angle, size, color, alpha, label, labelColor });
     };
     for (let other = 0; other < world.seats; other++) {
-      if (other === seat || world.m.plAlive[other] !== 1 || world.m.plTeam[other] === world.m.plTeam[seat]) continue;
+      if (other === seat || world.m.plAlive[other] !== 1 || world.m.plTeam[other] === world.m.plTeam[seat] || this.cloakedFrom(view, other)) continue;
       view.seatScreen(other, point);
       if (pointOnScreen(point.x, point.y, width, height, 20)) continue;
       const boss = world.m.plForm[other] === Form.Boss;
@@ -1845,7 +2019,7 @@ export class Hud {
     const { world, seat, names, width, height } = view;
     const point = { x: 0, y: 0 };
     for (let other = 0; other < world.seats; other++) {
-      if (other === seat || world.m.plAlive[other] !== 1 || world.m.plTeam[other] === world.m.plTeam[seat]) continue;
+      if (other === seat || world.m.plAlive[other] !== 1 || world.m.plTeam[other] === world.m.plTeam[seat] || this.cloakedFrom(view, other)) continue;
       view.seatScreen(other, point);
       if (!pointOnScreen(point.x, point.y, width, height, 40)) continue;
       ctx.save();
@@ -1855,6 +2029,15 @@ export class Hud {
       ctx.fillText(names[other] ?? `P${other + 1}`, point.x, point.y - this.s(NAME_TAG_PAD));
       ctx.restore();
     }
+  }
+
+  /**
+   * A cloaked pilot is hidden from the other teams: no radar dot, name tag or pointer gives it away (its own team still sees
+   * it). The other teams are the viewer's (HudView.viewerTeam), not the spectated pilot's.
+   */
+  private cloakedFrom(view: HudView, pilot: number): boolean {
+    const { m } = view.world;
+    return m.plCloak[pilot] > 0 && m.plTeam[pilot] !== (view.viewerTeam ?? m.plTeam[view.seat]);
   }
 
   private drawReticle(ctx: CanvasRenderingContext2D, view: HudView): void {

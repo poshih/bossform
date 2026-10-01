@@ -12,10 +12,13 @@ import type { World } from './world.ts';
  * a dodge: projectiles pass through the robot (combat.ts). Boss forms never boost.
  */
 
-/** Ready to boost: a robot in play (normal form), not boosting, not in a GALE phase dash, and the cooldown has run out. */
+/**
+ * Ready to boost: a robot in play (normal form), not boosting, not in a GALE phase dash, not braced in PRISM's lance tell, and
+ * the cooldown has run out.
+ */
 export function canBoost(w: World, seat: number): boolean {
   const { m } = w;
-  return isFighting(w, seat) && m.plForm[seat] === Form.Normal && m.plBoost[seat] === 0 && m.plBoostCd[seat] === 0 && m.plDash[seat] === 0;
+  return isFighting(w, seat) && m.plForm[seat] === Form.Normal && m.plBoost[seat] === 0 && m.plBoostCd[seat] === 0 && m.plDash[seat] === 0 && m.plLance[seat] === 0;
 }
 
 export function startBoost(w: World, seat: number, moveX: number, moveY: number): void {
@@ -43,13 +46,26 @@ export function stopBoost(w: World, seat: number): void {
 
 /**
  * Ends both bursts of movement, a boost and a GALE phase dash, and leaves the robot at most at its top speed. For when the
- * robot stops moving under its own power: it transforms, it is destroyed, or its pilot leaves.
+ * robot stops moving under its own power: it transforms, it is destroyed, its pilot leaves, or PRISM braces for its lance.
  */
 export function stopBursts(w: World, seat: number): void {
   const { m } = w;
   m.plBoost[seat] = 0;
   m.plDash[seat] = 0;
   limitSpeed(w, seat, FRAME_STATS[m.plFrame[seat]].speed);
+}
+
+/**
+ * A hit's knock (a shot's `knock`): a robot in normal form struck on its core or stopped by its shield is pushed along
+ * `heading` by `impulse` (units/tick). The push ends a running boost first (the robot is thrown off its line), so it never
+ * flies faster than its boost. Callers never knock a protected or dodging robot: nothing touches it.
+ */
+export function knockBack(w: World, seat: number, heading: number, impulse: number): void {
+  const { m } = w;
+  if (impulse === 0 || m.plAlive[seat] === 0 || m.plForm[seat] !== Form.Normal) return;
+  if (m.plBoost[seat] > 0) stopBursts(w, seat);
+  m.plVX[seat] += fx.mul(fx.cos(heading), impulse);
+  m.plVY[seat] += fx.mul(fx.sin(heading), impulse);
 }
 
 /**

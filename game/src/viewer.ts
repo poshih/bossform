@@ -11,10 +11,13 @@ import type { ColossusPose, NeutralPose, PartPose, RobotPose } from './view/mode
  * Examples:
  *   ?model=vanguard&form=robot&fire=1&aim=30
  *   ?model=gale&form=colossus&assemble=1&attack=1&phase=1&progress=0.6&destroy=1,3
+ *   ?model=longbow&special=1&aim=30
+ *   ?model=gauntlet&form=colossus&away=5
  *   ?model=warden&team=2
- * Parameters (all optional): model (vanguard|gale|juggernaut|drone|sentinel|warden), form (robot|colossus), team (0-7),
- * t (seconds), anim=1 (advance time), aim, move, body, orbit (degrees), speed, fire, alt, hit, charge, shield, morph,
- * assemble, attack (0-3), phase (0-3), progress, fuel, heat, pod (0..1 charge on every pod), destroy (part indices),
+ * Parameters (all optional): model (vanguard|gale|juggernaut|longbow|prism|hailstorm|ronin|shade|gauntlet|drone|sentinel|
+ * warden), form (robot|colossus), team (0-7), t (seconds), anim=1 (advance time), aim, move, body, orbit (degrees), speed,
+ * fire, alt, special (RobotPose.special, per robot), side (-1|0|1), hit, charge, shield, morph, assemble, attack (0-3), phase (0-3),
+ * progress, fuel, heat, pod (0..1 charge on every pod), destroy (part indices), away (part indices whose shot is in flight),
  * flash (0..1 on every part), zoom (bigger = closer), tilt (degrees from straight down), spin=1.
  */
 const params = new URLSearchParams(location.search);
@@ -24,7 +27,17 @@ const rad = (degrees: number): number => (degrees * Math.PI) / 180;
 const model = params.get('model') ?? 'vanguard';
 const form = params.get('form') ?? 'robot';
 const team = num('team', 1);
-const FRAME_OF: Record<string, number> = { vanguard: Frame.Vanguard, gale: Frame.Gale, juggernaut: Frame.Juggernaut };
+const FRAME_OF: Record<string, number> = {
+  vanguard: Frame.Vanguard,
+  gale: Frame.Gale,
+  juggernaut: Frame.Juggernaut,
+  longbow: Frame.Longbow,
+  prism: Frame.Prism,
+  hailstorm: Frame.Hailstorm,
+  ronin: Frame.Ronin,
+  shade: Frame.Shade,
+  gauntlet: Frame.Gauntlet,
+};
 const NEUTRAL_OF: Record<string, number> = { drone: NeutralType.Drone, sentinel: NeutralType.Sentinel, warden: NeutralType.Warden };
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
@@ -54,7 +67,9 @@ if (model in NEUTRAL_OF) {
   colossus.setTeam(color);
   scene.add(colossus.root);
   extent = 90;
-  const destroyed = new Set((params.get('destroy') ?? '').split(',').filter(Boolean).map(Number));
+  const partList = (key: string): Set<number> => new Set((params.get(key) ?? '').split(',').filter(Boolean).map(Number));
+  const destroyed = partList('destroy');
+  const away = partList('away');
   update = (time) => {
     const parts: PartPose[] = FORMS[frame].parts.map((_, k) => ({
       hp: destroyed.has(k) ? 0 : 1,
@@ -62,6 +77,7 @@ if (model in NEUTRAL_OF) {
       flash: num('flash', 0),
       heat: num('heat', 0),
       charge: num('pod', 0),
+      away: away.has(k),
     }));
     const pose: ColossusPose = {
       time, body: rad(num('body', 0)), orbit: rad(num('orbit', 0)) + (params.get('anim') === '1' ? time * 2 : 0), assemble: num('assemble', 1), speed: num('speed', 0),
@@ -76,8 +92,8 @@ if (model in NEUTRAL_OF) {
   extent = 22;
   update = (time) => {
     const pose: RobotPose = {
-      time, aim: rad(num('aim', 0)), move: rad(num('move', 0)), speed: num('speed', 0), fire: num('fire', 0), alt: num('alt', 0), hit: num('hit', 0),
-      charge: num('charge', 0), shield: num('shield', 0), morph: num('morph', 0),
+      time, aim: rad(num('aim', 0)), move: rad(num('move', 0)), speed: num('speed', 0), fire: num('fire', 0), alt: num('alt', 0),
+      special: num('special', 0), side: num('side', 0), hit: num('hit', 0), charge: num('charge', 0), shield: num('shield', 0), morph: num('morph', 0),
     };
     robot.update(pose);
   };

@@ -17,6 +17,8 @@ export const DrawLayer = {
   Floor: -50,
   Storm: -45,
   Orbs: -40,
+  /** Painted on the floor, under every ship: landing markers and shadows of lobbed shells, the trigger rings of armed mines. */
+  FloorMarks: -35,
   /** The dark plate and team glow under each ship, so it reads against any floor. */
   ShipUnderlay: -30,
   /** Robots, colossi and neutral units: three's default renderOrder, so the model factories need not know about layers. */
@@ -28,6 +30,8 @@ export const DrawLayer = {
   ShipEffects: 30,
   /** Explosions and sparks: under the bullets, which must stay readable through them. */
   Fx: 35,
+  /** Beams, rails and the thin laser tells that announce them: over the explosions, under the bullets. */
+  Beams: 37,
   Projectiles: 40,
   /** The hurtbox core, above everything, like a danmaku hitbox: the one thing a pilot must always be able to see. */
   CoreRing: 60,
